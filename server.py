@@ -1,0 +1,647 @@
+"""
+Yarn AI — Flask server.
+
+Multi-tenant: email/password auth (sessions), per-user brands/generations/
+calendars/favorites, per-plan usage limits, a voice-learning feedback loop, and
+Paystack checkout. Generation streams from Claude (claude-opus-4-8) over SSE.
+"""
+
+from __future__ import annotations
+
+import functools
+import json
+import os
+import time
+
+import httpx
+from dotenv import load_dotenv
+from flask import (Flask, Response, jsonify, redirect, render_template,
+                   request, session, stream_with_context)
+from werkzeug.security import check_password_hash, generate_password_hash
+
+import db
+import voice
+
+load_dotenv()
+
+API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
+LIVE = bool(API_KEY) and not API_KEY.startswith("sk-ant-xxxx")
+PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY", "").strip()
+
+# --------------------------------------------------------------------------- #
+# Two-tier models. Standard is the fast, cost-efficient default; Premium is the
+# top-quality model, gated to higher plans. The Nigerian voice lives in the
+# prompts (voice.py), so Standard still produces strong, on-brand copy.
+# --------------------------------------------------------------------------- #
+MODELS = {
+    "standard": {"id": "claude-sonnet-4-6", "label": "Standard", "sub": "Sonnet 4.6 · fast"},
+    "premium":  {"id": "claude-opus-4-8",  "label": "Premium ✨", "sub": "Opus 4.8 · best"},
+}
+MODEL = MODELS["premium"]["id"]  # back-compat / display default
+
+
+def resolve_quality(requested: str, user) -> str:
+    """Clamp the requested quality to what the user's plan allows."""
+    if requested == "premium" and plan_of(user).get("premium"):
+        return "premium"
+    return "standard"
+
+
+def model_kwargs(model_id: str, effort: str = "medium") -> dict:
+    """Per-model extra params. Adaptive thinking + effort are Opus-4.8 features;
+    other models are called plainly to avoid unsupported-parameter errors."""
+    if model_id == "claude-opus-4-8":
+        return {"thinking": {"type": "adaptive"}, "output_config": {"effort": effort}}
+    return {}
+
+# --------------------------------------------------------------------------- #
+# Plans — prices in Naira/month. Paystack charges price * 100 (kobo).
+# gen_limit None = unlimited (fair use). calendar = is the planner available.
+# --------------------------------------------------------------------------- #
+PLANS = {
+    "free": {
+        "name": "Free", "price": 0, "gen_limit": 10, "brands": 1, "calendar": False,
+        "blurb": "Kick the tyres",
+        "features": ["10 generations / month", "1 brand voice", "All 8 tones", "Pidgin + English"],
+    },
+    "starter": {
+        "name": "Starter", "price": 7500, "gen_limit": 150, "brands": 1, "calendar": False,
+        "blurb": "Solo hustler",
+        "features": ["150 generations / month", "1 brand voice", "All tones & content types", "Save favourites"],
+    },
+    "growth": {
+        "name": "Growth", "price": 19000, "gen_limit": 600, "brands": 3, "calendar": True,
+        "blurb": "Serious SME", "popular": True,
+        "features": ["600 generations / month", "3 brand voices", "Content Calendar builder", "Voice that learns 👍"],
+    },
+    "pro": {
+        "name": "Pro", "price": 45000, "gen_limit": None, "brands": 10, "calendar": True,
+        "blurb": "Power user / team",
+        "features": ["Unlimited generations", "10 brand voices", "Everything in Growth", "Priority generation"],
+    },
+}
+PLAN_ORDER = ["free", "starter", "growth", "pro"]
+
+app = Flask(__name__)
+app.secret_key = os.getenv("SECRET_KEY", "yarn-ai-dev-secret-change-me")
+_client = None
+
+
+def get_client():
+    global _client
+    if not LIVE:
+        return None
+    if _client is None:
+        import anthropic
+        _client = anthropic.Anthropic(api_key=API_KEY)
+    return _client
+
+
+with app.app_context():
+    db.init_db()
+
+
+# ------------------------------- auth helpers ----------------------------- #
+
+def current_user():
+    uid = session.get("uid")
+    return db.get_user(uid) if uid else None
+
+
+def auth(fn):
+    @functools.wraps(fn)
+    def wrapper(*a, **kw):
+        user = current_user()
+        if not user:
+            return jsonify({"error": "auth_required"}), 401
+        return fn(user, *a, **kw)
+    return wrapper
+
+
+def plan_of(user) -> dict:
+    return PLANS.get(user.get("plan", "free"), PLANS["free"])
+
+
+def usage_payload(user) -> dict:
+    p = plan_of(user)
+    used = db.monthly_generation_count(user["id"])
+    return {
+        "plan": user.get("plan", "free"),
+        "plan_name": p["name"],
+        "used": used,
+        "limit": p["gen_limit"],
+        "brands_used": db.count_brands(user["id"]),
+        "brands_limit": p["brands"],
+        "calendar": p["calendar"],
+    }
+
+
+# ------------------------------- pages ------------------------------------ #
+
+@app.get("/")
+def index():
+    return render_template("index.html", live=LIVE, model=MODEL)
+
+
+@app.get("/api/config")
+def config():
+    return jsonify({
+        "live": LIVE, "model": MODEL,
+        "tones": voice.list_tones(),
+        "content_types": voice.list_content_types(),
+        "cadences": voice.list_cadences(),
+        "refine_presets": [{"key": k, "label": k.replace("_", " ").title()} for k in voice.REFINE_PRESETS],
+        "plans": [{"key": k, **PLANS[k]} for k in PLAN_ORDER],
+        "paystack": bool(PAYSTACK_SECRET),
+        "advisor_options": voice.advisor_options(),
+    })
+
+
+# -------------------------------- auth ------------------------------------ #
+
+@app.post("/api/signup")
+def signup():
+    d = request.get_json(force=True) or {}
+    email = (d.get("email") or "").strip().lower()
+    name = (d.get("name") or "").strip()
+    pw = d.get("password") or ""
+    if "@" not in email or len(pw) < 6:
+        return jsonify({"error": "Enter a valid email and a password of at least 6 characters."}), 400
+    if db.get_user_by_email(email):
+        return jsonify({"error": "An account with that email already exists. Try logging in."}), 409
+    user = db.create_user(email, name or email.split("@")[0], generate_password_hash(pw))
+    session["uid"] = user["id"]
+    return jsonify({"user": user, "usage": usage_payload(user)})
+
+
+@app.post("/api/login")
+def login():
+    d = request.get_json(force=True) or {}
+    email = (d.get("email") or "").strip().lower()
+    rec = db.get_user_by_email(email)
+    if not rec or not check_password_hash(rec["password_hash"], d.get("password") or ""):
+        return jsonify({"error": "Wrong email or password."}), 401
+    session["uid"] = rec["id"]
+    user = db.get_user(rec["id"])
+    return jsonify({"user": user, "usage": usage_payload(user)})
+
+
+@app.post("/api/logout")
+def logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+
+@app.get("/api/me")
+@auth
+def me(user):
+    return jsonify({"user": user, "usage": usage_payload(user)})
+
+
+# ------------------------------- brands ----------------------------------- #
+
+@app.get("/api/brands")
+@auth
+def get_brands(user):
+    return jsonify(db.list_brands(user["id"]))
+
+
+@app.post("/api/brands")
+@auth
+def post_brand(user):
+    data = request.get_json(force=True) or {}
+    if not (data.get("name") or "").strip():
+        return jsonify({"error": "Brand name is required"}), 400
+    limit = plan_of(user)["brands"]
+    if db.count_brands(user["id"]) >= limit:
+        return jsonify({"error": f"Your plan allows {limit} brand(s). Upgrade for more.", "upgrade": True}), 402
+    return jsonify(db.create_brand(user["id"], data))
+
+
+@app.put("/api/brands/<int:brand_id>")
+@auth
+def put_brand(user, brand_id):
+    if not db.get_brand(user["id"], brand_id):
+        return jsonify({"error": "Brand not found"}), 404
+    return jsonify(db.update_brand(user["id"], brand_id, request.get_json(force=True) or {}))
+
+
+@app.delete("/api/brands/<int:brand_id>")
+@auth
+def remove_brand(user, brand_id):
+    db.delete_brand(user["id"], brand_id)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/brands/from-posts")
+@auth
+def brand_from_posts(user):
+    samples = (request.get_json(force=True) or {}).get("samples", "").strip()
+    if len(samples) < 20:
+        return jsonify({"error": "Paste a bit more sample content to learn from."}), 400
+    client = get_client()
+    if client is None:
+        return jsonify({"name": "", "industry": "", "audience": "", "location": "",
+                        "description": "", "personality": "playful, bold"})
+    try:
+        with client.messages.stream(
+            model=MODEL, max_tokens=1200, thinking={"type": "adaptive"},
+            output_config={"effort": "low"},
+            system=voice.build_extract_brand_system(),
+            messages=[{"role": "user", "content": f"Samples:\n\"\"\"\n{samples}\n\"\"\""}],
+        ) as s:
+            text = "".join(s.text_stream)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    profile = voice.parse_brand_json(text)
+    profile["samples"] = samples
+    return jsonify(profile)
+
+
+# ------------------------------ history ----------------------------------- #
+
+@app.get("/api/history")
+@auth
+def history(user):
+    return jsonify(db.recent_generations(user["id"]))
+
+
+# ---------------------------- favorites ----------------------------------- #
+
+@app.get("/api/favorites")
+@auth
+def favorites_list(user):
+    return jsonify(db.list_favorites(user["id"]))
+
+
+@app.post("/api/favorites")
+@auth
+def favorite_add(user):
+    d = request.get_json(force=True) or {}
+    text = (d.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "Nothing to save"}), 400
+    return jsonify(db.add_favorite(user["id"], d.get("brand_id"),
+                                   d.get("content_type"), d.get("tone"), text))
+
+
+@app.delete("/api/favorites/<int:fav_id>")
+@auth
+def favorite_del(user, fav_id):
+    db.delete_favorite(user["id"], fav_id)
+    return jsonify({"ok": True})
+
+
+# ----------------------------- feedback ----------------------------------- #
+
+@app.post("/api/feedback")
+@auth
+def feedback(user):
+    d = request.get_json(force=True) or {}
+    rating = "up" if d.get("rating") == "up" else "down"
+    text = (d.get("text") or "").strip()
+    if text:
+        db.add_feedback(user["id"], d.get("brand_id"), rating, text)
+    return jsonify({"ok": True})
+
+
+# ---------------------------- generation ---------------------------------- #
+
+def _sse(event, data):
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _demo_text(content_type, tone, brief, variants):
+    tlabel = voice.tone_meta(tone)["label"]
+    clabel = voice.content_type_meta(content_type)["label"]
+    brief = (brief or "").strip() or "your latest offer"
+    blocks = [
+        f"[DEMO MODE — add your ANTHROPIC_API_KEY to .env for real Naija copy]\n\n"
+        f"Option {i} · {clabel} · {tlabel}\n"
+        f"Omo, {brief} just land and e dey hot! 🔥 No dulling — tap that link, send your "
+        f"account number sharp sharp, make we package am today. #NaijaBrand #BuyNaija"
+        for i in range(1, variants + 1)
+    ]
+    return "\n---\n".join(blocks)
+
+
+@app.post("/api/generate")
+@auth
+def generate(user):
+    req = request.get_json(force=True) or {}
+    uid = user["id"]
+    p = plan_of(user)
+    if p["gen_limit"] is not None and db.monthly_generation_count(uid) >= p["gen_limit"]:
+        return jsonify({"error": f"You've used all {p['gen_limit']} generations on the "
+                                 f"{p['name']} plan this month. Upgrade to keep yarning.",
+                        "upgrade": True}), 402
+
+    brand_id = req.get("brand_id")
+    content_type = req.get("content_type", "instagram_caption")
+    tone = req.get("tone", "friendly")
+    brief = req.get("brief", "")
+    variants = max(1, min(int(req.get("variants", 3) or 3), 5))
+
+    def stream():
+        profile = db.get_brand(uid, brand_id) if brand_id else None
+        liked = db.liked_examples(uid, brand_id)
+        system = voice.build_system_prompt(profile, tone, liked)
+        usr = voice.build_user_prompt(content_type, brief, variants)
+
+        yield _sse("start", {"live": LIVE, "model": MODEL})
+        full = ""
+        client = get_client()
+        if client is None:
+            full = _demo_text(content_type, tone, brief, variants)
+            for tok in full.split(" "):
+                yield _sse("delta", {"text": tok + " "})
+                time.sleep(0.006)
+        else:
+            try:
+                with client.messages.stream(
+                    model=MODEL, max_tokens=4000, thinking={"type": "adaptive"},
+                    output_config={"effort": "medium"}, system=system,
+                    messages=[{"role": "user", "content": usr}],
+                ) as s:
+                    for text in s.text_stream:
+                        full += text
+                        yield _sse("delta", {"text": text})
+            except Exception as exc:
+                yield _sse("error", {"message": str(exc)})
+                return
+
+        result = voice.split_variants(full)
+        db.save_generation(uid, brand_id, content_type, tone, brief, result)
+        yield _sse("done", {"variants": result, "used": db.monthly_generation_count(uid)})
+
+    return Response(stream_with_context(stream()), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/refine")
+@auth
+def refine(user):
+    d = request.get_json(force=True) or {}
+    original = (d.get("text") or "").strip()
+    if not original:
+        return jsonify({"error": "Nothing to refine"}), 400
+    p = plan_of(user)
+    if p["gen_limit"] is not None and db.monthly_generation_count(user["id"]) >= p["gen_limit"]:
+        return jsonify({"error": "Monthly limit reached. Upgrade to keep refining.", "upgrade": True}), 402
+
+    profile = db.get_brand(user["id"], d.get("brand_id")) if d.get("brand_id") else None
+    system, usr = voice.build_refine_prompt(profile, d.get("tone", "friendly"),
+                                            original, d.get("instruction", "punchier"))
+    client = get_client()
+    if client is None:
+        return jsonify({"text": original + "\n\n[demo: add API key to refine for real]"})
+    try:
+        with client.messages.stream(
+            model=MODEL, max_tokens=2000, thinking={"type": "adaptive"},
+            output_config={"effort": "medium"}, system=system,
+            messages=[{"role": "user", "content": usr}],
+        ) as s:
+            text = "".join(s.text_stream)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    db.save_generation(user["id"], d.get("brand_id"), d.get("content_type", ""),
+                       d.get("tone", ""), "[refine] " + d.get("instruction", ""), [text.strip()])
+    return jsonify({"text": text.strip(), "used": db.monthly_generation_count(user["id"])})
+
+
+# ---------------------------- calendars ----------------------------------- #
+
+def _demo_calendar(cadence):
+    _, count = voice.CADENCE_COUNTS.get(cadence, voice.CADENCE_COUNTS["3_week"])
+    s = [
+        ("Salary just land", "Pay-day promo — make your money work", "Awoof dey scarce but e still dey!", "instagram_caption", "pidgin"),
+        ("Mid-week", "Showcase a bestseller with social proof", "This one don dey fly comot for shelf 👀", "instagram_caption", "pidgin"),
+        ("Weekend rush", "Weekend-only flash offer", "Weekend plot loading… you in?", "whatsapp_broadcast", "friendly"),
+        ("Trust builder", "Behind-the-scenes / delivery proof", "See how we package with love ✨", "instagram_caption", "lagos_corporate"),
+    ]
+    span = max(1, 28 // max(count, 1))
+    return [{"day": min(28, 2 + i * span), "occasion": f"[demo] {s[i % len(s)][0]}",
+             "theme": s[i % len(s)][1], "hook": s[i % len(s)][2],
+             "content_type": s[i % len(s)][3], "tone": s[i % len(s)][4]} for i in range(count)]
+
+
+@app.post("/api/calendar/generate")
+@auth
+def calendar_generate(user):
+    if not plan_of(user)["calendar"]:
+        return jsonify({"error": "The Content Calendar is on the Growth plan and up. Upgrade to unlock it.",
+                        "upgrade": True}), 402
+    req = request.get_json(force=True) or {}
+    brand_id = req.get("brand_id")
+    month = (req.get("month") or "December").strip()
+    try:
+        year = int(req.get("year") or 2026)
+    except (TypeError, ValueError):
+        year = 2026
+    cadence = req.get("cadence", "3_week")
+
+    client = get_client()
+    if client is None:
+        posts = _demo_calendar(cadence)
+    else:
+        profile = db.get_brand(user["id"], brand_id) if brand_id else None
+        try:
+            with client.messages.stream(
+                model=MODEL, max_tokens=6000, thinking={"type": "adaptive"},
+                output_config={"effort": "medium"},
+                system=voice.build_calendar_system(profile),
+                messages=[{"role": "user", "content": voice.build_calendar_user(month, year, cadence)}],
+            ) as s:
+                text = "".join(s.text_stream)
+            posts = voice.parse_calendar_json(text)
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 500
+        if not posts:
+            return jsonify({"error": "Could not parse the calendar. Please try again."}), 502
+
+    return jsonify(db.save_calendar(user["id"], brand_id, month, year, cadence, posts))
+
+
+@app.get("/api/calendars")
+@auth
+def calendars_list(user):
+    return jsonify(db.list_calendars(user["id"]))
+
+
+@app.get("/api/calendar/<int:cal_id>")
+@auth
+def calendar_get(user, cal_id):
+    cal = db.get_calendar(user["id"], cal_id)
+    return (jsonify(cal), 200) if cal else (jsonify({"error": "Not found"}), 404)
+
+
+@app.delete("/api/calendar/<int:cal_id>")
+@auth
+def calendar_delete(user, cal_id):
+    db.delete_calendar(user["id"], cal_id)
+    return jsonify({"ok": True})
+
+
+# ------------------------------ advisors ---------------------------------- #
+
+def _over_limit(user) -> bool:
+    p = plan_of(user)
+    return p["gen_limit"] is not None and db.monthly_generation_count(user["id"]) >= p["gen_limit"]
+
+
+def _complete(system: str, user_msg: str, max_tokens: int = 3000) -> str:
+    """One-shot (non-streamed) completion, collected to a string."""
+    client = get_client()
+    if client is None:
+        return ""
+    with client.messages.stream(
+        model=MODEL, max_tokens=max_tokens, thinking={"type": "adaptive"},
+        output_config={"effort": "medium"}, system=system,
+        messages=[{"role": "user", "content": user_msg}],
+    ) as s:
+        return "".join(s.text_stream)
+
+
+@app.post("/api/advisor/rate")
+@auth
+def advisor_rate(user):
+    if _over_limit(user):
+        return jsonify({"error": "Monthly limit reached. Upgrade to keep going.", "upgrade": True}), 402
+    d = request.get_json(force=True) or {}
+    if not (d.get("service") or "").strip():
+        return jsonify({"error": "Tell us the service / gig first."}), 400
+    if get_client() is None:
+        return jsonify({"service": d.get("service", ""), "recommended": {"low": 30000, "mid": 60000, "high": 120000, "unit": "per project"},
+                        "summary": "[demo] Add your API key for real Naija rate advice.",
+                        "factors": ["Demo mode"], "pitch": "", "tips": [], "upsells": []})
+    try:
+        text = _complete(voice.build_rate_system(), voice.build_rate_user(d), 3000)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    result = voice.parse_rate_json(text)
+    if not result["recommended"]["mid"] and not result["summary"]:
+        return jsonify({"error": "Could not work out a rate. Please try again."}), 502
+    r = result["recommended"]
+    summary = f"₦{r['low']:,}–₦{r['high']:,} {r['unit']} · {result['service']}"
+    db.save_generation(user["id"], d.get("brand_id"), "rate_advisor", "", d.get("service", ""), [summary])
+    result["used"] = db.monthly_generation_count(user["id"])
+    return jsonify(result)
+
+
+@app.post("/api/advisor/brand")
+@auth
+def advisor_brand(user):
+    if _over_limit(user):
+        return jsonify({"error": "Monthly limit reached. Upgrade to keep going.", "upgrade": True}), 402
+    d = request.get_json(force=True) or {}
+    if not (d.get("interests") or "").strip():
+        return jsonify({"error": "Tell us your interests / niche first."}), 400
+    if get_client() is None:
+        return jsonify({"positioning": "[demo] Add your API key for a real personal-brand strategy.",
+                        "tagline": "", "niche": "", "content_pillars": [], "voice": "",
+                        "target_brands": [], "bio_options": [], "next_steps": []})
+    try:
+        text = _complete(voice.build_personal_brand_system(), voice.build_personal_brand_user(d), 4000)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    result = voice.parse_brand_advice_json(text)
+    if not result["positioning"]:
+        return jsonify({"error": "Could not build a strategy. Please try again."}), 502
+    summary = f"Personal brand: {result.get('tagline') or result.get('niche') or 'strategy'}"
+    db.save_generation(user["id"], d.get("brand_id"), "personal_brand", "", d.get("interests", ""), [summary])
+    result["used"] = db.monthly_generation_count(user["id"])
+    return jsonify(result)
+
+
+# ------------------------------- gigs ------------------------------------- #
+
+@app.get("/api/gigs")
+@auth
+def gigs_list(user):
+    return jsonify({"gigs": db.list_gigs(user["id"]), "summary": db.gig_summary(user["id"])})
+
+
+@app.post("/api/gigs")
+@auth
+def gig_create(user):
+    data = request.get_json(force=True) or {}
+    if not (data.get("title") or "").strip():
+        return jsonify({"error": "What was the gig? Give it a title."}), 400
+    return jsonify(db.create_gig(user["id"], data))
+
+
+@app.put("/api/gigs/<int:gig_id>")
+@auth
+def gig_update(user, gig_id):
+    if not db.get_gig(user["id"], gig_id):
+        return jsonify({"error": "Gig not found"}), 404
+    return jsonify(db.update_gig(user["id"], gig_id, request.get_json(force=True) or {}))
+
+
+@app.delete("/api/gigs/<int:gig_id>")
+@auth
+def gig_delete(user, gig_id):
+    db.delete_gig(user["id"], gig_id)
+    return jsonify({"ok": True})
+
+
+# ------------------------------ billing ----------------------------------- #
+
+@app.post("/api/billing/init")
+@auth
+def billing_init(user):
+    plan = (request.get_json(force=True) or {}).get("plan", "")
+    if plan not in PLANS or plan == "free":
+        return jsonify({"error": "Choose a paid plan."}), 400
+    if not PAYSTACK_SECRET:
+        return jsonify({"error": "Paystack not configured", "paystack": False}), 400
+    amount = PLANS[plan]["price"] * 100  # kobo
+    callback = request.host_url.rstrip("/") + "/billing/callback"
+    try:
+        r = httpx.post(
+            "https://api.paystack.co/transaction/initialize",
+            headers={"Authorization": f"Bearer {PAYSTACK_SECRET}", "Content-Type": "application/json"},
+            json={"email": user["email"], "amount": amount, "callback_url": callback,
+                  "metadata": {"user_id": user["id"], "plan": plan}},
+            timeout=20,
+        )
+        data = r.json().get("data", {})
+    except Exception as exc:
+        return jsonify({"error": f"Paystack error: {exc}"}), 502
+    if not data.get("authorization_url"):
+        return jsonify({"error": "Could not start checkout."}), 502
+    return jsonify({"authorization_url": data["authorization_url"]})
+
+
+@app.get("/billing/callback")
+def billing_callback():
+    ref = request.args.get("reference", "")
+    if ref and PAYSTACK_SECRET:
+        try:
+            r = httpx.get(f"https://api.paystack.co/transaction/verify/{ref}",
+                          headers={"Authorization": f"Bearer {PAYSTACK_SECRET}"}, timeout=20)
+            data = r.json().get("data", {})
+            if data.get("status") == "success":
+                meta = data.get("metadata", {}) or {}
+                uid, plan = meta.get("user_id"), meta.get("plan")
+                if uid and plan in PLANS:
+                    db.set_user_plan(int(uid), plan)
+                return redirect("/?upgraded=1")
+        except Exception:
+            pass
+    return redirect("/?upgraded=0")
+
+
+@app.post("/api/billing/simulate")
+@auth
+def billing_simulate(user):
+    """Dev helper: instantly switch plan without payment (for testing plan gating)."""
+    plan = (request.get_json(force=True) or {}).get("plan", "")
+    if plan not in PLANS:
+        return jsonify({"error": "Unknown plan"}), 400
+    updated = db.set_user_plan(user["id"], plan)
+    return jsonify({"user": updated, "usage": usage_payload(updated), "simulated": True})
+
+
+if __name__ == "__main__":
+    app.run(host="127.0.0.1", port=5055, debug=True, use_reloader=False)

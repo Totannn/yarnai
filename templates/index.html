@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Yarn AI — Nigerian Brand Voice Engine</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand:  { DEFAULT: "#0b8457", dark: "#097049", tint: "#ecf7f1", ring: "#0b8457" },
+            gold:   { DEFAULT: "#b7791f", tint: "#fdf4e3" },
+            ink:    "#101828",
+            muted:  "#667085",
+            faint:  "#98a2b3",
+            line:   "#eceef1",
+            paper:  "#f5f6f8",
+          },
+          fontFamily: {
+            display: ['"Bricolage Grotesque"', "system-ui", "sans-serif"],
+            sans: ['"Plus Jakarta Sans"', "system-ui", "sans-serif"],
+          },
+          boxShadow: {
+            card: "0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.07)",
+            lift: "0 6px 16px rgba(16,24,40,.08), 0 2px 6px rgba(16,24,40,.05)",
+          },
+          borderRadius: { xl2: "1rem" },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700;12..96,800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    body { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; }
+    h1,h2,h3,.font-display { font-family: 'Bricolage Grotesque', system-ui, sans-serif; }
+    .scroll-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+    .scroll-thin::-webkit-scrollbar-thumb { background: #d6dae0; border-radius: 8px; }
+    .scroll-thin::-webkit-scrollbar-track { background: transparent; }
+    @keyframes pulseDot { 0%,100%{opacity:.25} 50%{opacity:1} }
+    .typing span { animation: pulseDot 1s infinite; }
+    .typing span:nth-child(2){animation-delay:.18s}
+    .typing span:nth-child(3){animation-delay:.36s}
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spin { animation: spin .8s linear infinite; }
+    @keyframes fadeUp { from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:none} }
+    .fade-up { animation: fadeUp .25s ease both; }
+    [data-card]:hover { box-shadow: 0 6px 16px rgba(16,24,40,.08), 0 2px 6px rgba(16,24,40,.05); }
+    .selectable { transition: box-shadow .15s, border-color .15s, background .15s; }
+  </style>
+</head>
+<body class="h-full bg-paper text-ink antialiased">
+  <div id="app" class="min-h-full"></div>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
