@@ -1,5 +1,5 @@
 """
-Yarn AI — Flask server.
+Vertil — Flask server.
 
 Multi-tenant: email/password auth (sessions), per-user brands/generations/
 calendars/favorites, per-plan usage limits, a voice-learning feedback loop, and
@@ -82,6 +82,25 @@ PLANS = {
 }
 PLAN_ORDER = ["free", "starter", "growth", "pro"]
 
+# Per-million-token prices (USD) → used to compute Naira AI spend for the admin view.
+PRICES = {
+    "claude-opus-4-8": (5.0, 25.0),
+    "claude-sonnet-4-6": (3.0, 15.0),
+    "claude-haiku-4-5": (1.0, 5.0),
+}
+NGN_PER_USD = float(os.getenv("NGN_PER_USD", "1600"))
+ADMIN_EMAILS = {e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "demo@yarn.ai").split(",") if e.strip()}
+
+
+def cost_naira(model_id: str, in_tok: int, out_tok: int) -> float:
+    pin, pout = PRICES.get(model_id, PRICES["claude-opus-4-8"])
+    return round((in_tok * pin + out_tok * pout) / 1_000_000 * NGN_PER_USD, 4)
+
+
+def is_admin(user) -> bool:
+    return bool(user) and (user.get("email", "").lower() in ADMIN_EMAILS)
+
+
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "yarn-ai-dev-secret-change-me")
 _client = None
@@ -118,6 +137,23 @@ def auth(fn):
     return wrapper
 
 
+def admin(fn):
+    @functools.wraps(fn)
+    def wrapper(*a, **kw):
+        user = current_user()
+        if not user:
+            return jsonify({"error": "auth_required"}), 401
+        if not is_admin(user):
+            return jsonify({"error": "forbidden"}), 403
+        return fn(user, *a, **kw)
+    return wrapper
+
+
+def user_public(user) -> dict:
+    """User dict for client responses, with the admin flag attached."""
+    return {**user, "is_admin": is_admin(user)}
+
+
 def plan_of(user) -> dict:
     return PLANS.get(user.get("plan", "free"), PLANS["free"])
 
@@ -139,8 +175,18 @@ def usage_payload(user) -> dict:
 # ------------------------------- pages ------------------------------------ #
 
 @app.get("/")
+def landing():
+    return render_template("landing.html")
+
+
+@app.get("/app")
 def index():
     return render_template("index.html", live=LIVE, model=MODEL)
+
+
+@app.get("/admin")
+def admin_page():
+    return render_template("admin.html")
 
 
 @app.get("/api/config")
@@ -171,7 +217,7 @@ def signup():
         return jsonify({"error": "An account with that email already exists. Try logging in."}), 409
     user = db.create_user(email, name or email.split("@")[0], generate_password_hash(pw))
     session["uid"] = user["id"]
-    return jsonify({"user": user, "usage": usage_payload(user)})
+    return jsonify({"user": user_public(user), "usage": usage_payload(user)})
 
 
 @app.post("/api/login")
@@ -183,7 +229,7 @@ def login():
         return jsonify({"error": "Wrong email or password."}), 401
     session["uid"] = rec["id"]
     user = db.get_user(rec["id"])
-    return jsonify({"user": user, "usage": usage_payload(user)})
+    return jsonify({"user": user_public(user), "usage": usage_payload(user)})
 
 
 @app.post("/api/logout")
@@ -195,7 +241,39 @@ def logout():
 @app.get("/api/me")
 @auth
 def me(user):
-    return jsonify({"user": user, "usage": usage_payload(user)})
+    return jsonify({"user": user_public(user), "usage": usage_payload(user)})
+
+
+@app.put("/api/me")
+@auth
+def update_me(user):
+    d = request.get_json(force=True) or {}
+    name = (d.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "Name can't be empty."}), 400
+    updated = db.update_user_name(user["id"], name)
+    return jsonify({"user": user_public(updated), "usage": usage_payload(updated)})
+
+
+@app.post("/api/account/password")
+@auth
+def change_password(user):
+    d = request.get_json(force=True) or {}
+    current = d.get("current") or ""
+    new = d.get("new") or ""
+    if len(new) < 6:
+        return jsonify({"error": "New password must be at least 6 characters."}), 400
+    if not check_password_hash(db.get_password_hash(user["id"]) or "", current):
+        return jsonify({"error": "Current password is incorrect."}), 401
+    db.update_password(user["id"], generate_password_hash(new))
+    return jsonify({"ok": True})
+
+
+@app.post("/api/onboarded")
+@auth
+def mark_onboarded(user):
+    db.set_onboarded(user["id"])
+    return jsonify({"ok": True})
 
 
 # ------------------------------- brands ----------------------------------- #
@@ -350,6 +428,7 @@ def generate(user):
 
         yield _sse("start", {"live": LIVE, "model": MODEL})
         full = ""
+        in_tok = out_tok = 0
         client = get_client()
         if client is None:
             full = _demo_text(content_type, tone, brief, variants)
@@ -366,12 +445,16 @@ def generate(user):
                     for text in s.text_stream:
                         full += text
                         yield _sse("delta", {"text": text})
+                    u = s.get_final_message().usage
+                    in_tok, out_tok = u.input_tokens, u.output_tokens
             except Exception as exc:
                 yield _sse("error", {"message": str(exc)})
                 return
 
         result = voice.split_variants(full)
-        db.save_generation(uid, brand_id, content_type, tone, brief, result)
+        db.save_generation(uid, brand_id, content_type, tone, brief, result,
+                           model=(MODEL if client else ""), input_tokens=in_tok,
+                           output_tokens=out_tok, cost=cost_naira(MODEL, in_tok, out_tok))
         yield _sse("done", {"variants": result, "used": db.monthly_generation_count(uid)})
 
     return Response(stream_with_context(stream()), mimetype="text/event-stream",
@@ -402,10 +485,14 @@ def refine(user):
             messages=[{"role": "user", "content": usr}],
         ) as s:
             text = "".join(s.text_stream)
+            u = s.get_final_message().usage
+            in_tok, out_tok = u.input_tokens, u.output_tokens
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
     db.save_generation(user["id"], d.get("brand_id"), d.get("content_type", ""),
-                       d.get("tone", ""), "[refine] " + d.get("instruction", ""), [text.strip()])
+                       d.get("tone", ""), "[refine] " + d.get("instruction", ""), [text.strip()],
+                       model=MODEL, input_tokens=in_tok, output_tokens=out_tok,
+                       cost=cost_naira(MODEL, in_tok, out_tok))
     return jsonify({"text": text.strip(), "used": db.monthly_generation_count(user["id"])})
 
 
@@ -453,11 +540,17 @@ def calendar_generate(user):
                 messages=[{"role": "user", "content": voice.build_calendar_user(month, year, cadence)}],
             ) as s:
                 text = "".join(s.text_stream)
+                u = s.get_final_message().usage
             posts = voice.parse_calendar_json(text)
         except Exception as exc:
             return jsonify({"error": str(exc)}), 500
         if not posts:
             return jsonify({"error": "Could not parse the calendar. Please try again."}), 502
+        # log the AI spend for the admin dashboard (not counted against gen quota)
+        db.save_generation(user["id"], brand_id, "content_calendar", "",
+                           f"{month} {year}", [f"{len(posts)} posts"], model=MODEL,
+                           input_tokens=u.input_tokens, output_tokens=u.output_tokens,
+                           cost=cost_naira(MODEL, u.input_tokens, u.output_tokens))
 
     return jsonify(db.save_calendar(user["id"], brand_id, month, year, cadence, posts))
 
@@ -489,17 +582,19 @@ def _over_limit(user) -> bool:
     return p["gen_limit"] is not None and db.monthly_generation_count(user["id"]) >= p["gen_limit"]
 
 
-def _complete(system: str, user_msg: str, max_tokens: int = 3000) -> str:
-    """One-shot (non-streamed) completion, collected to a string."""
+def _complete(system: str, user_msg: str, max_tokens: int = 3000):
+    """One-shot (non-streamed) completion. Returns (text, input_tokens, output_tokens)."""
     client = get_client()
     if client is None:
-        return ""
+        return "", 0, 0
     with client.messages.stream(
         model=MODEL, max_tokens=max_tokens, thinking={"type": "adaptive"},
         output_config={"effort": "medium"}, system=system,
         messages=[{"role": "user", "content": user_msg}],
     ) as s:
-        return "".join(s.text_stream)
+        text = "".join(s.text_stream)
+        u = s.get_final_message().usage
+    return text, u.input_tokens, u.output_tokens
 
 
 @app.post("/api/advisor/rate")
@@ -515,7 +610,7 @@ def advisor_rate(user):
                         "summary": "[demo] Add your API key for real Naija rate advice.",
                         "factors": ["Demo mode"], "pitch": "", "tips": [], "upsells": []})
     try:
-        text = _complete(voice.build_rate_system(), voice.build_rate_user(d), 3000)
+        text, in_tok, out_tok = _complete(voice.build_rate_system(), voice.build_rate_user(d), 3000)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
     result = voice.parse_rate_json(text)
@@ -523,7 +618,9 @@ def advisor_rate(user):
         return jsonify({"error": "Could not work out a rate. Please try again."}), 502
     r = result["recommended"]
     summary = f"₦{r['low']:,}–₦{r['high']:,} {r['unit']} · {result['service']}"
-    db.save_generation(user["id"], d.get("brand_id"), "rate_advisor", "", d.get("service", ""), [summary])
+    db.save_generation(user["id"], d.get("brand_id"), "rate_advisor", "", d.get("service", ""), [summary],
+                       model=MODEL, input_tokens=in_tok, output_tokens=out_tok,
+                       cost=cost_naira(MODEL, in_tok, out_tok))
     result["used"] = db.monthly_generation_count(user["id"])
     return jsonify(result)
 
@@ -541,14 +638,16 @@ def advisor_brand(user):
                         "tagline": "", "niche": "", "content_pillars": [], "voice": "",
                         "target_brands": [], "bio_options": [], "next_steps": []})
     try:
-        text = _complete(voice.build_personal_brand_system(), voice.build_personal_brand_user(d), 4000)
+        text, in_tok, out_tok = _complete(voice.build_personal_brand_system(), voice.build_personal_brand_user(d), 4000)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
     result = voice.parse_brand_advice_json(text)
     if not result["positioning"]:
         return jsonify({"error": "Could not build a strategy. Please try again."}), 502
     summary = f"Personal brand: {result.get('tagline') or result.get('niche') or 'strategy'}"
-    db.save_generation(user["id"], d.get("brand_id"), "personal_brand", "", d.get("interests", ""), [summary])
+    db.save_generation(user["id"], d.get("brand_id"), "personal_brand", "", d.get("interests", ""), [summary],
+                       model=MODEL, input_tokens=in_tok, output_tokens=out_tok,
+                       cost=cost_naira(MODEL, in_tok, out_tok))
     result["used"] = db.monthly_generation_count(user["id"])
     return jsonify(result)
 
@@ -641,6 +740,66 @@ def billing_simulate(user):
         return jsonify({"error": "Unknown plan"}), 400
     updated = db.set_user_plan(user["id"], plan)
     return jsonify({"user": updated, "usage": usage_payload(updated), "simulated": True})
+
+
+# ------------------------------- admin ------------------------------------ #
+
+# Friendly labels for content types (incl. the synthetic admin-only ones).
+_TYPE_LABELS = {**{k: v["label"] for k, v in voice.CONTENT_TYPES.items()},
+                "content_calendar": "Content Calendar",
+                "rate_advisor": "Rate Advisor", "personal_brand": "Brand Advisor"}
+
+
+@app.get("/api/admin/overview")
+@admin
+def admin_overview(_user):
+    o = db.admin_overview()
+    # estimated MRR from paid subscribers
+    plan_price = {k: PLANS[k]["price"] for k in PLANS}
+    paid = 0
+    mrr = 0
+    plan_rows = []
+    for row in o["by_plan"]:
+        price = plan_price.get(row["plan"], 0)
+        if price:
+            paid += row["n"]
+            mrr += price * row["n"]
+        plan_rows.append({"plan": row["plan"],
+                          "name": PLANS.get(row["plan"], {}).get("name", row["plan"]),
+                          "count": row["n"], "price": price})
+    for t in o["by_type"]:
+        t["label"] = _TYPE_LABELS.get(t["content_type"], t["content_type"])
+    return jsonify({
+        **o,
+        "paid_users": paid, "mrr": mrr, "arr": mrr * 12,
+        "plans": sorted(plan_rows, key=lambda x: -x["count"]),
+        "fx": NGN_PER_USD,
+    })
+
+
+@app.get("/api/admin/users")
+@admin
+def admin_users(_user):
+    rows = db.admin_users()
+    for r in rows:
+        r["is_admin"] = r["email"].lower() in ADMIN_EMAILS
+        r["plan_name"] = PLANS.get(r["plan"], {}).get("name", r["plan"])
+    return jsonify(rows)
+
+
+@app.get("/api/admin/users/<int:uid>")
+@admin
+def admin_user(_user, uid):
+    detail = db.admin_user_detail(uid)
+    if not detail:
+        return jsonify({"error": "Not found"}), 404
+    detail["user"]["plan_name"] = PLANS.get(detail["user"]["plan"], {}).get("name", detail["user"]["plan"])
+    detail["user"]["is_admin"] = detail["user"]["email"].lower() in ADMIN_EMAILS
+    for t in detail["by_type"]:
+        t["label"] = _TYPE_LABELS.get(t["content_type"], t["content_type"])
+    for g in detail["recent"]:
+        g["label"] = _TYPE_LABELS.get(g["content_type"], g["content_type"])
+    return jsonify(detail)
 
 
 if __name__ == "__main__":

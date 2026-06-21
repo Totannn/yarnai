@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vertil — Admin Console</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand:  { DEFAULT: "#0e9488", dark: "#0c7a70", bright: "#2dd4bf", tint: "#0f3b35" },
+            gold:   { DEFAULT: "#d8a13a", tint: "#3a2f12" },
+            ink:    "#081d1a",
+            panel:  "#0f322d",
+            edge:   "#1d3b37",
+            muted:  "#8aa39d",
+            faint:  "#5f7a74",
+            paper:  "#0c2724",
+          },
+          fontFamily: {
+            display: ['"Space Grotesk"', "system-ui", "sans-serif"],
+            sans: ['"Space Grotesk"', "system-ui", "sans-serif"],
+            mono: ['"Space Mono"', "ui-monospace", "monospace"],
+          },
+          borderRadius: { xl2: "1rem" },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+  <style>
+    body { font-family: 'Space Grotesk', system-ui, sans-serif; }
+    h1,h2,h3,.font-display { font-family: 'Space Grotesk', system-ui, sans-serif; }
+    .scroll-thin::-webkit-scrollbar { height: 8px; width: 8px; }
+    .scroll-thin::-webkit-scrollbar-thumb { background: #2a4a44; border-radius: 8px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spin { animation: spin .8s linear infinite; }
+    @keyframes fadeUp { from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:none} }
+    .fade-up { animation: fadeUp .25s ease both; }
+    .tabular-nums { font-variant-numeric: tabular-nums; }
+    .vword { display:inline-flex; align-items:flex-end; font-weight:600; letter-spacing:-0.04em; line-height:.9; }
+    .vi { display:inline-flex; flex-direction:column; align-items:center; justify-content:flex-end; height:.96em; margin:0 .05em .04em; }
+    .vi-tip { width:0; height:0; border-left:.2em solid transparent; border-right:.2em solid transparent; border-bottom:.28em solid var(--vi,#2dd4bf); }
+    .vi-stem { width:.135em; height:.5em; background:var(--vi,#2dd4bf); border-radius:.02em; margin-top:.025em; }
+  </style>
+</head>
+<body class="h-full bg-ink text-slate-100 antialiased">
+  <div id="app" class="min-h-full"></div>
+  <script src="{{ url_for('static', filename='admin.js') }}"></script>
+</body>
+</html>

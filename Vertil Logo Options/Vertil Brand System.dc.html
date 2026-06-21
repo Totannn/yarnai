@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;background:#eceae5;}
+  @keyframes vertilLaunch{0%,100%{transform:translateY(0)}50%{transform:translateY(-0.16em)}}
+  @keyframes vertilTrail{0%{opacity:0;transform:translate(-50%,0.25em)}35%{opacity:.65}100%{opacity:0;transform:translate(-50%,-0.8em)}}
+  @keyframes vertilGlow{0%,100%{opacity:.5}50%{opacity:1}}
+  @keyframes vertilAscend{0%{opacity:0;transform:translateY(0.7em)}22%{opacity:1;transform:translateY(0)}80%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(-0.45em)}}
+</style>
+</helmet>
+
+<div style="max-width:1120px;margin:0 auto;padding:64px 40px 96px;font-family:'Space Grotesk',sans-serif;color:#13312e;">
+
+  <!-- HEADER -->
+  <div style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:2px;color:#0e9488;text-transform:uppercase;margin-bottom:14px;">Brand & Logo System</div>
+  <div style="font-size:46px;font-weight:700;letter-spacing:-1.5px;line-height:1;margin-bottom:14px;">Vertil</div>
+  <div style="font-family:'Space Mono',monospace;font-size:12px;color:#7c8a87;max-width:560px;line-height:1.6;">AI for content creation. The mark hides an upward arrow inside the wordmark — the dotted &ldquo;i&rdquo; becomes a launch.</div>
+
+  <!-- HERO ANIMATED LOGO -->
+  <div style="margin-top:48px;background:#0c2724;border-radius:6px;height:360px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:28px;overflow:hidden;position:relative;">
+    <div style="position:absolute;top:24px;left:28px;font-family:'Space Mono',monospace;font-size:10px;letter-spacing:1.5px;color:#4f7a74;text-transform:uppercase;">Primary logo · animated</div>
+    <div style="display:inline-flex;align-items:flex-end;font-weight:600;letter-spacing:-0.04em;line-height:0.9;color:#f4f7f6;font-size:92px;">
+      <span>Vert</span>
+      <span style="position:relative;display:inline-flex;flex-direction:column;align-items:center;justify-content:flex-end;height:0.96em;margin:0 0.05em 0.04em;animation:vertilLaunch 1.9s ease-in-out infinite;">
+        <span style="position:absolute;bottom:1em;left:50%;width:0;height:0;border-left:0.16em solid transparent;border-right:0.16em solid transparent;border-bottom:0.16em solid #2dd4bf;transform:translate(-50%,0);animation:vertilTrail 1.9s ease-out infinite;"></span>
+        <span style="width:0;height:0;border-left:0.2em solid transparent;border-right:0.2em solid transparent;border-bottom:0.28em solid #2dd4bf;"></span>
+        <span style="width:0.135em;height:0.5em;background:#2dd4bf;border-radius:0.02em;margin-top:0.025em;"></span>
+      </span>
+      <span>l</span>
+    </div>
+    <div style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:1px;color:#6a948e;">the &ldquo;i&rdquo; lifts off on a loop</div>
+  </div>
+
+  <!-- SECTION: LOCKUPS -->
+  <div style="display:flex;align-items:center;gap:16px;margin:64px 0 24px;">
+    <div style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:2px;color:#13312e;text-transform:uppercase;">01 / Logo Lockups</div>
+    <div style="flex:1;height:1px;background:#d6d3cc;"></div>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+    <!-- signature light -->
+    <div style="background:#ffffff;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.07);height:180px;display:flex;align-items:center;justify-content:center;position:relative;">
+      <div style="position:absolute;top:16px;left:18px;font-family:'Space Mono',monospace;font-size:10px;letter-spacing:1.5px;color:#a8a59d;text-transform:uppercase;">Signature</div>
+      <div style="display:inline-flex;align-items:flex-end;font-weight:600;letter-spacing:-0.04em;line-height:0.9;color:#13312e;font-size:48px;">
+        <span>Vert</span>
+        <span style="display:inline-flex;flex-direction:column;align-items:center;justify-content:flex-end;height:0.96em;margin:0 0.05em 0.04em;">
+          <span style="width:0;height:0;border-left:0.2em solid transparent;border-right:0.2em solid transparent;border-bottom:0.28em solid #0e9488;"></span>
+          <span style="width:0.135em;height:0.5em;background:#0e9488;border-radius:0.02em;margin-top:0.025em;"></span>
+        </span>
+        <span>l</span>
+      </div>
+    </div>
+    <!-- reversed dark -->
+    <div style="background:#0c2724;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.07);height:180px;display:flex;align-items:center;justify-content:center;position:relative;">
+      <div style="position:absolute;top:16px;left:18px;font-family:'Space Mono',monospace;font-size:10px;letter-spacing:1.5px;color:#4f7a74;text-transform:uppercase;">Reversed</div>
+      <div style="display:inline-flex;align-items:flex-end;font-weight:600;letter-spacing:-0.04em;line-height:0.9;color:#f4f7f6;font-size:48px;">
+        <span>Vert</span>
+        <span style="display:inline-flex;flex-direction:column;align-items:center;justify-content:flex-end;height:0.96em;margin:0 0.05em 0.04em;">
+          <span style="width:0;height:0;border-left:0.2em solid transparent;border-right:0.2em solid transparent;border-bottom:0.28em solid #2dd4bf;"></span>
+          <span style="width:0.135em;height:0.5em;background:#2dd4bf;border-radius:0.02em;margin-top:0.025em;"></span>
+        </span>
+        <span>l</span>
+      </div>
+    </div>
+    <!-- stacked -->
+    <div style="background:#ffffff;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.07);height:200px;display:flex;align-items:center;justify-content:center;position:relative;">
+      <div style="position:absolute;top:16px;left:18px;font-family:'Space Mono',monospace;font-size:10px;letter-spacing:1.5px;color:#a8a59d;text-transform:uppercase;">Stacked</div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:14px;">
+        <span style="display:inline-flex;flex-direction:column;align-items:center;font-size:46px;line-height:1;">
+          <span style="width:0;height:0;border-left:0.34em solid transparent;border-right:0.34em solid transparent;border-bottom:0.46em solid #0e9488;"></span>
+          <span style="width:0.22em;height:0.78em;background:#0e9488;border-radius:0.03em;margin-top:0.04em;"></span>
+        </span>
+        <div style="font-size:22px;font-weight:600;letter-spacing:6px;color:#13312e;padding-left:6px;">VERTIL</div>
+      </div>
+    </div>
+    <!-- icon -->
+    <div style="background:#ffffff;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.07);height:200px;display:flex;align-items:center;justify-content:center;gap:28px;position:relative;">
+      <div style="position:absolute;top:16px;left:18px;font-family:'Space Mono',monospace;font-size:10px;letter-spacing:1.5px;color:#a8a59d;text-transform:uppercase;">App icon &amp; mark</div>
+      <div style="width:92px;height:92px;border-radius:22px;background:#0e9488;display:flex;align-items:center;justify-content:center;">
+        <span style="display:inline-flex;flex-direction:column;align-items:center;font-size:44px;line-height:1;">
+          <span style="width:0;height:0;border-left:0.34em solid transparent;border-right:0.34em solid transparent;border-bottom:0.46em solid #ffffff;"></span>
+          <span style="width:0.22em;height:0.78em;background:#ffffff;border-radius:0.03em;margin-top:0.04em;"></span>
+        </span>
+      </div>
+      <span style="display:inline-flex;flex-direction:column;align-items:center;font-size:50px;line-height:1;">
+        <span style="width:0;height:0;border-left:0.34em solid transparent;border-right:0.34em solid transparent;border-bottom:0.46em solid #0e9488;"></span>
+        <span style="width:0.22em;height:0.78em;background:#0e9488;border-radius:0.03em;margin-top:0.04em;"></span>
+      </span>
+    </div>
+  </div>
+
+  <!-- SECTION: FAVICON SIZES -->
+  <div style="display:flex;align-items:center;gap:16px;margin:64px 0 24px;">
+    <div style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:2px;color:#13312e;text-transform:uppercase;">02 / Mark at size</div>
+    <div style="flex:1;height:1px;background:#d6d3cc;"></div>
+  </div>
+  <div style="background:#ffffff;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.07);padding:40px;display:flex;align-items:flex-end;gap:44px;">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:12px;">
+      <div style="width:64px;height:64px;border-radius:15px;background:#0e9488;display:flex;align-items:center;justify-content:center;"><span style="display:inline-flex;flex-direction:column;align-items:center;font-size:30px;line-height:1;"><span style="width:0;height:0;border-left:0.34em solid transparent;border-right:0.34em solid transparent;border-bottom:0.46em solid #fff;"></span><span style="width:0.22em;height:0.78em;background:#fff;border-radius:0.03em;margin-top:0.04em;"></span></span></div>
+      <div style="font-family:'Space Mono',monospace;font-size:10px;color:#a8a59d;">64</div>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:12px;">
+      <div style="width:48px;height:48px;border-radius:12px;background:#0e9488;display:flex;align-items:center;justify-content:center;"><span style="display:inline-flex;flex-direction:column;align-items:center;font-size:22px;line-height:1;"><span style="width:0;height:0;border-left:0.34em solid transparent;border-right:0.34em solid transparent;border-bottom:0.46em solid #fff;"></span><span style="width:0.22em;height:0.78em;background:#fff;border-radius:0.03em;margin-top:0.04em;"></span></span></div>
+      <div style="font-family:'Space Mono',monospace;font-size:10px;color:#a8a59d;">48</div>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:12px;">
+      <div style="width:32px;height:32px;border-radius:8px;background:#0e9488;display:flex;align-items:center;justify-content:center;"><span style="display:inline-flex;flex-direction:column;align-items:center;font-size:15px;line-height:1;"><span style="width:0;height:0;border-left:0.34em solid transparent;border-right:0.34em solid transparent;border-bottom:0.46em solid #fff;"></span><span style="width:0.22em;height:0.78em;background:#fff;border-radius:0.03em;margin-top:0.04em;"></span></span></div>
+      <div style="font-family:'Space Mono',monospace;font-size:10px;color:#a8a59d;">32</div>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:12px;">
+      <div style="width:20px;height:20px;border-radius:5px;background:#0e9488;display:flex;align-items:center;justify-content:center;"><span style="display:inline-flex;flex-direction:column;align-items:center;font-size:9px;line-height:1;"><span style="width:0;height:0;border-left:0.34em solid transparent;border-right:0.34em solid transparent;border-bottom:0.46em solid #fff;"></span><span style="width:0.22em;height:0.78em;background:#fff;border-radius:0.03em;margin-top:0.04em;"></span></span></div>
+      <div style="font-family:'Space Mono',monospace;font-size:10px;color:#a8a59d;">16</div>
+    </div>
+    <div style="flex:1;"></div>
+    <div style="font-family:'Space Mono',monospace;font-size:11px;line-height:1.7;color:#9aa6a3;max-width:240px;">The arrow holds up to a 16px favicon — stem stays readable because it sits dead-center.</div>
+  </div>
+
+  <!-- SECTION: COLOR THEMES -->
+  <div style="display:flex;align-items:center;gap:16px;margin:64px 0 24px;">
+    <div style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:2px;color:#13312e;text-transform:uppercase;">03 / Color themes</div>
+    <div style="flex:1;height:1px;background:#d6d3cc;"></div>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+
+    <!-- Forest -->
+    <div style="background:#eef4ef;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.07);padding:28px;">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:22px;">
+        <div style="font-size:16px;font-weight:600;letter-spacing:-0.3px;color:#0e2a1c;">Forest</div>
+        <div style="font-family:'Space Mono',monospace;font-size:10px;color:#6f8a7c;">deep green · default</div>
+      </div>
+      <div style="display:flex;align-items:flex-end;font-weight:600;letter-spacing:-0.04em;line-height:0.9;color:#0e2a1c;font-size:40px;margin-bottom:24px;"><span>Vert</span><span style="display:inline-flex;flex-direction:column;align-items:center;justify-content:flex-end;height:0.96em;margin:0 0.05em 0.04em;"><span style="width:0;height:0;border-left:0.2em solid transparent;border-right:0.2em solid transparent;border-bottom:0.28em solid #1f7a4d;"></span><span style="width:0.135em;height:0.5em;background:#1f7a4d;border-radius:0.02em;margin-top:0.025em;"></span></span><span>l</span></div>
+      <div style="display:flex;gap:8px;">
+        <div style="flex:1;height:34px;border-radius:5px;background:#0e2a1c;"></div>
+        <div style="flex:1;height:34px;border-radius:5px;background:#1f7a4d;"></div>
+        <div style="flex:1;height:34px;border-radius:5px;background:#46c989;"></div>
+        <div style="flex:1;height:34px;border-radius:5px;background:#eef4ef;border:1px solid #d9e6dd;"></div>
+      </div>
+    </div>
+
+    <!-- Signal -->
+    <div style="background:#f4f7f6;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.07);padding:28px;">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:22px;">
+        <div style="font-size:16px;font-weight:600;letter-spacing:-0.3px;color:#13312e;">Signal</div>
+        <div style="font-family:'Space Mono',monospace;font-size:10px;color:#7c8a87;">teal green</div>
+      </div>
+      <div style="display:flex;align-items:flex-end;font-weight:600;letter-spacing:-0.04em;line-height:0.9;color:#13312e;font-size:40px;margin-bottom:24px;"><span>Vert</span><span style="display:inline-flex;flex-direction:column;align-items:center;justify-content:flex-end;height:0.96em;margin:0 0.05em 0.04em;"><span style="width:0;height:0;border-left:0.2em solid transparent;border-right:0.2em solid transparent;border-bottom:0.28em solid #0e9488;"></span><span style="width:0.135em;height:0.5em;background:#0e9488;border-radius:0.02em;margin-top:0.025em;"></span></span><span>l</span></div>
+      <div style="display:flex;gap:8px;">
+        <div style="flex:1;height:34px;border-radius:5px;background:#13312e;"></div>
+        <div style="flex:1;height:34px;border-radius:5px;background:#0e9488;"></div>
+        <div style="flex:1;height:34px;border-radius:5px;background:#2dd4bf;"></div>
+        <div style="flex:1;height:34px;border-radius:5px;background:#f4f7f6;border:1px solid #dde6e4;"></div>
+      </div>
+    </div>
+
+    <!-- Emerald -->
+    <div style="background:#edf6f0;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.07);padding:28px;">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:22px;">
+        <div style="font-size:16px;font-weight:600;letter-spacing:-0.3px;color:#0c2a1c;">Emerald</div>
+        <div style="font-family:'Space Mono',monospace;font-size:10px;color:#6f8f7d;">vivid · web</div>
+      </div>
+      <div style="display:flex;align-items:flex-end;font-weight:600;letter-spacing:-0.04em;line-height:0.9;color:#0c2a1c;font-size:40px;margin-bottom:24px;"><span>Vert</span><span style="display:inline-flex;flex-direction:column;align-items:center;justify-content:flex-end;height:0.96em;margin:0 0.05em 0.04em;"><span style="width:0;height:0;border-left:0.2em solid transparent;border-right:0.2em solid transparent;border-bottom:0.28em solid #10b981;"></span><span style="width:0.135em;height:0.5em;background:#10b981;border-radius:0.02em;margin-top:0.025em;"></span></span><span>l</span></div>
+      <div style="display:flex;gap:8px;">
+        <div style="flex:1;height:34px;border-radius:5px;background:#0c2a1c;"></div>
+        <div style="flex:1;height:34px;border-radius:5px;background:#10b981;"></div>
+        <div style="flex:1;height:34px;border-radius:5px;background:#6ee7b7;"></div>
+        <div style="flex:1;height:34px;border-radius:5px;background:#edf6f0;border:1px solid #d6e8dd;"></div>
+      </div>
+    </div>
+
+    <!-- Sage -->
+    <div style="background:#f3f5ee;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.07);padding:28px;">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:22px;">
+        <div style="font-size:16px;font-weight:600;letter-spacing:-0.3px;color:#25301f;">Sage</div>
+        <div style="font-family:'Space Mono',monospace;font-size:10px;color:#849177;">soft · muted</div>
+      </div>
+      <div style="display:flex;align-items:flex-end;font-weight:600;letter-spacing:-0.04em;line-height:0.9;color:#25301f;font-size:40px;margin-bottom:24px;"><span>Vert</span><span style="display:inline-flex;flex-direction:column;align-items:center;justify-content:flex-end;height:0.96em;margin:0 0.05em 0.04em;"><span style="width:0;height:0;border-left:0.2em solid transparent;border-right:0.2em solid transparent;border-bottom:0.28em solid #5f8d4e;"></span><span style="width:0.135em;height:0.5em;background:#5f8d4e;border-radius:0.02em;margin-top:0.025em;"></span></span><span>l</span></div>
+      <div style="display:flex;gap:8px;">
+        <div style="flex:1;height:34px;border-radius:5px;background:#25301f;"></div>
+        <div style="flex:1;height:34px;border-radius:5px;background:#5f8d4e;"></div>
+        <div style="flex:1;height:34px;border-radius:5px;background:#9bc183;"></div>
+        <div style="flex:1;height:34px;border-radius:5px;background:#f3f5ee;border:1px solid #e3e6d9;"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- SECTION: MOTION -->
+  <div style="display:flex;align-items:center;gap:16px;margin:64px 0 24px;">
+    <div style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:2px;color:#13312e;text-transform:uppercase;">04 / Motion</div>
+    <div style="flex:1;height:1px;background:#d6d3cc;"></div>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;">
+
+    <!-- Liftoff -->
+    <div style="background:#0c2724;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.07);height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;overflow:hidden;">
+      <div style="display:inline-flex;align-items:flex-end;font-weight:600;letter-spacing:-0.04em;line-height:0.9;color:#f4f7f6;font-size:40px;">
+        <span>Vert</span>
+        <span style="position:relative;display:inline-flex;flex-direction:column;align-items:center;justify-content:flex-end;height:0.96em;margin:0 0.05em 0.04em;animation:vertilLaunch 1.9s ease-in-out infinite;">
+          <span style="position:absolute;bottom:1em;left:50%;width:0;height:0;border-left:0.16em solid transparent;border-right:0.16em solid transparent;border-bottom:0.16em solid #2dd4bf;transform:translate(-50%,0);animation:vertilTrail 1.9s ease-out infinite;"></span>
+          <span style="width:0;height:0;border-left:0.2em solid transparent;border-right:0.2em solid transparent;border-bottom:0.28em solid #2dd4bf;"></span>
+          <span style="width:0.135em;height:0.5em;background:#2dd4bf;border-radius:0.02em;margin-top:0.025em;"></span>
+        </span>
+        <span>l</span>
+      </div>
+      <div style="font-family:'Space Mono',monospace;font-size:10px;letter-spacing:1px;color:#6a948e;text-transform:uppercase;">Liftoff · idle loop</div>
+    </div>
+
+    <!-- Ascend -->
+    <div style="background:#0c2724;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.07);height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;overflow:hidden;">
+      <div style="display:inline-flex;align-items:flex-end;font-weight:600;letter-spacing:-0.04em;line-height:0.9;color:#f4f7f6;font-size:40px;">
+        <span>Vert</span>
+        <span style="display:inline-flex;flex-direction:column;align-items:center;justify-content:flex-end;height:0.96em;margin:0 0.05em 0.04em;animation:vertilAscend 2.6s ease-in-out infinite;">
+          <span style="width:0;height:0;border-left:0.2em solid transparent;border-right:0.2em solid transparent;border-bottom:0.28em solid #2dd4bf;"></span>
+          <span style="width:0.135em;height:0.5em;background:#2dd4bf;border-radius:0.02em;margin-top:0.025em;"></span>
+        </span>
+        <span>l</span>
+      </div>
+      <div style="font-family:'Space Mono',monospace;font-size:10px;letter-spacing:1px;color:#6a948e;text-transform:uppercase;">Ascend · logo reveal</div>
+    </div>
+
+    <!-- Exhaust -->
+    <div style="background:#0c2724;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.07);height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;overflow:hidden;">
+      <div style="display:inline-flex;align-items:flex-end;font-weight:600;letter-spacing:-0.04em;line-height:0.9;color:#f4f7f6;font-size:40px;">
+        <span>Vert</span>
+        <span style="position:relative;display:inline-flex;flex-direction:column;align-items:center;justify-content:flex-end;height:0.96em;margin:0 0.05em 0.04em;">
+          <span style="position:absolute;bottom:1em;left:50%;width:0;height:0;border-left:0.15em solid transparent;border-right:0.15em solid transparent;border-bottom:0.15em solid #2dd4bf;transform:translate(-50%,0);animation:vertilTrail 1.5s ease-out infinite;"></span>
+          <span style="position:absolute;bottom:1em;left:50%;width:0;height:0;border-left:0.15em solid transparent;border-right:0.15em solid transparent;border-bottom:0.15em solid #2dd4bf;transform:translate(-50%,0);animation:vertilTrail 1.5s ease-out 0.5s infinite;"></span>
+          <span style="position:absolute;bottom:1em;left:50%;width:0;height:0;border-left:0.15em solid transparent;border-right:0.15em solid transparent;border-bottom:0.15em solid #2dd4bf;transform:translate(-50%,0);animation:vertilTrail 1.5s ease-out 1s infinite;"></span>
+          <span style="width:0;height:0;border-left:0.2em solid transparent;border-right:0.2em solid transparent;border-bottom:0.28em solid #2dd4bf;"></span>
+          <span style="width:0.135em;height:0.5em;background:#2dd4bf;border-radius:0.02em;margin-top:0.025em;"></span>
+        </span>
+        <span>l</span>
+      </div>
+      <div style="font-family:'Space Mono',monospace;font-size:10px;letter-spacing:1px;color:#6a948e;text-transform:uppercase;">Exhaust · loading state</div>
+    </div>
+
+  </div>
+
+  <!-- SECTION: ON BACKGROUNDS -->
+  <div style="display:flex;align-items:center;gap:16px;margin:64px 0 24px;">
+    <div style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:2px;color:#13312e;text-transform:uppercase;">05 / On backgrounds</div>
+    <div style="flex:1;height:1px;background:#d6d3cc;"></div>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;">
+    <div style="background:#ffffff;border:1px solid #e4e2dc;border-radius:4px;height:150px;display:flex;align-items:center;justify-content:center;">
+      <div style="display:flex;align-items:flex-end;font-weight:600;letter-spacing:-0.04em;line-height:0.9;color:#13312e;font-size:34px;"><span>Vert</span><span style="display:inline-flex;flex-direction:column;align-items:center;justify-content:flex-end;height:0.96em;margin:0 0.05em 0.04em;"><span style="width:0;height:0;border-left:0.2em solid transparent;border-right:0.2em solid transparent;border-bottom:0.28em solid #0e9488;"></span><span style="width:0.135em;height:0.5em;background:#0e9488;border-radius:0.02em;margin-top:0.025em;"></span></span><span>l</span></div>
+    </div>
+    <div style="background:#0c2724;border-radius:4px;height:150px;display:flex;align-items:center;justify-content:center;">
+      <div style="display:flex;align-items:flex-end;font-weight:600;letter-spacing:-0.04em;line-height:0.9;color:#f4f7f6;font-size:34px;"><span>Vert</span><span style="display:inline-flex;flex-direction:column;align-items:center;justify-content:flex-end;height:0.96em;margin:0 0.05em 0.04em;"><span style="width:0;height:0;border-left:0.2em solid transparent;border-right:0.2em solid transparent;border-bottom:0.28em solid #2dd4bf;"></span><span style="width:0.135em;height:0.5em;background:#2dd4bf;border-radius:0.02em;margin-top:0.025em;"></span></span><span>l</span></div>
+    </div>
+    <div style="background:#0e9488;border-radius:4px;height:150px;display:flex;align-items:center;justify-content:center;">
+      <div style="display:flex;align-items:flex-end;font-weight:600;letter-spacing:-0.04em;line-height:0.9;color:#ffffff;font-size:34px;"><span>Vert</span><span style="display:inline-flex;flex-direction:column;align-items:center;justify-content:flex-end;height:0.96em;margin:0 0.05em 0.04em;"><span style="width:0;height:0;border-left:0.2em solid transparent;border-right:0.2em solid transparent;border-bottom:0.28em solid #ffffff;"></span><span style="width:0.135em;height:0.5em;background:#ffffff;border-radius:0.02em;margin-top:0.025em;"></span></span><span>l</span></div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

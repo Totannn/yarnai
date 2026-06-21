@@ -1,5 +1,5 @@
 """
-Yarn AI — the Nigerian Brand Voice Engine.
+Vertil — the Nigerian Brand Voice Engine.
 
 This is the differentiator. Generic AI writes copy; this writes copy that sounds
 like it came from a brand rooted in Surulere, Aba, Kano or Enugu. The engine
@@ -258,7 +258,7 @@ def build_system_prompt(profile: dict | None, tone_key: str,
     tone = TONES.get(tone_key, TONES["friendly"])
     brand_block = build_brand_block(profile)
 
-    return f"""You are Yarn AI — Nigeria's sharpest brand copywriter. You write marketing \
+    return f"""You are Vertil — Nigeria's sharpest brand copywriter. You write marketing \
 copy that sounds like it came from a real, rooted Nigerian brand — never generic, \
 never stiff "international AI" English. You deeply understand Nigerian consumer \
 psychology, humour, hustle culture and what actually makes people in Lagos, Aba, \
@@ -400,7 +400,7 @@ def build_calendar_system(profile: dict | None) -> str:
     brand_block = build_brand_block(profile)
     valid_ct = ", ".join(CONTENT_TYPES.keys())
     valid_tone = ", ".join(TONES.keys())
-    return f"""You are Yarn AI's content strategist for Nigerian brands. You plan \
+    return f"""You are Vertil's content strategist for Nigerian brands. You plan \
 monthly social media calendars that ride the rhythm of Nigerian life — pay-day \
 cycles, public holidays, religious moments, cultural waves (Detty December, ember \
 months, Valentine, Independence Day, Black Friday, school resumption) — so the brand \
@@ -547,7 +547,7 @@ CLIENT_TYPES = [
 
 
 def build_rate_system() -> str:
-    return """You are Yarn AI's Naija Rate Advisor — a sharp, experienced Nigerian \
+    return """You are Vertil's Naija Rate Advisor — a sharp, experienced Nigerian \
 freelance/creative-business consultant. You help Nigerians price their gigs CONFIDENTLY \
 and FAIRLY for the current Nigerian market, in Naira (₦). You know real local rates: \
 what a Lagos brand actually pays a social media manager, what an Aba tailor charges, \
@@ -620,7 +620,7 @@ BRAND_TYPES = [
 
 
 def build_personal_brand_system() -> str:
-    return """You are Yarn AI's Personal Branding Advisor for Nigerian creators, \
+    return """You are Vertil's Personal Branding Advisor for Nigerian creators, \
 freelancers and professionals. You design sharp, authentic personal-brand strategies \
 that win attention and brand deals in the Nigerian market. You understand Nigerian \
 social media culture, what local brands look for in creators/ambassadors, and how to \
