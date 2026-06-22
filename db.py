@@ -7,11 +7,16 @@ infrastructure; maps cleanly onto Postgres for production."""
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import time
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent / "yarn.db"
+# DB lives next to the code by default; on a host (Railway/Render) set
+# VERTIL_DB_PATH to a path on a mounted persistent volume (e.g. /data/yarn.db)
+# so data survives redeploys.
+DB_PATH = Path(os.environ.get("VERTIL_DB_PATH") or (Path(__file__).resolve().parent / "yarn.db"))
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _conn() -> sqlite3.Connection:
