@@ -41,6 +41,9 @@
     html, body { overflow-x: clip; max-width: 100%; }
     body { font-family: 'Space Grotesk', system-ui, sans-serif; }
     h1,h2,h3,.font-display { font-family: 'Space Grotesk', system-ui, sans-serif; }
+    /* prevent grid blow-out on mobile: bare grids collapse to a safe full-width column */
+    #app .grid { grid-auto-columns: minmax(0, 1fr); }
+    #app img, #app svg, #app input, #app textarea, #app select { max-width: 100%; }
     .scroll-thin::-webkit-scrollbar { width: 8px; height: 8px; }
     .scroll-thin::-webkit-scrollbar-thumb { background: #cdd9d6; border-radius: 8px; }
     .scroll-thin::-webkit-scrollbar-track { background: transparent; }

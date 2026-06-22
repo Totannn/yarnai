@@ -382,13 +382,13 @@ function topbar() {
 
 function studioView() {
   return `
-  <div class="grid lg:grid-cols-[400px_1fr] gap-6 pb-24 md:pb-0">
-    <section class="space-y-4">
+  <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,400px)_minmax(0,1fr)] gap-6 pb-10 md:pb-0">
+    <section class="space-y-4 min-w-0">
       ${brandPicker()}
       ${card(`<span class="text-[13px] font-semibold">Tone &amp; language</span>
-        <div class="grid grid-cols-2 gap-2 mt-3">${state.config.tones.map(toneChip).join("")}</div>`)}
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3">${state.config.tones.map(toneChip).join("")}</div>`)}
       ${card(`<span class="text-[13px] font-semibold">Content type</span>
-        <div class="grid grid-cols-3 gap-2 mt-3">${state.config.content_types.map(ctChip).join("")}</div>`)}
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3">${state.config.content_types.map(ctChip).join("")}</div>`)}
       ${card(`<span class="text-[13px] font-semibold">The brief</span>
         <textarea id="brief" rows="3" placeholder="e.g. Black Friday: 30% off all Ankara gowns, free Lagos delivery this weekend"
           class="w-full mt-2 bg-paper border border-line rounded-lg px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand">${esc(state.brief)}</textarea>
