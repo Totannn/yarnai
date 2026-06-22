@@ -189,6 +189,12 @@ def admin_page():
     return render_template("admin.html")
 
 
+@app.get("/favicon.ico")
+def favicon():
+    from flask import send_from_directory
+    return send_from_directory(app.static_folder, "favicon.svg", mimetype="image/svg+xml")
+
+
 @app.get("/api/config")
 def config():
     return jsonify({
@@ -803,4 +809,8 @@ def admin_user(_user, uid):
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5055, debug=True, use_reloader=False)
+    # Bind to 0.0.0.0 and the platform-provided PORT (Railway/Render/etc.);
+    # fall back to localhost:5055 for local dev.
+    port = int(os.environ.get("PORT", "5055"))
+    debug = os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true", "yes")
+    app.run(host="0.0.0.0", port=port, debug=debug, use_reloader=False)
