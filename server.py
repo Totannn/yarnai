@@ -117,7 +117,15 @@ def get_client():
 
 
 with app.app_context():
-    db.init_db()
+    for _attempt in range(6):
+        try:
+            db.init_db()
+            break
+        except Exception as _e:  # DB may not be reachable for a moment at boot
+            print(f"[Vertil] DB init failed (attempt {_attempt + 1}/6): {_e}", flush=True)
+            if _attempt == 5:
+                raise
+            time.sleep(3)
     print(f"[Vertil] storage = {'PostgreSQL' if db.IS_PG else 'SQLite (' + str(db.DB_PATH) + ')'}", flush=True)
 
 
