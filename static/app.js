@@ -19,6 +19,8 @@ const state = {
   rateResult: null, rateLoading: false,
   brandInputs: { interests: "", formats: [], brand_types: [], platform: "", goal: "" },
   brandResult: null, brandLoading: false,
+  scriptInputs: { idea: "", platform: "TikTok", length: "30 seconds", goal: "Go viral / awareness", format: "ai_pick", tone: "pidgin" },
+  scriptResult: null, scriptLoading: false,
   // gig diary
   gigs: [], gigSummary: null, gigEditing: null,
   // misc
@@ -41,9 +43,10 @@ const ICON = {
   advisor: '<path d="M12 3v2M12 19v2M3 12h2M19 12h2M12 8a4 4 0 0 1 4 4c0 1.5-1 2.5-1.6 3.2-.4.5-.4 1.3-.4 1.8h-4c0-.5 0-1.3-.4-1.8C9 14.5 8 13.5 8 12a4 4 0 0 1 4-4ZM10 19h4"/>',
   gigs: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18"/>',
   admin: '<path d="M12 3 4 6v5c0 4.5 3.2 8.5 8 10 4.8-1.5 8-5.5 8-10V6l-8-3Z"/><path d="m9 12 2 2 4-4"/>',
+  script: '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/>',
 };
 
-const ADVISOR_LABELS = { rate_advisor: "Rate Advisor", personal_brand: "Brand Advisor" };
+const ADVISOR_LABELS = { rate_advisor: "Rate Advisor", personal_brand: "Brand Advisor", script: "Script Writer" };
 
 /* monochrome line-icon set (professional, no emoji) */
 const ICONP = {
@@ -83,6 +86,7 @@ const ICONP = {
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H1a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 2.6 7a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 2.7-1.1V1a2 2 0 1 1 4 0v.1A1.6 1.6 0 0 0 17 2.6a1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7H23a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>',
   briefcase: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5.5A2.5 2.5 0 0 1 10.5 3h3A2.5 2.5 0 0 1 16 5.5V7M3 12.5h18"/>',
   quote: '<path d="M7 7H4v5h3l-1.5 4M16 7h-3v5h3l-1.5 4"/>',
+  film: '<rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M3 9.5h18M3 14.5h18M8 4.5v15M16 4.5v15"/>',
 };
 
 function ic(name, cls = "w-4 h-4") {
@@ -247,6 +251,7 @@ function routeView() {
     case "pricing": return pricingView();
     case "rate": return rateView();
     case "advisor": return brandAdvisorView();
+    case "script": return scriptView();
     case "gigs": return gigsView();
     case "profile": return profileView();
     default: return studioView();
@@ -268,7 +273,7 @@ function sidebar() {
         <div class="text-[10px] font-mono uppercase tracking-wider text-faint leading-none mt-1">Voice engine</div></div>
     </div>
     <nav class="space-y-1">
-      ${item("studio","Studio")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
+      ${item("studio","Studio")}${item("script","Script Writer")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
       ${item("brands","Brands")}${item("favorites","Saved Copy")}${item("history","History")}
       <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">Advisors</div>
       ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("gigs","Gig Diary")}
@@ -295,7 +300,7 @@ function sidebar() {
         <button data-mclose class="text-faint hover:text-ink p-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" class="w-5 h-5"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       </div>
       <nav class="space-y-1">
-        ${item("studio","Studio")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
+        ${item("studio","Studio")}${item("script","Script Writer")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
         ${item("brands","Brands")}${item("favorites","Saved Copy")}${item("history","History")}
         <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">Advisors</div>
         ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("gigs","Gig Diary")}
@@ -344,6 +349,7 @@ function topbar() {
     rate:["Rate Advisor","Wetin to charge — realistic Naira pricing for your gigs"],
     advisor:["Brand Advisor","Build your personal brand and win the right brand deals"],
     gigs:["Gig Diary","Track every gig and what you made"],
+    script:["Script Writer","Scene-by-scene short-video scripts built on trending formats"],
     profile:["Account","Manage your profile, plan and security"],
   };
   const [t,sub] = titles[state.view] || titles.studio;
@@ -806,6 +812,85 @@ async function runBrandAdvisor() {
   finally { state.brandLoading = false; render(); }
 }
 
+/* ========================== SCRIPT WRITER ========================= */
+
+function scriptView() {
+  const o = state.config.script_options, si = state.scriptInputs;
+  const sel = (id, key, opts) => `<select id="${id}" class="advi">${opts.map(e=>`<option ${e===si[key]?'selected':''}>${esc(e)}</option>`).join("")}</select>`;
+  const fmtDesc = (o.formats.find(f=>f.key===si.format) || {}).desc || "";
+  return `<div class="max-w-3xl pb-10 md:pb-0 space-y-5">
+    ${card(`<div class="space-y-3.5">
+      <label class="block"><span class="text-xs font-semibold text-muted">Video idea / topic *</span>
+        <textarea id="sc_idea" rows="2" placeholder="e.g. Why our jollof spice mix beats the rest — for busy Lagos mums" class="advi">${esc(si.idea)}</textarea></label>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <label class="block"><span class="text-xs font-semibold text-muted">Platform</span>${sel("sc_platform","platform",o.platforms)}</label>
+        <label class="block"><span class="text-xs font-semibold text-muted">Length</span>${sel("sc_length","length",o.lengths)}</label>
+        <label class="block"><span class="text-xs font-semibold text-muted">Goal</span>${sel("sc_goal","goal",o.goals)}</label>
+        <label class="block"><span class="text-xs font-semibold text-muted">Voice / tone</span>
+          <select id="sc_tone" class="advi">${state.config.tones.map(t=>`<option value="${t.key}" ${t.key===si.tone?'selected':''}>${esc(t.label)}</option>`).join("")}</select></label>
+      </div>
+      <label class="block"><span class="text-xs font-semibold text-muted">Trending format</span>
+        <select id="sc_format" class="advi">${o.formats.map(f=>`<option value="${f.key}" ${f.key===si.format?'selected':''}>${esc(f.label)}</option>`).join("")}</select>
+        <span class="text-[11px] text-muted mt-1 block">${esc(fmtDesc)}</span></label>
+      <button id="scriptBtn" ${state.scriptLoading?'disabled':''} class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm text-white bg-brand hover:bg-brand-dark shadow-sm disabled:opacity-50">
+        ${state.scriptLoading?'<span class="w-4 h-4 border-2 border-white/40 border-t-white rounded-full spin"></span> Writing…':ic("film","w-4 h-4")+' Write my script'}</button>
+      </div>${ADVI_STYLE}`)}
+    <div id="scriptResult">${state.scriptLoading?advisorLoading('Writing your script…'):(state.scriptResult?renderScriptResult(state.scriptResult):'')}</div>
+  </div>`;
+}
+
+function renderScriptResult(s) {
+  return `<div class="fade-up space-y-4">
+    ${card(`<div class="flex items-center gap-2 flex-wrap mb-2">
+        ${s.format?`<span class="text-[11px] font-semibold bg-brand-tint text-brand-dark rounded-full px-2.5 py-1">${esc(s.format)}</span>`:''}
+        ${s.length?`<span class="text-[11px] bg-paper border border-line rounded-full px-2.5 py-1">${esc(s.length)}</span>`:''}</div>
+      ${s.title?`<div class="font-display font-extrabold text-lg">${esc(s.title)}</div>`:''}
+      ${s.hook?`<div class="mt-2 text-sm bg-brand-tint border border-brand/20 rounded-lg p-3"><span class="text-[10px] font-bold uppercase tracking-wide text-brand-dark block mb-1">Hook · first 3 seconds</span>${esc(s.hook)}</div>`:''}`)}
+    ${s.scenes.length?`<div class="space-y-2.5">${s.scenes.map((sc,i)=>`
+      <div data-card class="bg-white border border-line rounded-xl2 shadow-card p-4 transition">
+        <div class="flex items-center gap-2 mb-2"><span class="w-6 h-6 rounded-md bg-brand text-white grid place-items-center text-xs font-bold">${i+1}</span><span class="text-xs font-mono text-muted">${esc(sc.label||'')}</span></div>
+        ${sc.on_screen?`<p class="text-sm"><span class="text-[10px] font-bold uppercase tracking-wide text-faint mr-1">On screen</span>${esc(sc.on_screen)}</p>`:''}
+        ${sc.voiceover?`<p class="text-sm mt-1.5"><span class="text-[10px] font-bold uppercase tracking-wide text-faint mr-1">Voiceover</span>${esc(sc.voiceover)}</p>`:''}
+        ${sc.visual?`<p class="text-xs text-muted mt-1.5"><span class="text-[10px] font-bold uppercase tracking-wide text-faint mr-1">Visual</span>${esc(sc.visual)}</p>`:''}
+      </div>`).join("")}</div>`:''}
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      ${s.sound?card(`<div class="text-[12px] font-semibold mb-1">Trending sound</div><p class="text-sm text-ink/85">${esc(s.sound)}</p>`):''}
+      ${s.cta?card(`<div class="text-[12px] font-semibold mb-1">Call to action</div><p class="text-sm text-ink/85">${esc(s.cta)}</p>`):''}
+    </div>
+    ${s.caption?card(`<div class="flex items-center justify-between mb-1"><div class="text-[12px] font-semibold">Caption</div><button data-copy-cap class="text-xs text-brand font-semibold">Copy</button></div>
+      <p class="text-sm whitespace-pre-wrap">${esc(s.caption)}</p>
+      ${s.hashtags.length?`<div class="flex flex-wrap gap-1.5 mt-2">${s.hashtags.map(h=>`<span class="text-[11px] bg-paper border border-line rounded-full px-2 py-0.5 text-brand-dark">${esc(h)}</span>`).join("")}</div>`:''}`):''}
+    <button data-copy-script class="w-full text-sm font-semibold text-brand-dark bg-brand-tint hover:bg-brand hover:text-white transition rounded-lg py-2.5">Copy full script</button>
+  </div>`;
+}
+
+function scriptToText(s) {
+  let t = (s.title ? s.title + "\n" : "") + (s.format ? `[${s.format}${s.length ? " · " + s.length : ""}]\n` : "");
+  if (s.hook) t += `\nHOOK: ${s.hook}\n`;
+  (s.scenes || []).forEach((sc, i) => {
+    t += `\n${i + 1}. ${sc.label || ""}\n`;
+    if (sc.on_screen) t += `   On screen: ${sc.on_screen}\n`;
+    if (sc.voiceover) t += `   VO: ${sc.voiceover}\n`;
+    if (sc.visual) t += `   Visual: ${sc.visual}\n`;
+  });
+  if (s.sound) t += `\nSound: ${s.sound}\n`;
+  if (s.cta) t += `CTA: ${s.cta}\n`;
+  if (s.caption) t += `\nCaption: ${s.caption}\n`;
+  if (s.hashtags && s.hashtags.length) t += s.hashtags.join(" ");
+  return t.trim();
+}
+
+async function runScript() {
+  if (state.scriptLoading) return;
+  if (!state.scriptInputs.idea.trim()) return toast("Tell us the video idea first");
+  state.scriptLoading = true; render();
+  try {
+    const r = await api("/api/script/generate", { method: "POST", body: JSON.stringify({ ...state.scriptInputs, brand_id: state.activeBrandId }) });
+    state.scriptResult = r; if (r.used != null && state.usage) state.usage.used = r.used;
+  } catch (ex) { if (ex.data?.upgrade) { state.scriptLoading = false; return openUpgrade(ex.message); } toast("⚠ " + ex.message); }
+  finally { state.scriptLoading = false; render(); }
+}
+
 /* ============================= GIG DIARY =========================== */
 
 const naira = n => '₦' + Math.round(n||0).toLocaleString();
@@ -952,6 +1037,14 @@ function wire() {
   if (state.view === "rate") {
     ["service","experience","location","client_type","scope"].forEach(k=>{ const el=$("#r_"+k); if(el){ el.oninput=e=>state.rateInputs[k]=e.target.value; el.onchange=e=>state.rateInputs[k]=e.target.value; } });
     const b=$("#rateBtn"); if(b) b.onclick=runRate;
+  }
+  if (state.view === "script") {
+    ["idea","platform","length","goal"].forEach(k=>{ const el=$("#sc_"+k); if(el){ el.oninput=e=>state.scriptInputs[k]=e.target.value; el.onchange=e=>state.scriptInputs[k]=e.target.value; } });
+    const fmt=$("#sc_format"); if(fmt) fmt.onchange=e=>{ state.scriptInputs.format=e.target.value; render(); };
+    const tn=$("#sc_tone"); if(tn) tn.onchange=e=>state.scriptInputs.tone=e.target.value;
+    const b=$("#scriptBtn"); if(b) b.onclick=runScript;
+    const cc=$("[data-copy-cap]"); if(cc) cc.onclick=()=>{ const s=state.scriptResult; navigator.clipboard.writeText(s.caption+(s.hashtags.length?"\n\n"+s.hashtags.join(" "):"")); cc.textContent="Copied ✓"; setTimeout(()=>cc.textContent="Copy",1400); };
+    const cs=$("[data-copy-script]"); if(cs) cs.onclick=()=>{ navigator.clipboard.writeText(scriptToText(state.scriptResult)); cs.textContent="Copied ✓"; setTimeout(()=>cs.textContent="Copy full script",1400); };
   }
   if (state.view === "advisor") {
     ["interests","platform","goal"].forEach(k=>{ const el=$("#b_"+k); if(el) el.oninput=e=>state.brandInputs[k]=e.target.value; });

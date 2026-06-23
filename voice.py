@@ -706,3 +706,131 @@ def advisor_options() -> dict:
         "content_formats": CONTENT_FORMATS,
         "brand_types": BRAND_TYPES,
     }
+
+
+# --------------------------------------------------------------------------- #
+# Module 7 — Short-Video Script Writer
+# Scene-by-scene scripts built around globally-trending short-form formats.
+# --------------------------------------------------------------------------- #
+
+SCRIPT_PLATFORMS = ["TikTok", "Instagram Reels", "YouTube Shorts", "Facebook Reels"]
+SCRIPT_LENGTHS = ["15 seconds", "30 seconds", "45 seconds", "60 seconds"]
+SCRIPT_GOALS = [
+    "Go viral / awareness", "Drive sales", "Educate / how-to",
+    "Entertain", "Product launch / announcement", "Build trust / social proof",
+]
+
+# Globally-trending short-form video formats the model adapts to the brand.
+TRENDING_FORMATS = [
+    {"key": "ai_pick", "label": "Let Vertil pick the best format",
+     "desc": "Vertil chooses the trending format most likely to make this idea land."},
+    {"key": "pov", "label": "POV", "desc": "“POV: …” — puts the viewer inside a relatable moment."},
+    {"key": "storytime", "label": "Storytime", "desc": "A quick, hooky personal/customer story."},
+    {"key": "before_after", "label": "Before & After", "desc": "Transformation reveal — strong visual payoff."},
+    {"key": "three_tips", "label": "3 Quick Tips / Listicle", "desc": "Fast, value-packed numbered tips."},
+    {"key": "problem_solution", "label": "Problem → Solution", "desc": "Name a pain, then your product as the fix."},
+    {"key": "grwm", "label": "GRWM / Day-in-the-life", "desc": "Get-ready / behind-the-day narration with the product woven in."},
+    {"key": "hot_take", "label": "Hot Take", "desc": "A bold, scroll-stopping opinion that sparks debate."},
+    {"key": "tutorial", "label": "Quick Tutorial", "desc": "Show how to use/do it in a few clear steps."},
+    {"key": "green_screen", "label": "Green-screen React", "desc": "React to a post/trend/news with your take."},
+    {"key": "skit", "label": "Comedy Skit", "desc": "A short funny scene — Naija humour that sells."},
+    {"key": "talking_head", "label": "Talking Head", "desc": "Direct-to-camera, punchy delivery."},
+    {"key": "b_roll_vo", "label": "Aesthetic B-roll + Voiceover", "desc": "Pretty product shots over a confident voiceover."},
+]
+
+
+def build_script_system(profile: dict | None, tone_key: str) -> str:
+    tone = TONES.get(tone_key, TONES["friendly"])
+    brand_block = build_brand_block(profile)
+    fmts = ", ".join(f["label"] for f in TRENDING_FORMATS if f["key"] != "ai_pick")
+    return f"""You are Vertil's Short-Video Script Writer — a viral content strategist \
+for the Nigerian market who lives and breathes TikTok, Reels and Shorts. You write \
+scroll-stopping, scene-by-scene scripts that hook in the first 3 seconds and weave the \
+brand in naturally. You know what makes short video go viral globally — these formats \
+are your toolkit: {fmts}. You adapt those proven, currently-trending formats to Nigerian \
+audiences, humour, slang and culture.
+
+# THE BRAND
+{brand_block}
+
+# THE VOICE FOR THIS SCRIPT — {tone['label']}
+{tone['guidance']}
+
+# NIGERIAN CONTEXT
+{NAIJA_CALENDAR_CONTEXT}
+Write spoken lines in the chosen voice; reference Naira (₦) and local culture where it fits.
+
+# HOW TO WRITE THE SCRIPT
+- The HOOK is everything: the first line/visual must stop the scroll in under 3 seconds.
+- Break the video into short scenes with a timecode label, the on-screen text overlay, the \
+spoken voiceover/dialogue, and a quick visual/action direction.
+- Keep it tight to the requested length and platform; short, punchy lines — people skim.
+- Suggest a trending sound/audio style (describe it; you can't name a specific song reliably).
+- End with a strong call-to-action, a caption, and relevant hashtags (mix Nigerian + niche).
+
+# OUTPUT FORMAT
+Return ONLY valid JSON (no markdown, no commentary), exactly this shape:
+{{
+  "title": "short working title for the video",
+  "format": "the trending format you used",
+  "length": "the target length",
+  "hook": "the first-3-seconds hook (what's said or shown)",
+  "scenes": [
+    {{"label": "0-3s", "on_screen": "text overlay on screen", "voiceover": "what is said", "visual": "what we see / the action"}}
+  ],
+  "sound": "trending audio / sound direction",
+  "caption": "the post caption",
+  "hashtags": ["#tag1", "#tag2"],
+  "cta": "the call-to-action"
+}}
+Use 3-6 scenes. Keep on_screen text very short."""
+
+
+def build_script_user(d: dict) -> str:
+    fmt_key = d.get("format", "ai_pick")
+    fmt = next((f for f in TRENDING_FORMATS if f["key"] == fmt_key), TRENDING_FORMATS[0])
+    fmt_line = ("Pick the best trending format for this idea." if fmt_key == "ai_pick"
+               else f"Use the '{fmt['label']}' format ({fmt['desc']}).")
+    parts = [
+        f"Idea / topic: {d.get('idea', '').strip() or 'a promo for the brand'}",
+        f"Platform: {d.get('platform', '').strip() or 'TikTok'}",
+        f"Length: {d.get('length', '').strip() or '30 seconds'}",
+        f"Goal: {d.get('goal', '').strip() or 'Go viral / awareness'}",
+        fmt_line,
+    ]
+    return "Write the short-video script.\n" + "\n".join(parts) + "\n\nReturn ONLY the JSON object."
+
+
+def parse_script_json(text: str) -> dict:
+    data = _extract_json(text)
+    scenes = []
+    for s in (data.get("scenes") or [])[:8]:
+        if not isinstance(s, dict):
+            continue
+        scenes.append({
+            "label": str(s.get("label", "")).strip(),
+            "on_screen": str(s.get("on_screen", "")).strip(),
+            "voiceover": str(s.get("voiceover", "")).strip(),
+            "visual": str(s.get("visual", "")).strip(),
+        })
+    tags = [str(t).strip() for t in (data.get("hashtags") or []) if str(t).strip()][:12]
+    return {
+        "title": str(data.get("title", "")).strip(),
+        "format": str(data.get("format", "")).strip(),
+        "length": str(data.get("length", "")).strip(),
+        "hook": str(data.get("hook", "")).strip(),
+        "scenes": scenes,
+        "sound": str(data.get("sound", "")).strip(),
+        "caption": str(data.get("caption", "")).strip(),
+        "hashtags": tags,
+        "cta": str(data.get("cta", "")).strip(),
+    }
+
+
+def script_options() -> dict:
+    return {
+        "platforms": SCRIPT_PLATFORMS,
+        "lengths": SCRIPT_LENGTHS,
+        "goals": SCRIPT_GOALS,
+        "formats": [{"key": f["key"], "label": f["label"], "desc": f["desc"]} for f in TRENDING_FORMATS],
+    }

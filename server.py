@@ -206,6 +206,7 @@ def config():
         "plans": [{"key": k, **PLANS[k]} for k in PLAN_ORDER],
         "paystack": bool(PAYSTACK_SECRET),
         "advisor_options": voice.advisor_options(),
+        "script_options": voice.script_options(),
     })
 
 
@@ -658,6 +659,34 @@ def advisor_brand(user):
     return jsonify(result)
 
 
+@app.post("/api/script/generate")
+@auth
+def script_generate(user):
+    if _over_limit(user):
+        return jsonify({"error": "Monthly limit reached. Upgrade to keep going.", "upgrade": True}), 402
+    d = request.get_json(force=True) or {}
+    if not (d.get("idea") or "").strip():
+        return jsonify({"error": "Tell us the video idea / topic first."}), 400
+    if get_client() is None:
+        return jsonify({"title": "[demo] Add your API key for real scripts", "format": "", "length": "",
+                        "hook": "", "scenes": [], "sound": "", "caption": "", "hashtags": [], "cta": ""})
+    profile = db.get_brand(user["id"], d.get("brand_id")) if d.get("brand_id") else None
+    system = voice.build_script_system(profile, d.get("tone", "friendly"))
+    try:
+        text, in_tok, out_tok = _complete(system, voice.build_script_user(d), 3500)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    result = voice.parse_script_json(text)
+    if not result["scenes"] and not result["hook"]:
+        return jsonify({"error": "Could not write the script. Please try again."}), 502
+    summary = f"Script: {result.get('title') or d.get('idea', '')[:60]}"
+    db.save_generation(user["id"], d.get("brand_id"), "script", d.get("tone", ""), d.get("idea", ""), [summary],
+                       model=MODEL, input_tokens=in_tok, output_tokens=out_tok,
+                       cost=cost_naira(MODEL, in_tok, out_tok))
+    result["used"] = db.monthly_generation_count(user["id"])
+    return jsonify(result)
+
+
 # ------------------------------- gigs ------------------------------------- #
 
 @app.get("/api/gigs")
@@ -753,7 +782,8 @@ def billing_simulate(user):
 # Friendly labels for content types (incl. the synthetic admin-only ones).
 _TYPE_LABELS = {**{k: v["label"] for k, v in voice.CONTENT_TYPES.items()},
                 "content_calendar": "Content Calendar",
-                "rate_advisor": "Rate Advisor", "personal_brand": "Brand Advisor"}
+                "rate_advisor": "Rate Advisor", "personal_brand": "Brand Advisor",
+                "script": "Script Writer"}
 
 
 @app.get("/api/admin/overview")
