@@ -1,8 +1,10 @@
-"""SQLite persistence for Yarn AI.
+"""Persistence for Vertil — dual-mode.
 
-Auth-aware: every brand, generation, calendar, favorite and feedback row is
-scoped to a user. Kept on stdlib sqlite3 (no ORM) so the app runs with zero extra
-infrastructure; maps cleanly onto Postgres for production."""
+Uses PostgreSQL when DATABASE_URL is set (e.g. Railway's managed Postgres), and
+falls back to SQLite locally (zero setup for dev). All SQL is written with '?'
+placeholders and auto-converted to '%s' for Postgres, so the rest of the app is
+backend-agnostic. Every brand/generation/calendar/favorite/feedback row is
+scoped to a user."""
 
 from __future__ import annotations
 
@@ -12,138 +14,184 @@ import sqlite3
 import time
 from pathlib import Path
 
-# DB lives next to the code by default; on a host (Railway/Render) set
-# VERTIL_DB_PATH to a path on a mounted persistent volume (e.g. /data/yarn.db)
-# so data survives redeploys.
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+if DATABASE_URL.startswith("postgres://"):  # normalize legacy scheme
+    DATABASE_URL = "postgresql://" + DATABASE_URL[len("postgres://"):]
+IS_PG = bool(DATABASE_URL)
+
+# SQLite path (local). VERTIL_DB_PATH can point at a mounted volume.
 DB_PATH = Path(os.environ.get("VERTIL_DB_PATH") or (Path(__file__).resolve().parent / "yarn.db"))
-DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+if not IS_PG:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+if IS_PG:
+    import psycopg
+    from psycopg.rows import dict_row
 
 
-def _conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+def _q(sql: str) -> str:
+    """Convert '?' placeholders to '%s' for Postgres."""
+    return sql.replace("?", "%s") if IS_PG else sql
+
+
+class _CW:
+    """Thin connection wrapper: accepts '?' placeholders for both backends and
+    proxies commit/close."""
+
+    def __init__(self, raw):
+        self._raw = raw
+
+    def execute(self, sql, params=()):
+        return self._raw.execute(_q(sql), params)
+
+    def commit(self):
+        return self._raw.commit()
+
+    def close(self):
+        return self._raw.close()
+
+
+class _ConnCtx:
+    def __enter__(self):
+        if IS_PG:
+            self._raw = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+        else:
+            self._raw = sqlite3.connect(DB_PATH)
+            self._raw.row_factory = sqlite3.Row
+            self._raw.execute("PRAGMA foreign_keys = ON")
+        return _CW(self._raw)
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            if exc_type is None:
+                self._raw.commit()
+            else:
+                self._raw.rollback()
+        finally:
+            self._raw.close()
+        return False
+
+
+def _conn():
+    return _ConnCtx()
+
+
+def _insert(c, sql, params):
+    """Run an INSERT and return the new row id on either backend."""
+    if IS_PG:
+        return c.execute(sql + " RETURNING id", params).fetchone()["id"]
+    return c.execute(sql, params).lastrowid
+
+
+# dialect bits
+_PK = "SERIAL PRIMARY KEY" if IS_PG else "INTEGER PRIMARY KEY AUTOINCREMENT"
+_REAL = "DOUBLE PRECISION" if IS_PG else "REAL"
+_DAY = ("to_char(to_timestamp(created_at), 'YYYY-MM-DD')" if IS_PG
+        else "date(created_at, 'unixepoch')")
 
 
 def _columns(c, table: str) -> set[str]:
-    return {r["name"] for r in c.execute(f"PRAGMA table_info({table})").fetchall()}
+    if IS_PG:
+        rows = c.execute(
+            "SELECT column_name AS name FROM information_schema.columns WHERE table_name=?",
+            (table,)).fetchall()
+    else:
+        rows = c.execute(f"PRAGMA table_info({table})").fetchall()
+    return {r["name"] for r in rows}
+
+
+def _add_col(c, table, col, ddl):
+    if IS_PG:
+        c.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {ddl}")
+    elif col not in _columns(c, table):
+        c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
 
 
 def init_db() -> None:
     with _conn() as c:
-        c.execute(
-            """
+        c.execute(f"""
             CREATE TABLE IF NOT EXISTS users (
-                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                id            {_PK},
                 email         TEXT UNIQUE NOT NULL,
                 name          TEXT,
                 password_hash TEXT NOT NULL,
                 plan          TEXT NOT NULL DEFAULT 'free',
-                created_at    REAL NOT NULL
-            )
-            """
-        )
-        c.execute(
-            """
+                created_at    {_REAL} NOT NULL
+            )""")
+        c.execute(f"""
             CREATE TABLE IF NOT EXISTS brands (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          {_PK},
                 user_id     INTEGER,
                 name        TEXT NOT NULL,
                 industry    TEXT, audience TEXT, location TEXT,
                 description TEXT, personality TEXT, samples TEXT,
-                created_at  REAL NOT NULL
-            )
-            """
-        )
-        c.execute(
-            """
+                created_at  {_REAL} NOT NULL
+            )""")
+        c.execute(f"""
             CREATE TABLE IF NOT EXISTS generations (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                id           {_PK},
                 user_id      INTEGER,
                 brand_id     INTEGER,
                 content_type TEXT, tone TEXT, brief TEXT,
                 output       TEXT,
-                created_at   REAL NOT NULL
-            )
-            """
-        )
-        c.execute(
-            """
+                created_at   {_REAL} NOT NULL
+            )""")
+        c.execute(f"""
             CREATE TABLE IF NOT EXISTS calendars (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         {_PK},
                 user_id    INTEGER,
                 brand_id   INTEGER,
                 month      TEXT, year INTEGER, cadence TEXT,
                 posts      TEXT,
-                created_at REAL NOT NULL
-            )
-            """
-        )
-        c.execute(
-            """
+                created_at {_REAL} NOT NULL
+            )""")
+        c.execute(f"""
             CREATE TABLE IF NOT EXISTS favorites (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                id           {_PK},
                 user_id      INTEGER NOT NULL,
                 brand_id     INTEGER,
                 content_type TEXT, tone TEXT,
                 text         TEXT NOT NULL,
-                created_at   REAL NOT NULL
-            )
-            """
-        )
-        c.execute(
-            """
+                created_at   {_REAL} NOT NULL
+            )""")
+        c.execute(f"""
             CREATE TABLE IF NOT EXISTS gigs (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         {_PK},
                 user_id    INTEGER NOT NULL,
                 title      TEXT NOT NULL,
                 client     TEXT, category TEXT,
-                amount     REAL NOT NULL DEFAULT 0,
+                amount     {_REAL} NOT NULL DEFAULT 0,
                 gig_date   TEXT, status TEXT DEFAULT 'paid',
                 notes      TEXT,
-                created_at REAL NOT NULL
-            )
-            """
-        )
-        c.execute(
-            """
+                created_at {_REAL} NOT NULL
+            )""")
+        c.execute(f"""
             CREATE TABLE IF NOT EXISTS brand_feedback (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         {_PK},
                 user_id    INTEGER NOT NULL,
                 brand_id   INTEGER,
-                rating     TEXT NOT NULL,      -- 'up' | 'down'
+                rating     TEXT NOT NULL,
                 text       TEXT NOT NULL,
-                created_at REAL NOT NULL
-            )
-            """
-        )
-        # --- lightweight migrations: add user_id to legacy tables if missing ---
+                created_at {_REAL} NOT NULL
+            )""")
+        # migrations (idempotent on both backends)
         for tbl in ("brands", "generations", "calendars"):
-            if "user_id" not in _columns(c, tbl):
-                c.execute(f"ALTER TABLE {tbl} ADD COLUMN user_id INTEGER")
-        if "onboarded" not in _columns(c, "users"):
-            c.execute("ALTER TABLE users ADD COLUMN onboarded INTEGER NOT NULL DEFAULT 0")
-        if "is_admin" not in _columns(c, "users"):
-            c.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
-        # token + cost tracking on generations (for the admin dashboard)
-        for col, ddl in (("input_tokens", "INTEGER DEFAULT 0"),
-                         ("output_tokens", "INTEGER DEFAULT 0"),
-                         ("cost", "REAL DEFAULT 0"),
-                         ("model", "TEXT DEFAULT ''")):
-            if col not in _columns(c, "generations"):
-                c.execute(f"ALTER TABLE generations ADD COLUMN {col} {ddl}")
+            _add_col(c, tbl, "user_id", "INTEGER")
+        _add_col(c, "users", "onboarded", "INTEGER NOT NULL DEFAULT 0")
+        _add_col(c, "users", "is_admin", "INTEGER NOT NULL DEFAULT 0")
+        _add_col(c, "generations", "input_tokens", "INTEGER DEFAULT 0")
+        _add_col(c, "generations", "output_tokens", "INTEGER DEFAULT 0")
+        _add_col(c, "generations", "cost", f"{_REAL} DEFAULT 0")
+        _add_col(c, "generations", "model", "TEXT DEFAULT ''")
 
 
 # ------------------------------- users ------------------------------------ #
 
 def create_user(email: str, name: str, password_hash: str) -> dict:
     with _conn() as c:
-        cur = c.execute(
-            "INSERT INTO users (email, name, password_hash, plan, created_at) VALUES (?,?,?,?,?)",
-            (email.lower().strip(), name.strip(), password_hash, "free", time.time()),
-        )
-        uid = cur.lastrowid
+        uid = _insert(
+            c, "INSERT INTO users (email, name, password_hash, plan, created_at) VALUES (?,?,?,?,?)",
+            (email.lower().strip(), name.strip(), password_hash, "free", time.time()))
     return get_user(uid)
 
 
@@ -209,12 +257,11 @@ _BRAND_FIELDS = ("name", "industry", "audience", "location",
 def create_brand(user_id: int, data: dict) -> dict:
     row = {k: (data.get(k) or "").strip() for k in _BRAND_FIELDS}
     with _conn() as c:
-        cur = c.execute(
+        bid = _insert(
+            c,
             f"INSERT INTO brands (user_id, {','.join(_BRAND_FIELDS)}, created_at) "
             f"VALUES (?, {','.join('?' for _ in _BRAND_FIELDS)}, ?)",
-            (user_id, *[row[k] for k in _BRAND_FIELDS], time.time()),
-        )
-        bid = cur.lastrowid
+            (user_id, *[row[k] for k in _BRAND_FIELDS], time.time()))
     return get_brand(user_id, bid)
 
 
@@ -289,12 +336,10 @@ def recent_generations(user_id: int, limit: int = 20) -> list[dict]:
 
 def add_favorite(user_id: int, brand_id, content_type, tone, text: str) -> dict:
     with _conn() as c:
-        cur = c.execute(
-            "INSERT INTO favorites (user_id, brand_id, content_type, tone, text, created_at) "
-            "VALUES (?,?,?,?,?,?)",
-            (user_id, brand_id, content_type, tone, text, time.time()),
-        )
-        fid = cur.lastrowid
+        fid = _insert(
+            c, "INSERT INTO favorites (user_id, brand_id, content_type, tone, text, created_at) "
+               "VALUES (?,?,?,?,?,?)",
+            (user_id, brand_id, content_type, tone, text, time.time()))
         r = c.execute("SELECT * FROM favorites WHERE id=?", (fid,)).fetchone()
     return dict(r)
 
@@ -326,7 +371,7 @@ def add_feedback(user_id: int, brand_id, rating: str, text: str) -> None:
 
 
 def liked_examples(user_id: int, brand_id, limit: int = 3) -> list[str]:
-    """Recent 👍 outputs for a brand — fed back into the prompt so the voice learns."""
+    """Recent thumbs-up outputs for a brand — fed back into the prompt so the voice learns."""
     if not brand_id:
         return []
     with _conn() as c:
@@ -342,12 +387,10 @@ def liked_examples(user_id: int, brand_id, limit: int = 3) -> list[str]:
 
 def save_calendar(user_id: int, brand_id, month, year, cadence, posts) -> dict:
     with _conn() as c:
-        cur = c.execute(
-            "INSERT INTO calendars (user_id, brand_id, month, year, cadence, posts, created_at) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (user_id, brand_id, month, year, cadence, json.dumps(posts), time.time()),
-        )
-        cal_id = cur.lastrowid
+        cal_id = _insert(
+            c, "INSERT INTO calendars (user_id, brand_id, month, year, cadence, posts, created_at) "
+               "VALUES (?,?,?,?,?,?,?)",
+            (user_id, brand_id, month, year, cadence, json.dumps(posts), time.time()))
     return get_calendar(user_id, cal_id)
 
 
@@ -405,12 +448,11 @@ def _gig_row(data: dict) -> dict:
 def create_gig(user_id: int, data: dict) -> dict:
     row = _gig_row(data)
     with _conn() as c:
-        cur = c.execute(
+        gid = _insert(
+            c,
             f"INSERT INTO gigs (user_id, {','.join(_GIG_FIELDS)}, created_at) "
             f"VALUES (?, {','.join('?' for _ in _GIG_FIELDS)}, ?)",
-            (user_id, *[row[k] for k in _GIG_FIELDS], time.time()),
-        )
-        gid = cur.lastrowid
+            (user_id, *[row[k] for k in _GIG_FIELDS], time.time()))
     return get_gig(user_id, gid)
 
 
@@ -470,31 +512,30 @@ def gig_summary(user_id: int) -> dict:
 def admin_overview() -> dict:
     since = time.time() - 30 * 86400
     with _conn() as c:
-        total_users = c.execute("SELECT COUNT(*) n FROM users").fetchone()["n"]
-        new_users_30d = c.execute("SELECT COUNT(*) n FROM users WHERE created_at>=?", (since,)).fetchone()["n"]
+        total_users = c.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
+        new_users_30d = c.execute("SELECT COUNT(*) AS n FROM users WHERE created_at>=?", (since,)).fetchone()["n"]
         by_plan = [dict(r) for r in c.execute(
-            "SELECT plan, COUNT(*) n FROM users GROUP BY plan").fetchall()]
+            "SELECT plan, COUNT(*) AS n FROM users GROUP BY plan").fetchall()]
         g = c.execute(
-            "SELECT COUNT(*) n, COALESCE(SUM(input_tokens),0) it, "
-            "COALESCE(SUM(output_tokens),0) ot, COALESCE(SUM(cost),0) cost FROM generations").fetchone()
+            "SELECT COUNT(*) AS n, COALESCE(SUM(input_tokens),0) AS it, "
+            "COALESCE(SUM(output_tokens),0) AS ot, COALESCE(SUM(cost),0) AS cost FROM generations").fetchone()
         gm = c.execute(
-            "SELECT COUNT(*) n, COALESCE(SUM(cost),0) cost FROM generations WHERE created_at>=?",
+            "SELECT COUNT(*) AS n, COALESCE(SUM(cost),0) AS cost FROM generations WHERE created_at>=?",
             (since,)).fetchone()
         by_type = [dict(r) for r in c.execute(
-            "SELECT content_type, COUNT(*) n, COALESCE(SUM(cost),0) cost "
-            "FROM generations GROUP BY content_type ORDER BY n DESC").fetchall()]
+            "SELECT content_type, COUNT(*) AS n, COALESCE(SUM(cost),0) AS cost "
+            "FROM generations GROUP BY content_type ORDER BY 2 DESC").fetchall()]
         by_model = [dict(r) for r in c.execute(
-            "SELECT COALESCE(NULLIF(model,''),'(demo)') model, COUNT(*) n, COALESCE(SUM(cost),0) cost "
-            "FROM generations GROUP BY model ORDER BY cost DESC").fetchall()]
+            "SELECT COALESCE(NULLIF(model,''),'(demo)') AS model, COUNT(*) AS n, COALESCE(SUM(cost),0) AS cost "
+            "FROM generations GROUP BY model ORDER BY 3 DESC").fetchall()]
         signups = [dict(r) for r in c.execute(
-            "SELECT date(created_at,'unixepoch') d, COUNT(*) n FROM users "
-            "GROUP BY d ORDER BY d DESC LIMIT 14").fetchall()]
+            f"SELECT {_DAY} AS d, COUNT(*) AS n FROM users GROUP BY 1 ORDER BY 1 DESC LIMIT 14").fetchall()]
         gens_daily = [dict(r) for r in c.execute(
-            "SELECT date(created_at,'unixepoch') d, COUNT(*) n, COALESCE(SUM(cost),0) cost "
-            "FROM generations GROUP BY d ORDER BY d DESC LIMIT 14").fetchall()]
-        brands = c.execute("SELECT COUNT(*) n FROM brands").fetchone()["n"]
-        calendars = c.execute("SELECT COUNT(*) n FROM calendars").fetchone()["n"]
-        gigs = c.execute("SELECT COUNT(*) n, COALESCE(SUM(amount),0) v FROM gigs").fetchone()
+            f"SELECT {_DAY} AS d, COUNT(*) AS n, COALESCE(SUM(cost),0) AS cost "
+            f"FROM generations GROUP BY 1 ORDER BY 1 DESC LIMIT 14").fetchall()]
+        brands = c.execute("SELECT COUNT(*) AS n FROM brands").fetchone()["n"]
+        calendars = c.execute("SELECT COUNT(*) AS n FROM calendars").fetchone()["n"]
+        gigs = c.execute("SELECT COUNT(*) AS n, COALESCE(SUM(amount),0) AS v FROM gigs").fetchone()
     return {
         "total_users": total_users, "new_users_30d": new_users_30d,
         "by_plan": by_plan, "by_type": by_type, "by_model": by_model,
@@ -512,11 +553,12 @@ def admin_users() -> list[dict]:
     with _conn() as c:
         rows = c.execute(
             "SELECT u.id, u.email, u.name, u.plan, u.created_at, u.onboarded, "
-            "COUNT(g.id) gens, COALESCE(SUM(g.input_tokens),0) it, "
-            "COALESCE(SUM(g.output_tokens),0) ot, COALESCE(SUM(g.cost),0) cost, "
-            "MAX(g.created_at) last_active "
+            "COUNT(g.id) AS gens, COALESCE(SUM(g.input_tokens),0) AS it, "
+            "COALESCE(SUM(g.output_tokens),0) AS ot, COALESCE(SUM(g.cost),0) AS cost, "
+            "MAX(g.created_at) AS last_active "
             "FROM users u LEFT JOIN generations g ON g.user_id=u.id "
-            "GROUP BY u.id ORDER BY u.created_at DESC"
+            "GROUP BY u.id, u.email, u.name, u.plan, u.created_at, u.onboarded "
+            "ORDER BY u.created_at DESC"
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -527,22 +569,23 @@ def admin_user_detail(uid: int) -> dict | None:
         if not u:
             return None
         g = c.execute(
-            "SELECT COUNT(*) n, COALESCE(SUM(input_tokens),0) it, "
-            "COALESCE(SUM(output_tokens),0) ot, COALESCE(SUM(cost),0) cost FROM generations WHERE user_id=?",
+            "SELECT COUNT(*) AS n, COALESCE(SUM(input_tokens),0) AS it, "
+            "COALESCE(SUM(output_tokens),0) AS ot, COALESCE(SUM(cost),0) AS cost FROM generations WHERE user_id=?",
             (uid,)).fetchone()
         by_type = [dict(r) for r in c.execute(
-            "SELECT content_type, COUNT(*) n FROM generations WHERE user_id=? "
-            "GROUP BY content_type ORDER BY n DESC", (uid,)).fetchall()]
+            "SELECT content_type, COUNT(*) AS n FROM generations WHERE user_id=? "
+            "GROUP BY content_type ORDER BY 2 DESC", (uid,)).fetchall()]
         recent = [dict(r) for r in c.execute(
             "SELECT content_type, tone, brief, model, input_tokens, output_tokens, cost, created_at "
             "FROM generations WHERE user_id=? ORDER BY created_at DESC LIMIT 15", (uid,)).fetchall()]
-        brands = c.execute("SELECT COUNT(*) n FROM brands WHERE user_id=?", (uid,)).fetchone()["n"]
-        calendars = c.execute("SELECT COUNT(*) n FROM calendars WHERE user_id=?", (uid,)).fetchone()["n"]
-        favs = c.execute("SELECT COUNT(*) n FROM favorites WHERE user_id=?", (uid,)).fetchone()["n"]
+        brands = c.execute("SELECT COUNT(*) AS n FROM brands WHERE user_id=?", (uid,)).fetchone()["n"]
+        calendars = c.execute("SELECT COUNT(*) AS n FROM calendars WHERE user_id=?", (uid,)).fetchone()["n"]
+        favs = c.execute("SELECT COUNT(*) AS n FROM favorites WHERE user_id=?", (uid,)).fetchone()["n"]
         fb = c.execute(
-            "SELECT COALESCE(SUM(rating='up'),0) up, COALESCE(SUM(rating='down'),0) down "
+            "SELECT COALESCE(SUM(CASE WHEN rating='up' THEN 1 ELSE 0 END),0) AS up, "
+            "COALESCE(SUM(CASE WHEN rating='down' THEN 1 ELSE 0 END),0) AS down "
             "FROM brand_feedback WHERE user_id=?", (uid,)).fetchone()
-        gigs = c.execute("SELECT COUNT(*) n, COALESCE(SUM(amount),0) v FROM gigs WHERE user_id=?", (uid,)).fetchone()
+        gigs = c.execute("SELECT COUNT(*) AS n, COALESCE(SUM(amount),0) AS v FROM gigs WHERE user_id=?", (uid,)).fetchone()
     return {
         "user": dict(u),
         "gens": g["n"], "input_tokens": g["it"], "output_tokens": g["ot"], "cost": round(g["cost"], 2),
