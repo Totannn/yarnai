@@ -714,7 +714,8 @@ def advisor_options() -> dict:
 # --------------------------------------------------------------------------- #
 
 SCRIPT_PLATFORMS = ["TikTok", "Instagram Reels", "YouTube Shorts", "Facebook Reels"]
-SCRIPT_LENGTHS = ["15 seconds", "30 seconds", "45 seconds", "60 seconds"]
+SCRIPT_LENGTHS = ["15 seconds", "30 seconds", "45 seconds", "60 seconds",
+                  "90 seconds", "2 minutes"]
 SCRIPT_GOALS = [
     "Go viral / awareness", "Drive sales", "Educate / how-to",
     "Entertain", "Product launch / announcement", "Build trust / social proof",
