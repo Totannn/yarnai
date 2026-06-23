@@ -118,6 +118,12 @@ def get_client():
 
 with app.app_context():
     db.init_db()
+    print(f"[Vertil] storage = {'PostgreSQL' if db.IS_PG else 'SQLite (' + str(db.DB_PATH) + ')'}", flush=True)
+
+
+@app.get("/healthz")
+def healthz():
+    return jsonify({"ok": True, "storage": "postgres" if db.IS_PG else "sqlite", "ai_live": LIVE})
 
 
 # ------------------------------- auth helpers ----------------------------- #
