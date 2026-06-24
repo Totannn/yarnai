@@ -9,6 +9,8 @@ Paystack checkout. Generation streams from Claude (claude-opus-4-8) over SSE.
 from __future__ import annotations
 
 import functools
+import hashlib
+import hmac
 import json
 import os
 import time
@@ -780,6 +782,31 @@ def billing_callback():
         except Exception:
             pass
     return redirect("/?upgraded=0")
+
+
+@app.post("/billing/webhook")
+def billing_webhook():
+    """Paystack server-to-server confirmation — the reliable source of truth.
+    Fires even if the customer closes the tab before the redirect. We verify the
+    signature so only genuine Paystack calls can change a plan."""
+    if not PAYSTACK_SECRET:
+        return ("", 200)
+    body = request.get_data()
+    sig = request.headers.get("x-paystack-signature", "")
+    expected = hmac.new(PAYSTACK_SECRET.encode(), body, hashlib.sha512).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        return ("", 401)
+    event = request.get_json(silent=True) or {}
+    if event.get("event") == "charge.success":
+        data = event.get("data", {}) or {}
+        meta = data.get("metadata", {}) or {}
+        uid, plan = meta.get("user_id"), meta.get("plan")
+        if uid and plan in PLANS and data.get("status") == "success":
+            try:
+                db.set_user_plan(int(uid), plan)
+            except (TypeError, ValueError):
+                pass
+    return ("", 200)
 
 
 @app.post("/api/billing/simulate")
