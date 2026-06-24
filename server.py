@@ -522,15 +522,17 @@ def refine(user):
 def _demo_calendar(cadence):
     _, count = voice.CADENCE_COUNTS.get(cadence, voice.CADENCE_COUNTS["3_week"])
     s = [
-        ("Salary just land", "Pay-day promo — make your money work", "Awoof dey scarce but e still dey!", "instagram_caption", "pidgin"),
-        ("Mid-week", "Showcase a bestseller with social proof", "This one don dey fly comot for shelf 👀", "instagram_caption", "pidgin"),
-        ("Weekend rush", "Weekend-only flash offer", "Weekend plot loading… you in?", "whatsapp_broadcast", "friendly"),
-        ("Trust builder", "Behind-the-scenes / delivery proof", "See how we package with love ✨", "instagram_caption", "lagos_corporate"),
+        ("Salary just land", "Pay-day promo — make your money work", "Awoof dey scarce but e still dey!", "instagram_caption", "pidgin", "graphic", "bold promo card", "warm teal, big confident type, premium feel"),
+        ("Mid-week", "Showcase a bestseller with social proof", "This one don dey fly comot for shelf 👀", "instagram_caption", "pidgin", "image", "product flat-lay photo", "clean bright background, product hero, soft shadows"),
+        ("Weekend rush", "Weekend-only flash offer", "Weekend plot loading… you in?", "whatsapp_broadcast", "friendly", "graphic", "countdown banner", "high-energy, bold accent colour, urgency"),
+        ("Trust builder", "Behind-the-scenes / delivery proof", "See how we package with love ✨", "instagram_caption", "lagos_corporate", "video", "15s behind-the-scenes reel", "handheld, authentic, warm and human"),
     ]
     span = max(1, 28 // max(count, 1))
     return [{"day": min(28, 2 + i * span), "occasion": f"[demo] {s[i % len(s)][0]}",
              "theme": s[i % len(s)][1], "hook": s[i % len(s)][2],
-             "content_type": s[i % len(s)][3], "tone": s[i % len(s)][4]} for i in range(count)]
+             "content_type": s[i % len(s)][3], "tone": s[i % len(s)][4],
+             "visual_format": s[i % len(s)][5], "visual_kind": s[i % len(s)][6],
+             "visual_notes": s[i % len(s)][7]} for i in range(count)]
 
 
 @app.post("/api/calendar/generate")

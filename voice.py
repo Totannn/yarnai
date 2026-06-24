@@ -418,8 +418,17 @@ sharp content theme/idea, a scroll-stopping hook line, and tie it to a real reas
 (an occasion, a salary-cycle moment, or a brand goal). Spread posts sensibly across \
 the weeks; cluster more energy around the big cultural moments of THAT specific month.
 
+Also give clear VISUAL DIRECTION for each post so a designer or creator knows exactly \
+what to make:
+- visual_format: the medium — one of: graphic, image, video, carousel
+- visual_kind: the specific type (e.g. "bold quote card", "product flat-lay photo", \
+"15s talking-head reel", "3-slide tips carousel", "behind-the-scenes clip")
+- visual_notes: one short sentence on how it should look & feel (colours, mood, \
+composition) — keep it on-brand.
+
 content_type MUST be one of: {valid_ct}
 tone MUST be one of: {valid_tone}
+visual_format MUST be one of: graphic, image, video, carousel
 
 # OUTPUT FORMAT
 Return ONLY valid JSON (no markdown, no commentary), exactly this shape:
@@ -431,7 +440,10 @@ Return ONLY valid JSON (no markdown, no commentary), exactly this shape:
       "theme": "what the post is about (one sentence)",
       "hook": "the opening line that stops the scroll",
       "content_type": "instagram_caption",
-      "tone": "pidgin"
+      "tone": "pidgin",
+      "visual_format": "graphic",
+      "visual_kind": "bold quote card",
+      "visual_notes": "warm teal background, big confident type, minimal and premium"
     }}
   ]
 }}
@@ -472,6 +484,8 @@ def parse_calendar_json(text: str) -> list[dict]:
             continue
         ct = p.get("content_type") if p.get("content_type") in CONTENT_TYPES else "instagram_caption"
         tn = p.get("tone") if p.get("tone") in TONES else "friendly"
+        vf = p.get("visual_format")
+        vf = vf if vf in ("graphic", "image", "video", "carousel") else "graphic"
         try:
             day = int(p.get("day", 1))
         except (TypeError, ValueError):
@@ -483,6 +497,9 @@ def parse_calendar_json(text: str) -> list[dict]:
             "hook": str(p.get("hook", "")).strip(),
             "content_type": ct,
             "tone": tn,
+            "visual_format": vf,
+            "visual_kind": str(p.get("visual_kind", "")).strip(),
+            "visual_notes": str(p.get("visual_notes", "")).strip(),
         })
     cleaned.sort(key=lambda x: x["day"])
     return cleaned

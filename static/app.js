@@ -13,7 +13,7 @@ const state = {
   generating: false, cards: null,
   // calendar
   calMonth: "December", calYear: 2026, calCadence: "3_week",
-  calBuilding: false, calendar: null, savedCalendars: [],
+  calBuilding: false, calendar: null, savedCalendars: [], calLayout: "cards",
   // advisors
   rateInputs: { service: "", experience: "", location: "", client_type: "", scope: "" },
   rateResult: null, rateLoading: false,
@@ -87,6 +87,7 @@ const ICONP = {
   briefcase: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5.5A2.5 2.5 0 0 1 10.5 3h3A2.5 2.5 0 0 1 16 5.5V7M3 12.5h18"/>',
   quote: '<path d="M7 7H4v5h3l-1.5 4M16 7h-3v5h3l-1.5 4"/>',
   film: '<rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M3 9.5h18M3 14.5h18M8 4.5v15M16 4.5v15"/>',
+  download: '<path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M4.5 19.5h15"/>',
 };
 
 function ic(name, cls = "w-4 h-4") {
@@ -489,14 +490,38 @@ function calLoading() {
   return card(`<div class="text-center py-16"><div class="w-9 h-9 mx-auto border-[3px] border-brand/25 border-t-brand rounded-full spin"></div>
     <p class="text-sm font-semibold mt-4">Building your ${esc(state.calMonth)} plan…</p><p class="text-xs text-muted mt-1">Mapping posts to Naija cultural moments</p></div>`);
 }
+const VFMT_META = {
+  graphic:  { label:"Graphic",  cls:"text-violet-700 bg-violet-50 border-violet-200" },
+  image:    { label:"Image",    cls:"text-sky-700 bg-sky-50 border-sky-200" },
+  video:    { label:"Video",    cls:"text-rose-600 bg-rose-50 border-rose-200" },
+  carousel: { label:"Carousel", cls:"text-amber-700 bg-amber-50 border-amber-200" },
+};
+function vfmtBadge(p){
+  const m = VFMT_META[p.visual_format] || VFMT_META.graphic;
+  return `<span class="text-[10px] font-bold uppercase tracking-wide rounded-md border px-1.5 py-0.5 ${m.cls}">${m.label}</span>`;
+}
 function calendarResult(cal) {
   const posts = cal.posts || [], abbr = MONTH_ABBR[cal.month] || (cal.month||"").slice(0,3);
+  const tab = (id,txt)=>`<button data-cal-layout="${id}" class="px-3 py-1.5 rounded-md ${state.calLayout===id?'bg-white shadow-sm font-semibold':'text-muted'}">${txt}</button>`;
   return `<div class="fade-up space-y-4">
     <div class="flex items-center justify-between flex-wrap gap-2">
       <div><h2 class="font-display font-extrabold text-xl">${esc(cal.month)} ${esc(String(cal.year))}</h2>
-        <p class="text-xs text-muted">${posts.length} posts${cal.brand_name?` · ${esc(cal.brand_name)}`:''} · click any card to write the post</p></div>
-      <button data-cal-new class="text-sm font-medium text-muted hover:text-ink border border-line bg-white rounded-lg px-3 py-1.5">↺ New plan</button></div>
-    <div class="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">${posts.map((p,i)=>calPostCard(p,i,abbr)).join("")}</div></div>`;
+        <p class="text-xs text-muted">${posts.length} posts${cal.brand_name?` · ${esc(cal.brand_name)}`:''} · click any post to write it</p></div>
+      <div class="flex items-center gap-2">
+        <div class="inline-flex text-xs bg-paper border border-line rounded-lg p-0.5">${tab("cards","Cards")}${tab("table","Table")}</div>
+        <button data-cal-doc class="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-dark border border-line bg-white rounded-lg px-3 py-1.5 hover:border-brand/40">${ic("download","w-4 h-4")} Download</button>
+        <button data-cal-new class="text-sm font-medium text-muted hover:text-ink border border-line bg-white rounded-lg px-3 py-1.5">↺ New</button></div></div>
+    ${state.calLayout==="table"?calTable(posts,abbr):`<div class="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">${posts.map((p,i)=>calPostCard(p,i,abbr)).join("")}</div>`}</div>`;
+}
+function calTable(posts,abbr){
+  const rows = posts.map((p,i)=>`<tr data-write="${i}" class="border-t border-line hover:bg-brand-tint/40 cursor-pointer align-top">
+    <td class="py-2.5 px-3 whitespace-nowrap"><span class="font-extrabold text-brand-dark">${esc(abbr)} ${p.day}</span></td>
+    <td class="py-2.5 px-3">${p.occasion?`<div class="text-[11px] text-gold font-medium">${esc(p.occasion)}</div>`:''}<div class="font-semibold leading-snug">${esc(p.theme)}</div>${p.hook?`<div class="text-[12px] text-muted italic">“${esc(p.hook)}”</div>`:''}</td>
+    <td class="py-2.5 px-3 whitespace-nowrap text-[12px]">${esc(label("content_types",p.content_type))}<div class="text-muted">${esc(label("tones",p.tone))}</div></td>
+    <td class="py-2.5 px-3">${vfmtBadge(p)}${p.visual_kind?`<span class="text-[12px] font-medium ml-1">${esc(p.visual_kind)}</span>`:''}${p.visual_notes?`<div class="text-[11px] text-muted">${esc(p.visual_notes)}</div>`:''}</td></tr>`).join("");
+  return card(`<div class="overflow-x-auto -m-1 p-1"><table class="w-full text-sm border-collapse min-w-[640px]">
+    <thead><tr class="text-left text-[11px] uppercase tracking-wide text-muted"><th class="py-2 px-3">Day</th><th class="py-2 px-3">Post idea</th><th class="py-2 px-3">Type / Voice</th><th class="py-2 px-3">Visual direction</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`);
 }
 function calPostCard(p,i,abbr) {
   const tone=(state.config.tones.find(t=>t.key===p.tone))||{emoji:"",label:p.tone};
@@ -507,6 +532,9 @@ function calPostCard(p,i,abbr) {
       ${p.occasion?`<span class="text-[11px] font-medium text-gold bg-gold-tint border border-gold/20 rounded-full px-2 py-1 leading-tight">${esc(p.occasion)}</span>`:''}</div>
     <p class="text-sm font-semibold leading-snug">${esc(p.theme)}</p>
     ${p.hook?`<p class="text-[13px] text-muted italic leading-snug">“${esc(p.hook)}”</p>`:''}
+    ${(p.visual_kind||p.visual_notes)?`<div class="rounded-lg bg-paper border border-line p-2.5">
+      <div class="flex items-center gap-1.5 mb-1">${vfmtBadge(p)}${p.visual_kind?`<span class="text-[12px] font-semibold">${esc(p.visual_kind)}</span>`:''}</div>
+      ${p.visual_notes?`<p class="text-[11px] text-muted leading-snug">${esc(p.visual_notes)}</p>`:''}</div>`:''}
     <div class="flex items-center gap-1.5 flex-wrap mt-auto pt-1">
       <span class="inline-flex items-center gap-1 text-[11px] bg-paper border border-line rounded-md px-1.5 py-0.5">${ic(ct.key||p.content_type,"w-3 h-3")} ${esc(ct.label)}</span>
       <span class="text-[11px] bg-paper border border-line rounded-md px-1.5 py-0.5">${esc(tone.label)}</span></div>
@@ -860,7 +888,10 @@ function renderScriptResult(s) {
     ${s.caption?card(`<div class="flex items-center justify-between mb-1"><div class="text-[12px] font-semibold">Caption</div><button data-copy-cap class="text-xs text-brand font-semibold">Copy</button></div>
       <p class="text-sm whitespace-pre-wrap">${esc(s.caption)}</p>
       ${s.hashtags.length?`<div class="flex flex-wrap gap-1.5 mt-2">${s.hashtags.map(h=>`<span class="text-[11px] bg-paper border border-line rounded-full px-2 py-0.5 text-brand-dark">${esc(h)}</span>`).join("")}</div>`:''}`):''}
-    <button data-copy-script class="w-full text-sm font-semibold text-brand-dark bg-brand-tint hover:bg-brand hover:text-white transition rounded-lg py-2.5">Copy full script</button>
+    <div class="flex gap-2">
+      <button data-copy-script class="flex-1 text-sm font-semibold text-brand-dark bg-brand-tint hover:bg-brand hover:text-white transition rounded-lg py-2.5">Copy full script</button>
+      <button data-doc-script class="inline-flex items-center justify-center gap-1.5 text-sm font-semibold text-brand-dark border border-line bg-white hover:border-brand/40 transition rounded-lg px-4 py-2.5">${ic("download","w-4 h-4")} Download</button>
+    </div>
   </div>`;
 }
 
@@ -1012,6 +1043,8 @@ function wire() {
     for (const [id,key] of Object.entries(m)) { const el=$("#"+id); if(el) el.onchange=e=>state[key]= id==="calBrand"?+e.target.value:(id==="calYear"?(parseInt(e.target.value)||state.calYear):e.target.value); }
     const cb=$("#calBtn"); if(cb) cb.onclick=buildCalendar;
     const nb=$("[data-cal-new]"); if(nb) nb.onclick=()=>{state.calendar=null;render();};
+    $$("[data-cal-layout]").forEach(b=>b.onclick=()=>{state.calLayout=b.dataset.calLayout;render();});
+    const cd=$("[data-cal-doc]"); if(cd) cd.onclick=()=>{ const c=state.calendar; downloadDoc(`Vertil ${c.month} ${c.year} Plan.doc`, `${c.month} ${c.year} Content Plan`, calendarDocHTML(c)); toast("Calendar downloaded"); };
     $$("[data-write]").forEach(b=>b.onclick=()=>writeFromCalendar(state.calendar.posts[+b.dataset.write]));
   }
   if (state.view === "calendars") {
@@ -1045,6 +1078,7 @@ function wire() {
     const b=$("#scriptBtn"); if(b) b.onclick=runScript;
     const cc=$("[data-copy-cap]"); if(cc) cc.onclick=()=>{ const s=state.scriptResult; navigator.clipboard.writeText(s.caption+(s.hashtags.length?"\n\n"+s.hashtags.join(" "):"")); cc.textContent="Copied ✓"; setTimeout(()=>cc.textContent="Copy",1400); };
     const cs=$("[data-copy-script]"); if(cs) cs.onclick=()=>{ navigator.clipboard.writeText(scriptToText(state.scriptResult)); cs.textContent="Copied ✓"; setTimeout(()=>cs.textContent="Copy full script",1400); };
+    const ds=$("[data-doc-script]"); if(ds) ds.onclick=()=>{ const s=state.scriptResult; downloadDoc(`Vertil Script - ${s.title||"video"}.doc`, s.title||"Video Script", scriptDocHTML(s)); toast("Script downloaded"); };
   }
   if (state.view === "advisor") {
     ["interests","platform","goal"].forEach(k=>{ const el=$("#b_"+k); if(el) el.oninput=e=>state.brandInputs[k]=e.target.value; });
@@ -1318,5 +1352,73 @@ function toast(msg) {
 function label(kind, key) { if(kind==="content_types"&&ADVISOR_LABELS[key]) return ADVISOR_LABELS[key]; const i=(state.config[kind]||[]).find(x=>x.key===key); return i?i.label:key; }
 function parseSSE(chunk) { let e="message",d=""; for(const l of chunk.split("\n")){ if(l.startsWith("event:"))e=l.slice(6).trim(); else if(l.startsWith("data:"))d+=l.slice(5).trim(); } if(!d)return null; try{return{event:e,data:JSON.parse(d)};}catch{return null;} }
 function esc(s) { return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+/* ============================ DOWNLOADS (.doc) ===================== */
+// Builds a Word-compatible HTML document and triggers a download.
+function downloadDoc(filename, title, bodyHtml) {
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><title>${esc(title)}</title>
+    <style>
+      body{font-family:'Segoe UI',Calibri,Arial,sans-serif;color:#13312e;font-size:11pt;line-height:1.45}
+      .vbrand{color:#0e9488;font-weight:bold;font-size:20pt;letter-spacing:-.5px}
+      .vsub{color:#5b6b66;font-size:9pt;margin:2pt 0 14pt}
+      h1{font-size:17pt;color:#13312e;margin:0 0 2pt}
+      h2{font-size:12pt;color:#0e9488;border-bottom:1px solid #d6e3df;padding-bottom:3pt;margin:16pt 0 8pt}
+      table{border-collapse:collapse;width:100%;font-size:9.5pt}
+      th{background:#0e9488;color:#fff;text-align:left;padding:6pt 8pt;font-size:9pt}
+      td{border:1px solid #d6e3df;padding:6pt 8pt;vertical-align:top}
+      tr:nth-child(even) td{background:#f4f7f6}
+      .day{font-weight:bold;color:#0e9488;white-space:nowrap}
+      .tag{color:#5b6b66;font-size:8.5pt}
+      .hook{font-style:italic;color:#3a4a46}
+      .scene{margin:0 0 10pt;padding:8pt 10pt;border-left:3px solid #0e9488;background:#f4f7f6}
+      .lbl{font-weight:bold;color:#0e9488;font-size:8.5pt;text-transform:uppercase;letter-spacing:.5px}
+      .muted{color:#5b6b66}
+    </style></head><body>
+    <div class="vbrand">Vertil</div><div class="vsub">${esc(title)}</div>
+    ${bodyHtml}
+    <p class="vsub" style="margin-top:24pt">Generated with Vertil · vertil-ai.up.railway.app</p>
+    </body></html>`;
+  const blob = new Blob(['﻿', html], { type: "application/msword" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename.replace(/[^\w.-]+/g, "_");
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+const VFMT_LABEL = { graphic:"Graphic", image:"Image", video:"Video", carousel:"Carousel" };
+
+function calendarDocHTML(cal) {
+  const posts = cal.posts || [];
+  const rows = posts.map(p => {
+    const ct = label("content_types", p.content_type), tn = label("tones", p.tone);
+    const vis = [VFMT_LABEL[p.visual_format] || p.visual_format, p.visual_kind].filter(Boolean).join(" · ");
+    return `<tr>
+      <td class="day">${esc(String(p.day))}</td>
+      <td>${p.occasion?`<div class="tag">${esc(p.occasion)}</div>`:''}<div>${esc(p.theme||"")}</div>${p.hook?`<div class="hook">"${esc(p.hook)}"</div>`:''}</td>
+      <td>${esc(ct)}<div class="tag">${esc(tn)}</div></td>
+      <td>${esc(vis)}${p.visual_notes?`<div class="tag">${esc(p.visual_notes)}</div>`:''}</td>
+    </tr>`;
+  }).join("");
+  return `<h1>${esc(cal.month)} ${esc(String(cal.year))} Content Plan</h1>
+    <p class="muted">${posts.length} posts${cal.brand_name?` · ${esc(cal.brand_name)}`:''}</p>
+    <table><tr><th>Day</th><th>Post idea</th><th>Type / Voice</th><th>Visual direction</th></tr>${rows}</table>`;
+}
+
+function scriptDocHTML(s) {
+  const scenes = (s.scenes || []).map((sc, i) => `<div class="scene">
+    <div class="lbl">Scene ${i+1}${sc.label?` · ${esc(sc.label)}`:''}</div>
+    ${sc.on_screen?`<div><span class="lbl">On screen</span> ${esc(sc.on_screen)}</div>`:''}
+    ${sc.voiceover?`<div><span class="lbl">Voiceover</span> ${esc(sc.voiceover)}</div>`:''}
+    ${sc.visual?`<div class="muted"><span class="lbl">Visual</span> ${esc(sc.visual)}</div>`:''}
+  </div>`).join("");
+  return `<h1>${esc(s.title||"Video Script")}</h1>
+    <p class="muted">${esc(s.format||"")}${s.length?` · ${esc(s.length)}`:''}</p>
+    ${s.hook?`<h2>Hook · first 3 seconds</h2><p class="hook">${esc(s.hook)}</p>`:''}
+    <h2>Script</h2>${scenes}
+    ${s.sound?`<h2>Trending sound</h2><p>${esc(s.sound)}</p>`:''}
+    ${s.cta?`<h2>Call to action</h2><p>${esc(s.cta)}</p>`:''}
+    ${s.caption?`<h2>Caption</h2><p>${esc(s.caption)}</p>${s.hashtags&&s.hashtags.length?`<p class="muted">${esc(s.hashtags.join(" "))}</p>`:''}`:''}`;
+}
 
 boot();
