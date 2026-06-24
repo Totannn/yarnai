@@ -812,10 +812,14 @@ def billing_webhook():
 @app.post("/api/billing/simulate")
 @auth
 def billing_simulate(user):
-    """Dev helper: instantly switch plan without payment (for testing plan gating)."""
+    """Switch plan without payment. Downgrades are always allowed; paid-plan
+    simulation is restricted to test mode (no Paystack) or admins, so live users
+    can't bypass payment by calling this endpoint directly."""
     plan = (request.get_json(force=True) or {}).get("plan", "")
     if plan not in PLANS:
         return jsonify({"error": "Unknown plan"}), 400
+    if plan != "free" and PAYSTACK_SECRET and not is_admin(user):
+        return jsonify({"error": "Payment required.", "paystack": True}), 402
     updated = db.set_user_plan(user["id"], plan)
     return jsonify({"user": updated, "usage": usage_payload(updated), "simulated": True})
 
