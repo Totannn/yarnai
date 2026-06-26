@@ -11,7 +11,7 @@ function vmark(px = 36) {
     <span class="vi" style="font-size:${Math.round(px * 0.5)}px"><span class="vi-tip" style="border-bottom-color:#fff"></span><span class="vi-stem" style="background:#fff"></span></span></span>`;
 }
 
-const state = { user: null, overview: null, users: null, detail: null };
+const state = { user: null, overview: null, users: null, detail: null, section: "overview", q: "" };
 
 async function api(path, opts = {}) {
   const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
@@ -116,61 +116,164 @@ function spark(items, key, color) {
 
 function card(inner) { return `<div class="bg-panel border border-edge rounded-xl2 p-4">${inner}</div>`; }
 
+function statCard(label, val, sub, accent = "text-white") {
+  return `<div class="bg-panel border border-edge rounded-xl2 p-4">
+    <div class="text-[10.5px] font-semibold uppercase tracking-wide text-faint">${label}</div>
+    <div class="font-display font-extrabold text-2xl mt-1 ${accent}">${val}</div>
+    ${sub ? `<div class="text-[11px] text-muted mt-0.5">${sub}</div>` : ""}</div>`;
+}
+
+const PLAN_COLORS = { free: "#5f7a74", starter: "#2dd4bf", growth: "#0e9488", pro: "#d8a13a" };
+const planColor = k => PLAN_COLORS[k] || "#0e9488";
+
+// SVG area+line chart for a daily series of {d, <key>}
+function svgLine(series, key, color) {
+  if (!series || !series.length) return `<div class="text-xs text-muted py-10 text-center">No data yet.</div>`;
+  const W = 560, H = 150, padX = 6, top = 10, bot = 20;
+  const vals = series.map(s => +s[key] || 0);
+  const max = Math.max(1, ...vals), n = series.length;
+  const x = i => padX + (W - 2 * padX) * (n === 1 ? 0.5 : i / (n - 1));
+  const y = v => top + (H - top - bot) * (1 - v / max);
+  const pts = vals.map((v, i) => [x(i), y(v)]);
+  const line = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+  const area = `M${x(0).toFixed(1)} ${(H - bot).toFixed(1)} ` + pts.map(p => "L" + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ") + ` L${x(n - 1).toFixed(1)} ${(H - bot).toFixed(1)} Z`;
+  const id = "ln" + Math.random().toString(36).slice(2, 8);
+  const grid = [0.5, 1].map(g => `<line x1="${padX}" x2="${W - padX}" y1="${y(max * g).toFixed(1)}" y2="${y(max * g).toFixed(1)}" stroke="#1d3b37" stroke-width="1"/>`).join("");
+  const last = pts[pts.length - 1];
+  return `<svg viewBox="0 0 ${W} ${H}" class="w-full" style="height:150px" preserveAspectRatio="none">
+    <defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${color}" stop-opacity="0.32"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
+    ${grid}<path d="${area}" fill="url(#${id})"/>
+    <path d="${line}" fill="none" stroke="${color}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+    <circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="3.5" fill="${color}"/></svg>`;
+}
+
+// SVG donut from [{label, value, color}]
+function svgDonut(segs) {
+  const total = segs.reduce((s, x) => s + x.value, 0) || 1;
+  const R = 56, C = 2 * Math.PI * R; let off = 0;
+  const rings = segs.filter(s => s.value > 0).map(s => {
+    const len = (s.value / total) * C;
+    const el = `<circle cx="80" cy="80" r="${R}" fill="none" stroke="${s.color}" stroke-width="18" stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 80 80)"/>`;
+    off += len; return el;
+  }).join("");
+  return `<svg viewBox="0 0 160 160" class="shrink-0" style="width:148px;height:148px">
+    <circle cx="80" cy="80" r="56" fill="none" stroke="#16322e" stroke-width="18"/>${rings}
+    <text x="80" y="76" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">${total}</text>
+    <text x="80" y="98" text-anchor="middle" fill="#8aa39d" font-size="11">users</text></svg>`;
+}
+
+const NAV = [
+  { key: "overview", label: "Overview", icon: '<path d="M4 13h7V4H4v9Zm9 7h7v-9h-7v9ZM4 20h7v-5H4v5ZM13 9h7V4h-7v5Z"/>' },
+  { key: "customers", label: "Customers", icon: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>' },
+];
+
+function adminSidebar() {
+  const item = n => `<button data-section="${n.key}" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition ${state.section === n.key ? "bg-brand/15 text-brand-bright" : "text-muted hover:bg-edge/40 hover:text-slate-100"}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px]">${n.icon}</svg>${n.label}</button>`;
+  return `<aside class="hidden md:flex w-[228px] shrink-0 flex-col bg-panel/40 border-r border-edge px-3 py-5 sticky top-0 h-screen">
+    <div class="flex items-center gap-2.5 px-2 mb-7">${vmark(32)}<div>${vword({ size: "17px" })}
+      <div class="text-[9px] font-mono uppercase tracking-wider text-faint mt-1 leading-none">Admin console</div></div></div>
+    <nav class="space-y-1">${NAV.map(item).join("")}</nav>
+    <div class="mt-auto px-2">
+      <div class="text-[11px] text-muted truncate mb-2">${esc(state.user.email)}</div>
+      <button id="logout" class="w-full text-xs text-rose-300 hover:text-rose-200 border border-edge rounded-lg px-3 py-2">Log out</button></div>
+  </aside>`;
+}
+
+function adminTopbar() {
+  return `<header class="border-b border-edge bg-panel/60 backdrop-blur sticky top-0 z-20">
+    <div class="px-5 sm:px-7 h-14 flex items-center gap-3">
+      <span class="md:hidden">${vmark(28)}</span>
+      <div class="font-display font-bold capitalize">${state.section}</div>
+      <div class="md:hidden ml-1 flex gap-1">${NAV.map(n => `<button data-section="${n.key}" class="text-xs px-2 py-1 rounded-lg ${state.section === n.key ? "bg-brand/15 text-brand-bright" : "text-muted"}">${n.label}</button>`).join("")}</div>
+      <div class="ml-auto flex items-center gap-2">
+        <button id="refresh" class="text-muted hover:text-white border border-edge rounded-lg px-3 py-1.5 text-xs">↻ Refresh</button>
+        <button id="logout2" class="md:hidden text-rose-300 border border-edge rounded-lg px-3 py-1.5 text-xs">Out</button></div>
+    </div></header>`;
+}
+
 function renderDash() {
+  $("#app").innerHTML = `<div class="flex min-h-screen">
+    ${adminSidebar()}
+    <div class="flex-1 min-w-0 flex flex-col">
+      ${adminTopbar()}
+      <main class="flex-1 px-5 sm:px-7 py-6 w-full max-w-[1180px]">${state.section === "customers" ? customersSection() : overviewSection()}</main>
+    </div></div>`;
+  wireDash();
+}
+
+function overviewSection() {
   const o = state.overview;
   const usd = n => "$" + Math.round(n / o.fx).toLocaleString();
   const margin = o.mrr ? Math.round((1 - (o.ai_spend_30d / o.mrr)) * 100) + "%" : "—";
   const conv = o.total_users ? Math.round(o.paid_users / o.total_users * 100) : 0;
   const arpu = o.paid_users ? naira(Math.round(o.mrr / o.paid_users)) : "—";
-  const stat = (label, val, sub, accent = "text-white") => `<div class="bg-panel border border-edge rounded-xl2 p-4">
-    <div class="text-[10.5px] font-semibold uppercase tracking-wide text-faint">${label}</div>
-    <div class="font-display font-extrabold text-2xl mt-1 ${accent}">${val}</div>
-    ${sub ? `<div class="text-[11px] text-muted mt-0.5">${sub}</div>` : ""}</div>`;
-
-  $("#app").innerHTML = `
-  <header class="border-b border-edge bg-panel/60 backdrop-blur sticky top-0 z-20">
-    <div class="max-w-[1200px] mx-auto px-5 h-16 flex items-center gap-3">
-      ${vmark(34)}
-      <div><div class="font-display font-extrabold leading-none flex items-center gap-1.5">${vword({ size: "17px" })} <span class="text-muted font-normal text-sm">Admin</span></div>
-        <div class="text-[11px] text-muted leading-none mt-1">Platform console</div></div>
-      <div class="ml-auto flex items-center gap-3 text-sm">
-        <button id="refresh" class="text-muted hover:text-white border border-edge rounded-lg px-3 py-1.5 text-xs">↻ Refresh</button>
-        <span class="text-muted hidden sm:inline">${esc(state.user.email)}</span>
-        <button id="logout" class="text-rose-300 hover:text-rose-200 border border-edge rounded-lg px-3 py-1.5 text-xs">Log out</button>
-      </div>
-    </div>
-  </header>
-  <main class="max-w-[1200px] mx-auto px-5 py-6 space-y-5">
+  const planSegs = (o.plans || []).map(p => ({ label: p.name, value: p.count, color: planColor(p.plan) }));
+  const latest = (arr, key) => (arr && arr.length ? arr[arr.length - 1][key] : 0);
+  return `
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-      ${stat("Total users", o.total_users.toLocaleString(), `+${o.new_users_30d} in 30 days`, "text-brand")}
-      ${stat("Paid users", o.paid_users.toLocaleString(), `${conv}% conversion`)}
-      ${stat("Est. MRR", naira(o.mrr), `ARR ${naira(o.arr)} · ARPU ${arpu}`, "text-brand")}
-      ${stat("Gross margin · 30d", margin, "MRR vs AI cost", "text-brand")}
-      ${stat("Active · 7d", (o.active_7d ?? 0).toLocaleString(), "generated this week")}
-      ${stat("Active · 30d", (o.active_30d ?? 0).toLocaleString(), `${o.total_users ? Math.round((o.active_30d || 0) / o.total_users * 100) : 0}% of users`)}
-      ${stat("AI spend · all-time", naira(o.ai_spend), `${usd(o.ai_spend)} · ${o.generations.toLocaleString()} gens`, "text-gold")}
-      ${stat("AI spend · 30d", naira(o.ai_spend_30d), `${o.generations_30d.toLocaleString()} gens · ${(o.suspended_users || 0)} suspended`)}
+      ${statCard("Total users", o.total_users.toLocaleString(), `+${o.new_users_30d} in 30 days`, "text-brand-bright")}
+      ${statCard("Paid users", o.paid_users.toLocaleString(), `${conv}% conversion`)}
+      ${statCard("Est. MRR", naira(o.mrr), `ARR ${naira(o.arr)} · ARPU ${arpu}`, "text-brand-bright")}
+      ${statCard("Gross margin · 30d", margin, "MRR vs AI cost", "text-brand-bright")}
+      ${statCard("Active · 7d", (o.active_7d || 0).toLocaleString(), "generated this week")}
+      ${statCard("Active · 30d", (o.active_30d || 0).toLocaleString(), `${o.total_users ? Math.round((o.active_30d || 0) / o.total_users * 100) : 0}% of base`)}
+      ${statCard("AI spend · all-time", naira(o.ai_spend), `${usd(o.ai_spend)} · ${o.generations.toLocaleString()} gens`, "text-gold")}
+      ${statCard("AI spend · 30d", naira(o.ai_spend_30d), `${o.generations_30d.toLocaleString()} gens · ${o.suspended_users || 0} suspended`)}
     </div>
-    <div class="grid lg:grid-cols-2 gap-4">
-      ${card(`<div class="text-[13px] font-semibold mb-3 text-white">Subscriptions by plan</div><div class="space-y-2.5">${bars(o.plans.map(p => ({ label: p.name, value: p.count, sub: p.count + (p.price ? " · " + naira(p.price * p.count) : "") })), "#0b8457")}</div>`)}
+    <div class="grid lg:grid-cols-3 gap-4 mt-4">
+      ${card(`<div class="flex items-center justify-between mb-1"><div class="text-[13px] font-semibold text-white">New signups</div><div class="text-[11px] text-muted">14 days</div></div>
+        <div class="font-display font-extrabold text-2xl mb-1 text-brand-bright">${latest(o.signups_daily, "n")}</div>${svgLine(o.signups_daily, "n", "#2dd4bf")}`)}
+      ${card(`<div class="flex items-center justify-between mb-1"><div class="text-[13px] font-semibold text-white">Generations</div><div class="text-[11px] text-muted">14 days</div></div>
+        <div class="font-display font-extrabold text-2xl mb-1 text-brand-bright">${latest(o.gens_daily, "n")}</div>${svgLine(o.gens_daily, "n", "#0e9488")}`)}
+      ${card(`<div class="flex items-center justify-between mb-1"><div class="text-[13px] font-semibold text-white">AI spend</div><div class="text-[11px] text-muted">14 days</div></div>
+        <div class="font-display font-extrabold text-2xl mb-1 text-gold">${naira(latest(o.gens_daily, "cost"))}</div>${svgLine(o.gens_daily, "cost", "#d8a13a")}`)}
+    </div>
+    <div class="grid lg:grid-cols-2 gap-4 mt-4">
+      ${card(`<div class="text-[13px] font-semibold mb-3 text-white">Subscriptions by plan</div>
+        <div class="flex items-center gap-5">${svgDonut(planSegs)}
+          <div class="space-y-2 flex-1 min-w-0">${(o.plans || []).map(p => `<div class="flex items-center gap-2 text-xs"><span class="w-3 h-3 rounded-sm shrink-0" style="background:${planColor(p.plan)}"></span><span class="text-slate-200 flex-1 truncate">${esc(p.name)}</span><span class="text-faint tabular-nums whitespace-nowrap">${p.count}${p.price ? " · " + naira(p.price * p.count) : ""}</span></div>`).join("") || '<p class="text-xs text-muted">No data.</p>'}</div></div>`)}
       ${card(`<div class="text-[13px] font-semibold mb-3 text-white">Generations by type</div><div class="space-y-2.5">${bars(o.by_type.map(t => ({ label: t.label, value: t.n, sub: t.n })), "#34d186")}</div>`)}
     </div>
-    <div class="grid lg:grid-cols-2 gap-4">
-      ${card(`<div class="text-[13px] font-semibold mb-3 text-white">AI spend by model</div><div class="space-y-2.5">${bars(o.by_model.map(m => ({ label: m.model, value: Math.round(m.cost), sub: naira(m.cost) })), "#b7791f")}</div>`)}
-      ${card(`<div class="grid grid-cols-2 gap-5"><div><div class="text-[13px] font-semibold mb-2 text-white">Signups · 14d</div>${spark(o.signups_daily, "n", "#0b8457")}</div><div><div class="text-[13px] font-semibold mb-2 text-white">Generations · 14d</div>${spark(o.gens_daily, "n", "#34d186")}</div></div>`)}
-    </div>
+    <div class="mt-4">${card(`<div class="text-[13px] font-semibold mb-3 text-white">AI spend by model</div><div class="space-y-2.5">${bars(o.by_model.map(m => ({ label: m.model, value: Math.round(m.cost), sub: naira(m.cost) })), "#b7791f")}</div>`)}</div>`;
+}
+
+function filteredUsers() {
+  const q = (state.q || "").toLowerCase().trim();
+  if (!q) return state.users;
+  return state.users.filter(u => (u.name || "").toLowerCase().includes(q)
+    || (u.email || "").toLowerCase().includes(q) || (u.plan_name || "").toLowerCase().includes(q));
+}
+
+function customersSection() {
+  const list = filteredUsers();
+  return `
     <div id="detail">${state.detail ? userDetail(state.detail) : ""}</div>
-    ${card(`<div class="text-[13px] font-semibold mb-3 text-white">All users (${state.users.length})</div>
+    ${card(`<div class="flex items-center justify-between gap-3 mb-3 flex-wrap">
+        <div class="text-[13px] font-semibold text-white">Customers <span id="custCount" class="text-faint">(${list.length}${list.length !== state.users.length ? " of " + state.users.length : ""})</span></div>
+        <input id="userSearch" value="${esc(state.q || "")}" placeholder="Search name, email, plan…" class="bg-paper border border-edge rounded-lg px-3 py-1.5 text-xs text-slate-100 w-60 outline-none focus:border-brand/60"/></div>
       <div class="overflow-x-auto scroll-thin"><table class="w-full text-xs">
         <thead><tr class="text-faint text-left border-b border-edge">
           <th class="py-2 pr-3 font-semibold">User</th><th class="py-2 px-2 font-semibold">Plan</th>
           <th class="py-2 px-2 font-semibold text-right">Gens</th><th class="py-2 px-2 font-semibold text-right">Tokens</th>
           <th class="py-2 px-2 font-semibold text-right">AI spend</th><th class="py-2 px-2 font-semibold">Joined</th><th></th></tr></thead>
-        <tbody>${state.users.map(userRow).join("") || `<tr><td colspan="7" class="py-4 text-muted">No users yet.</td></tr>`}</tbody></table></div>`)}
-  </main>`;
+        <tbody id="custBody">${list.map(userRow).join("") || `<tr><td colspan="7" class="py-4 text-muted">No users yet.</td></tr>`}</tbody></table></div>`)}`;
+}
 
-  $("#logout").onclick = logout;
-  $("#refresh").onclick = async () => { await load(); state.detail = null; renderDash(); };
+function wireDash() {
+  $$("[data-section]").forEach(b => b.onclick = () => { state.section = b.dataset.section; state.detail = null; renderDash(); });
+  const lo = $("#logout"); if (lo) lo.onclick = logout;
+  const lo2 = $("#logout2"); if (lo2) lo2.onclick = logout;
+  const rf = $("#refresh"); if (rf) rf.onclick = async () => { await load(); renderDash(); };
+  const se = $("#userSearch");
+  if (se) se.oninput = () => {
+    state.q = se.value;
+    const list = filteredUsers();
+    const tb = $("#custBody"); if (tb) tb.innerHTML = list.map(userRow).join("") || `<tr><td colspan="7" class="py-4 text-muted">No matching users.</td></tr>`;
+    const cnt = $("#custCount"); if (cnt) cnt.textContent = `(${list.length}${list.length !== state.users.length ? " of " + state.users.length : ""})`;
+    wireRows();
+  };
   wireRows();
 }
 
