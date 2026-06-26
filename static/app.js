@@ -165,7 +165,7 @@ function renderAuth() {
           <li class="flex items-center gap-3 text-sm text-white/90"><span class="w-5 h-5 rounded-full bg-brand-bright/20 text-brand-bright grid place-items-center shrink-0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" class="w-3 h-3"><path d="M20 6 9 17l-5-5"/></svg></span> From idea to finished content in seconds</li>
         </ul>
       </div>
-      <p class="text-white/60 text-xs relative z-10">Built with Claude · the Nigerian brand voice engine</p>
+      <p class="text-white/60 text-xs relative z-10">The Nigerian brand voice engine</p>
       <div class="absolute -right-16 -bottom-16 w-72 h-72 rounded-full bg-white/10"></div>
       <div class="absolute right-24 top-24 w-32 h-32 rounded-full bg-white/10"></div>
     </div>
@@ -186,6 +186,9 @@ function renderAuth() {
             ${login ? "Log in" : "Create account"}
           </button>
         </form>
+        ${state.config && state.config.google_client_id ? `
+        <div class="flex items-center gap-3 my-4"><div class="h-px bg-line flex-1"></div><span class="text-xs text-faint">or</span><div class="h-px bg-line flex-1"></div></div>
+        <div id="gbtn" class="flex justify-center"></div>` : ""}
         <p class="text-sm text-muted mt-5 text-center">
           ${login ? "New here?" : "Already have an account?"}
           <button id="authToggle" class="text-brand font-semibold hover:text-brand-dark">${login ? "Create an account" : "Log in"}</button>
@@ -198,6 +201,36 @@ function renderAuth() {
 
   $("#authToggle").onclick = () => { state.authMode = login ? "signup" : "login"; renderAuth(); };
   $("#authForm").onsubmit = doAuth;
+  initGoogleButton();
+}
+
+function initGoogleButton() {
+  const cid = state.config && state.config.google_client_id;
+  const host = document.getElementById("gbtn");
+  if (!cid || !host) return;
+  let tries = 0;
+  (function ready() {
+    if (window.google && google.accounts && google.accounts.id) {
+      google.accounts.id.initialize({ client_id: cid, callback: onGoogleCredential });
+      google.accounts.id.renderButton(host, { theme: "outline", size: "large", width: 320, text: "continue_with", shape: "pill" });
+      return;
+    }
+    if (tries++ < 40) setTimeout(ready, 150);  // GIS script loads async
+  })();
+}
+
+async function onGoogleCredential(resp) {
+  try {
+    const d = await api("/api/auth/google", { method: "POST", body: JSON.stringify({ credential: resp.credential }) });
+    state.user = d.user; state.usage = d.usage;
+    await loadData();
+    state.view = "studio";
+    render();
+    maybeStartTour();
+  } catch (ex) {
+    const err = document.getElementById("authErr");
+    if (err) { err.textContent = ex.message; err.classList.remove("hidden"); } else toast("⚠ " + ex.message);
+  }
 }
 
 async function doAuth(e) {

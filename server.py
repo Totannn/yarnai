@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 import time
 
 import httpx
@@ -29,6 +30,7 @@ load_dotenv()
 API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 LIVE = bool(API_KEY) and not API_KEY.startswith("sk-ant-xxxx")
 PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY", "").strip()
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
 
 # --------------------------------------------------------------------------- #
 # Two-tier models. Standard is the fast, cost-efficient default; Premium is the
@@ -221,6 +223,7 @@ def config():
         "refine_presets": [{"key": k, "label": k.replace("_", " ").title()} for k in voice.REFINE_PRESETS],
         "plans": [{"key": k, **PLANS[k]} for k in PLAN_ORDER],
         "paystack": bool(PAYSTACK_SECRET),
+        "google_client_id": GOOGLE_CLIENT_ID,
         "advisor_options": voice.advisor_options(),
         "script_options": voice.script_options(),
     })
@@ -252,6 +255,39 @@ def login():
         return jsonify({"error": "Wrong email or password."}), 401
     session["uid"] = rec["id"]
     user = db.get_user(rec["id"])
+    return jsonify({"user": user_public(user), "usage": usage_payload(user)})
+
+
+@app.post("/api/auth/google")
+def auth_google():
+    """Verify a Google Identity Services ID token and log the user in,
+    creating the account on first sign-in."""
+    if not GOOGLE_CLIENT_ID:
+        return jsonify({"error": "Google sign-in isn't configured yet."}), 400
+    cred = (request.get_json(force=True) or {}).get("credential", "")
+    if not cred:
+        return jsonify({"error": "Missing Google credential."}), 400
+    try:
+        r = httpx.get("https://oauth2.googleapis.com/tokeninfo",
+                      params={"id_token": cred}, timeout=15)
+        info = r.json() if r.status_code == 200 else {}
+    except Exception:
+        info = {}
+    email = (info.get("email") or "").strip().lower()
+    iss = info.get("iss", "")
+    if (info.get("aud") != GOOGLE_CLIENT_ID
+            or iss not in ("accounts.google.com", "https://accounts.google.com")
+            or not email):
+        return jsonify({"error": "Could not verify your Google sign-in. Please try again."}), 401
+    if str(info.get("email_verified", "")).lower() not in ("true", "1"):
+        return jsonify({"error": "Your Google email isn't verified."}), 401
+    rec = db.get_user_by_email(email)
+    if rec:
+        user = db.get_user(rec["id"])
+    else:
+        name = (info.get("name") or info.get("given_name") or email.split("@")[0]).strip()
+        user = db.create_user(email, name, generate_password_hash(secrets.token_urlsafe(24)))
+    session["uid"] = user["id"]
     return jsonify({"user": user_public(user), "usage": usage_payload(user)})
 
 
