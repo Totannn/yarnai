@@ -179,6 +179,8 @@ def init_db() -> None:
             _add_col(c, tbl, "user_id", "INTEGER")
         _add_col(c, "users", "onboarded", "INTEGER NOT NULL DEFAULT 0")
         _add_col(c, "users", "is_admin", "INTEGER NOT NULL DEFAULT 0")
+        _add_col(c, "users", "suspended", "INTEGER NOT NULL DEFAULT 0")
+        _add_col(c, "users", "notes", "TEXT DEFAULT ''")
         _add_col(c, "generations", "input_tokens", "INTEGER DEFAULT 0")
         _add_col(c, "generations", "output_tokens", "INTEGER DEFAULT 0")
         _add_col(c, "generations", "cost", f"{_REAL} DEFAULT 0")
@@ -536,6 +538,11 @@ def admin_overview() -> dict:
         brands = c.execute("SELECT COUNT(*) AS n FROM brands").fetchone()["n"]
         calendars = c.execute("SELECT COUNT(*) AS n FROM calendars").fetchone()["n"]
         gigs = c.execute("SELECT COUNT(*) AS n, COALESCE(SUM(amount),0) AS v FROM gigs").fetchone()
+        active_7d = c.execute("SELECT COUNT(DISTINCT user_id) AS n FROM generations WHERE created_at>=?",
+                              (time.time() - 7 * 86400,)).fetchone()["n"]
+        active_30d = c.execute("SELECT COUNT(DISTINCT user_id) AS n FROM generations WHERE created_at>=?",
+                               (since,)).fetchone()["n"]
+        suspended = c.execute("SELECT COUNT(*) AS n FROM users WHERE suspended=1").fetchone()["n"]
     return {
         "total_users": total_users, "new_users_30d": new_users_30d,
         "by_plan": by_plan, "by_type": by_type, "by_model": by_model,
@@ -546,18 +553,19 @@ def admin_overview() -> dict:
         "gens_daily": list(reversed(gens_daily)),
         "brands": brands, "calendars": calendars,
         "gigs": gigs["n"], "gigs_value": round(gigs["v"], 2),
+        "active_7d": active_7d, "active_30d": active_30d, "suspended_users": suspended,
     }
 
 
 def admin_users() -> list[dict]:
     with _conn() as c:
         rows = c.execute(
-            "SELECT u.id, u.email, u.name, u.plan, u.created_at, u.onboarded, "
+            "SELECT u.id, u.email, u.name, u.plan, u.created_at, u.onboarded, u.suspended, "
             "COUNT(g.id) AS gens, COALESCE(SUM(g.input_tokens),0) AS it, "
             "COALESCE(SUM(g.output_tokens),0) AS ot, COALESCE(SUM(g.cost),0) AS cost, "
             "MAX(g.created_at) AS last_active "
             "FROM users u LEFT JOIN generations g ON g.user_id=u.id "
-            "GROUP BY u.id, u.email, u.name, u.plan, u.created_at, u.onboarded "
+            "GROUP BY u.id, u.email, u.name, u.plan, u.created_at, u.onboarded, u.suspended "
             "ORDER BY u.created_at DESC"
         ).fetchall()
     return [dict(r) for r in rows]
@@ -565,9 +573,12 @@ def admin_users() -> list[dict]:
 
 def admin_user_detail(uid: int) -> dict | None:
     with _conn() as c:
-        u = c.execute("SELECT id,email,name,plan,onboarded,created_at FROM users WHERE id=?", (uid,)).fetchone()
+        u = c.execute("SELECT id,email,name,plan,onboarded,created_at,suspended,notes FROM users WHERE id=?", (uid,)).fetchone()
         if not u:
             return None
+        daily = [dict(r) for r in c.execute(
+            f"SELECT {_DAY} AS d, COUNT(*) AS n, COALESCE(SUM(cost),0) AS cost "
+            f"FROM generations WHERE user_id=? GROUP BY 1 ORDER BY 1 DESC LIMIT 14", (uid,)).fetchall()]
         g = c.execute(
             "SELECT COUNT(*) AS n, COALESCE(SUM(input_tokens),0) AS it, "
             "COALESCE(SUM(output_tokens),0) AS ot, COALESCE(SUM(cost),0) AS cost FROM generations WHERE user_id=?",
@@ -589,8 +600,34 @@ def admin_user_detail(uid: int) -> dict | None:
     return {
         "user": dict(u),
         "gens": g["n"], "input_tokens": g["it"], "output_tokens": g["ot"], "cost": round(g["cost"], 2),
-        "by_type": by_type, "recent": recent,
+        "by_type": by_type, "recent": recent, "daily": list(reversed(daily)),
         "brands": brands, "calendars": calendars, "favorites": favs,
         "feedback_up": fb["up"], "feedback_down": fb["down"],
         "gigs": gigs["n"], "gigs_value": round(gigs["v"], 2),
     }
+
+
+def admin_update_user(uid: int, plan=None, suspended=None, notes=None) -> dict | None:
+    sets, params = [], []
+    if plan is not None:
+        sets.append("plan=?"); params.append(plan)
+    if suspended is not None:
+        sets.append("suspended=?"); params.append(1 if suspended else 0)
+    if notes is not None:
+        sets.append("notes=?"); params.append(str(notes))
+    if sets:
+        with _conn() as c:
+            c.execute(f"UPDATE users SET {', '.join(sets)} WHERE id=?", (*params, uid))
+    return get_user(uid)
+
+
+def admin_delete_user(uid: int) -> bool:
+    """Permanently remove a user and all of their data."""
+    with _conn() as c:
+        exists = c.execute("SELECT id FROM users WHERE id=?", (uid,)).fetchone()
+        if not exists:
+            return False
+        for tbl in ("generations", "brands", "calendars", "favorites", "gigs", "brand_feedback"):
+            c.execute(f"DELETE FROM {tbl} WHERE user_id=?", (uid,))
+        c.execute("DELETE FROM users WHERE id=?", (uid,))
+    return True

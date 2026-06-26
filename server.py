@@ -253,6 +253,8 @@ def login():
     rec = db.get_user_by_email(email)
     if not rec or not check_password_hash(rec["password_hash"], d.get("password") or ""):
         return jsonify({"error": "Wrong email or password."}), 401
+    if rec.get("suspended"):
+        return jsonify({"error": "This account has been suspended. Contact support."}), 403
     session["uid"] = rec["id"]
     user = db.get_user(rec["id"])
     return jsonify({"user": user_public(user), "usage": usage_payload(user)})
@@ -283,6 +285,8 @@ def auth_google():
         return jsonify({"error": "Your Google email isn't verified."}), 401
     rec = db.get_user_by_email(email)
     if rec:
+        if rec.get("suspended"):
+            return jsonify({"error": "This account has been suspended. Contact support."}), 403
         user = db.get_user(rec["id"])
     else:
         name = (info.get("name") or info.get("given_name") or email.split("@")[0]).strip()
@@ -892,6 +896,7 @@ def admin_overview(_user):
         **o,
         "paid_users": paid, "mrr": mrr, "arr": mrr * 12,
         "plans": sorted(plan_rows, key=lambda x: -x["count"]),
+        "all_plans": [{"key": k, "name": PLANS[k]["name"], "price": PLANS[k]["price"]} for k in PLAN_ORDER],
         "fx": NGN_PER_USD,
     })
 
@@ -919,6 +924,49 @@ def admin_user(_user, uid):
     for g in detail["recent"]:
         g["label"] = _TYPE_LABELS.get(g["content_type"], g["content_type"])
     return jsonify(detail)
+
+
+@app.post("/api/admin/users/<int:uid>/update")
+@admin
+def admin_user_update(actor, uid):
+    """Change a customer's plan, suspend/unsuspend them, or save admin notes."""
+    target = db.get_user(uid)
+    if not target:
+        return jsonify({"error": "User not found."}), 404
+    target_is_admin = target["email"].lower() in ADMIN_EMAILS
+    d = request.get_json(force=True) or {}
+
+    plan = d.get("plan")
+    if plan is not None and plan not in PLANS:
+        return jsonify({"error": "Unknown plan."}), 400
+
+    suspended = d.get("suspended")
+    if suspended is not None:
+        if uid == actor["id"]:
+            return jsonify({"error": "You can't suspend your own account."}), 400
+        if target_is_admin:
+            return jsonify({"error": "You can't suspend another admin."}), 400
+
+    notes = d.get("notes")
+    updated = db.admin_update_user(uid, plan=plan,
+                                   suspended=None if suspended is None else bool(suspended),
+                                   notes=notes)
+    return jsonify({"ok": True, "user": updated})
+
+
+@app.delete("/api/admin/users/<int:uid>")
+@admin
+def admin_user_delete(actor, uid):
+    """Permanently delete a customer and all their data."""
+    target = db.get_user(uid)
+    if not target:
+        return jsonify({"error": "User not found."}), 404
+    if uid == actor["id"]:
+        return jsonify({"error": "You can't delete your own account."}), 400
+    if target["email"].lower() in ADMIN_EMAILS:
+        return jsonify({"error": "You can't delete another admin."}), 400
+    db.admin_delete_user(uid)
+    return jsonify({"ok": True})
 
 
 if __name__ == "__main__":

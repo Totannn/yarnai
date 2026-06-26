@@ -120,6 +120,8 @@ function renderDash() {
   const o = state.overview;
   const usd = n => "$" + Math.round(n / o.fx).toLocaleString();
   const margin = o.mrr ? Math.round((1 - (o.ai_spend_30d / o.mrr)) * 100) + "%" : "—";
+  const conv = o.total_users ? Math.round(o.paid_users / o.total_users * 100) : 0;
+  const arpu = o.paid_users ? naira(Math.round(o.mrr / o.paid_users)) : "—";
   const stat = (label, val, sub, accent = "text-white") => `<div class="bg-panel border border-edge rounded-xl2 p-4">
     <div class="text-[10.5px] font-semibold uppercase tracking-wide text-faint">${label}</div>
     <div class="font-display font-extrabold text-2xl mt-1 ${accent}">${val}</div>
@@ -141,13 +143,13 @@ function renderDash() {
   <main class="max-w-[1200px] mx-auto px-5 py-6 space-y-5">
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
       ${stat("Total users", o.total_users.toLocaleString(), `+${o.new_users_30d} in 30 days`, "text-brand")}
-      ${stat("Paid users", o.paid_users.toLocaleString(), `of ${o.total_users} total`)}
-      ${stat("Est. MRR", naira(o.mrr), `ARR ${naira(o.arr)}`, "text-brand")}
-      ${stat("AI spend · all-time", naira(o.ai_spend), `${usd(o.ai_spend)} · ${o.generations.toLocaleString()} gens`, "text-gold")}
-      ${stat("AI spend · 30d", naira(o.ai_spend_30d), `${o.generations_30d.toLocaleString()} generations`)}
-      ${stat("Tokens in", Number(o.input_tokens).toLocaleString(), "prompt tokens")}
-      ${stat("Tokens out", Number(o.output_tokens).toLocaleString(), "completion tokens")}
+      ${stat("Paid users", o.paid_users.toLocaleString(), `${conv}% conversion`)}
+      ${stat("Est. MRR", naira(o.mrr), `ARR ${naira(o.arr)} · ARPU ${arpu}`, "text-brand")}
       ${stat("Gross margin · 30d", margin, "MRR vs AI cost", "text-brand")}
+      ${stat("Active · 7d", (o.active_7d ?? 0).toLocaleString(), "generated this week")}
+      ${stat("Active · 30d", (o.active_30d ?? 0).toLocaleString(), `${o.total_users ? Math.round((o.active_30d || 0) / o.total_users * 100) : 0}% of users`)}
+      ${stat("AI spend · all-time", naira(o.ai_spend), `${usd(o.ai_spend)} · ${o.generations.toLocaleString()} gens`, "text-gold")}
+      ${stat("AI spend · 30d", naira(o.ai_spend_30d), `${o.generations_30d.toLocaleString()} gens · ${(o.suspended_users || 0)} suspended`)}
     </div>
     <div class="grid lg:grid-cols-2 gap-4">
       ${card(`<div class="text-[13px] font-semibold mb-3 text-white">Subscriptions by plan</div><div class="space-y-2.5">${bars(o.plans.map(p => ({ label: p.name, value: p.count, sub: p.count + (p.price ? " · " + naira(p.price * p.count) : "") })), "#0b8457")}</div>`)}
@@ -175,8 +177,8 @@ function renderDash() {
 function userRow(u) {
   const tok = (u.it || 0) + (u.ot || 0);
   const planColor = u.plan === "free" ? "bg-edge text-muted" : "bg-brand/20 text-brand";
-  return `<tr class="border-b border-edge/60 hover:bg-edge/40">
-    <td class="py-2 pr-3"><div class="font-semibold flex items-center gap-1.5 text-slate-100">${esc(u.name || "—")}${u.is_admin ? ' <span class="text-[8.5px] bg-brand text-ink px-1 py-0.5 rounded">ADMIN</span>' : ""}</div><div class="text-faint">${esc(u.email)}</div></td>
+  return `<tr class="border-b border-edge/60 hover:bg-edge/40 ${u.suspended ? "opacity-60" : ""}">
+    <td class="py-2 pr-3"><div class="font-semibold flex items-center gap-1.5 text-slate-100">${esc(u.name || "—")}${u.is_admin ? ' <span class="text-[8.5px] bg-brand text-ink px-1 py-0.5 rounded">ADMIN</span>' : ""}${u.suspended ? ' <span class="text-[8.5px] bg-rose-500/80 text-white px-1 py-0.5 rounded">SUSPENDED</span>' : ""}</div><div class="text-faint">${esc(u.email)}</div></td>
     <td class="py-2 px-2"><span class="px-2 py-0.5 rounded-full ${planColor}">${esc(u.plan_name)}</span></td>
     <td class="py-2 px-2 text-right tabular-nums text-slate-300">${u.gens}</td>
     <td class="py-2 px-2 text-right tabular-nums text-slate-300">${tok.toLocaleString()}</td>
@@ -193,12 +195,15 @@ function userDetail(d) {
       <div><div class="font-display font-extrabold text-lg">${esc(u.name || "—")} ${u.is_admin ? '<span class="text-[8.5px] bg-brand text-ink px-1 py-0.5 rounded align-middle">ADMIN</span>' : ""}</div>
         <div class="text-xs text-muted">${esc(u.email)} · ${esc(u.plan_name)} plan · joined ${fmtDate(u.created_at)}</div></div>
       <button id="closeDetail" class="text-sm text-muted hover:text-white">✕ close</button></div>
+    ${u.suspended ? '<div class="mb-3 text-xs font-semibold text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded-lg px-3 py-2">This account is suspended — the user cannot log in.</div>' : ""}
+    ${adminControls(u)}
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
       ${stat("Generations", d.gens)}${stat("AI spend", naira(d.cost))}
       ${stat("Tokens", (d.input_tokens + d.output_tokens).toLocaleString())}${stat("Brands", d.brands)}
       ${stat("Calendars", d.calendars)}${stat("Saved copy", d.favorites)}
       ${stat("Feedback", "👍 " + d.feedback_up + " · 👎 " + d.feedback_down)}${stat("Gigs", d.gigs + " (" + naira(d.gigs_value) + ")")}
     </div>
+    ${(d.daily && d.daily.length) ? `<div class="mb-4"><div class="text-[12px] font-semibold mb-2 text-white">Activity · 14d</div>${spark(d.daily, "n", "#0b8457")}</div>` : ""}
     ${d.by_type.length ? `<div class="text-[12px] font-semibold mb-2 text-white">What they generate</div><div class="space-y-2 mb-4">${bars(d.by_type.map(t => ({ label: t.label, value: t.n, sub: t.n })), "#0b8457")}</div>` : ""}
     <div class="text-[12px] font-semibold mb-2 text-white">Recent activity</div>
     <div class="space-y-1.5">${(d.recent || []).map(g => `<div class="flex items-center gap-2 text-xs bg-paper border border-edge rounded-lg px-3 py-2">
@@ -209,12 +214,54 @@ function userDetail(d) {
   </div>`;
 }
 
+function adminControls(u) {
+  const plans = (state.overview && state.overview.all_plans) || [];
+  const opts = plans.map(p => `<option value="${p.key}" ${p.key === u.plan ? "selected" : ""}>${esc(p.name)}${p.price ? " · " + naira(p.price) : ""}</option>`).join("");
+  const locked = u.is_admin;  // don't allow suspend/delete on admins from UI
+  return `<div class="bg-paper border border-edge rounded-xl2 p-4 mb-4" data-admin-id="${u.id}">
+    <div class="text-[12px] font-semibold mb-3 text-white flex items-center gap-2">Manage customer ${locked ? '<span class="text-[10px] text-faint font-normal">(admin — limited)</span>' : ""}</div>
+    <div class="flex flex-wrap items-end gap-3">
+      <div><div class="text-[10px] uppercase tracking-wide text-faint mb-1">Plan</div>
+        <select id="acPlan" class="bg-panel border border-edge rounded-lg px-3 py-2 text-xs text-slate-100">${opts}</select></div>
+      <button id="acPlanSave" class="text-xs font-semibold bg-brand text-ink rounded-lg px-3 py-2 hover:bg-brand-bright">Apply plan</button>
+      ${locked ? "" : `<button id="acSuspend" class="text-xs font-semibold rounded-lg px-3 py-2 border ${u.suspended ? "border-brand/50 text-brand hover:bg-brand/10" : "border-amber-500/50 text-amber-300 hover:bg-amber-500/10"}">${u.suspended ? "Unsuspend" : "Suspend"}</button>
+      <button id="acDelete" class="text-xs font-semibold rounded-lg px-3 py-2 border border-rose-500/50 text-rose-300 hover:bg-rose-500/10 ml-auto">Delete user</button>`}
+    </div>
+    <div class="mt-3"><div class="text-[10px] uppercase tracking-wide text-faint mb-1">Admin notes (private)</div>
+      <textarea id="acNotes" rows="2" class="w-full bg-panel border border-edge rounded-lg px-3 py-2 text-xs text-slate-200" placeholder="Internal notes about this customer…">${esc(u.notes || "")}</textarea>
+      <button id="acNotesSave" class="mt-2 text-xs font-semibold border border-edge rounded-lg px-3 py-1.5 text-slate-200 hover:bg-edge/40">Save notes</button></div>
+  </div>`;
+}
+
+async function adminAct(uid, body, opts = {}) {
+  try {
+    if (opts.del) await api(`/api/admin/users/${uid}`, { method: "DELETE" });
+    else await api(`/api/admin/users/${uid}/update`, { method: "POST", body: JSON.stringify(body) });
+    await load();  // refresh overview + user list
+    state.detail = opts.del ? null : await api(`/api/admin/users/${uid}`);
+    renderDash();
+    if (opts.toast) { /* lightweight confirmation */ }
+  } catch (e) { alert(e.message); }
+}
+
 function wireRows() {
   $$("[data-user]").forEach(b => b.onclick = async () => {
     try { state.detail = await api(`/api/admin/users/${b.dataset.user}`); renderDash(); window.scrollTo({ top: 0, behavior: "smooth" }); }
     catch (e) { alert(e.message); }
   });
   const c = $("#closeDetail"); if (c) c.onclick = () => { state.detail = null; renderDash(); };
+
+  const panel = $("[data-admin-id]");
+  if (panel) {
+    const uid = +panel.dataset.adminId;
+    const ps = $("#acPlanSave"); if (ps) ps.onclick = () => adminAct(uid, { plan: $("#acPlan").value });
+    const su = $("#acSuspend"); if (su) su.onclick = () => adminAct(uid, { suspended: !(state.detail.user.suspended) });
+    const ns = $("#acNotesSave"); if (ns) ns.onclick = () => adminAct(uid, { notes: $("#acNotes").value });
+    const dl = $("#acDelete"); if (dl) dl.onclick = () => {
+      const u = state.detail.user;
+      if (confirm(`Permanently delete ${u.email} and ALL their data?\n\nThis cannot be undone.`)) adminAct(uid, {}, { del: true });
+    };
+  }
 }
 
 boot();
