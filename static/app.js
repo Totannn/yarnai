@@ -1423,19 +1423,17 @@ function renderTourStep() {
   const desktop = window.innerWidth >= 768;
   const target = (desktop && step.sel) ? document.querySelector("aside " + step.sel) : null;
 
-  let spot, bubbleStyle;
+  let spot, bubblePos = null;  // bubblePos null = center via flex wrapper (mobile)
   if (target) {
     const r = target.getBoundingClientRect(), pad = 6;
     spot = `<div style="position:fixed;left:${r.left-pad}px;top:${r.top-pad}px;width:${r.width+pad*2}px;height:${r.height+pad*2}px;border-radius:12px;box-shadow:0 0 0 9999px rgba(16,24,40,.62);transition:all .2s ease;"></div>`;
     const bx = Math.min(r.right + 16, window.innerWidth - 336);
-    bubbleStyle = `left:${bx}px;top:${Math.max(12, r.top - 6)}px;`;
+    bubblePos = `position:fixed;left:${bx}px;top:${Math.max(12, r.top - 6)}px;width:320px;max-width:90vw;`;
   } else {
     spot = `<div style="position:fixed;inset:0;background:rgba(16,24,40,.62);"></div>`;
-    bubbleStyle = `left:50%;top:50%;transform:translate(-50%,-50%);`;
   }
 
-  el.innerHTML = `${spot}
-    <div style="position:fixed;${bubbleStyle}z-index:2;width:320px;max-width:90vw;" class="bg-white rounded-xl2 shadow-lift p-4 fade-up">
+  const inner = `
       <div class="flex items-center justify-between mb-1.5">
         <div class="flex gap-1">${TOUR_STEPS.map((_,i)=>`<span class="w-1.5 h-1.5 rounded-full ${i===n?'bg-brand':'bg-line'}"></span>`).join("")}</div>
         <button id="tourSkip" class="text-[11px] text-muted hover:text-ink">Skip</button>
@@ -1445,8 +1443,14 @@ function renderTourStep() {
       <div class="flex items-center gap-2 mt-3.5">
         ${n>0?`<button id="tourBack" class="text-sm px-3 py-1.5 rounded-lg border border-line hover:bg-paper">Back</button>`:''}
         <button id="tourNext" class="ml-auto text-sm font-semibold text-white bg-brand hover:bg-brand-dark px-4 py-1.5 rounded-lg shadow-sm">${last?'Finish':'Next'}</button>
-      </div>
-    </div>`;
+      </div>`;
+
+  const bubble = bubblePos
+    ? `<div style="${bubblePos}z-index:2;" class="bg-white rounded-xl2 shadow-lift p-4 fade-up">${inner}</div>`
+    : `<div style="position:fixed;inset:0;z-index:2;display:flex;align-items:center;justify-content:center;padding:16px;">
+         <div style="width:320px;max-width:100%;" class="bg-white rounded-xl2 shadow-lift p-4 fade-up">${inner}</div></div>`;
+
+  el.innerHTML = `${spot}${bubble}`;
 
   el.querySelector("#tourSkip").onclick = endTour;
   el.querySelector("#tourNext").onclick = () => { if (last) endTour(); else { state.tour.step++; renderTourStep(); } };
