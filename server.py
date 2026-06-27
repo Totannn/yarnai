@@ -31,6 +31,8 @@ API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 LIVE = bool(API_KEY) and not API_KEY.startswith("sk-ant-xxxx")
 PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY", "").strip()
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
+MAIL_FROM = os.getenv("MAIL_FROM", "Vertil <onboarding@resend.dev>").strip()
 
 # --------------------------------------------------------------------------- #
 # Two-tier models. Standard is the fast, cost-efficient default; Premium is the
@@ -202,6 +204,12 @@ def index():
     return render_template("index.html", live=LIVE, model=MODEL)
 
 
+@app.get("/reset")
+def reset_page():
+    # The SPA detects the /reset path + ?token and shows the reset form.
+    return render_template("index.html", live=LIVE, model=MODEL)
+
+
 @app.get("/admin")
 def admin_page():
     return render_template("admin.html")
@@ -230,6 +238,34 @@ def config():
 
 
 # -------------------------------- auth ------------------------------------ #
+
+def send_email(to: str, subject: str, html: str) -> bool:
+    """Send a transactional email via Resend. Returns False if not configured."""
+    if not RESEND_API_KEY:
+        return False
+    try:
+        r = httpx.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+            json={"from": MAIL_FROM, "to": [to], "subject": subject, "html": html},
+            timeout=15,
+        )
+        return r.status_code in (200, 201)
+    except Exception:
+        return False
+
+
+def _reset_email_html(name: str, link: str) -> str:
+    return f"""<div style="font-family:'Segoe UI',Arial,sans-serif;max-width:480px;margin:0 auto;color:#13312e">
+      <div style="font-size:22px;font-weight:bold;color:#0e9488;margin-bottom:6px">Vertil</div>
+      <p>Hi {name},</p>
+      <p>We got a request to reset your Vertil password. Click the button below to choose a new one. This link expires in 1 hour.</p>
+      <p style="margin:24px 0"><a href="{link}" style="background:#0e9488;color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:bold;display:inline-block">Reset my password</a></p>
+      <p style="font-size:13px;color:#5b6b66">If the button doesn't work, paste this link into your browser:<br><a href="{link}" style="color:#0e9488">{link}</a></p>
+      <p style="font-size:13px;color:#5b6b66">If you didn't request this, you can safely ignore this email — your password won't change.</p>
+      <p style="font-size:12px;color:#9aa8a4;margin-top:24px">Vertil · The Nigerian brand voice engine</p>
+    </div>"""
+
 
 @app.post("/api/signup")
 def signup():
@@ -293,6 +329,38 @@ def auth_google():
         user = db.create_user(email, name, generate_password_hash(secrets.token_urlsafe(24)))
     session["uid"] = user["id"]
     return jsonify({"user": user_public(user), "usage": usage_payload(user)})
+
+
+@app.post("/api/auth/forgot")
+def auth_forgot():
+    """Start a password reset. Always returns ok so we never reveal which
+    emails have accounts."""
+    email = ((request.get_json(force=True) or {}).get("email") or "").strip().lower()
+    rec = db.get_user_by_email(email)
+    if rec and not rec.get("suspended"):
+        token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        db.create_password_reset(rec["id"], token_hash, time.time() + 3600)  # 1 hour
+        link = request.host_url.rstrip("/") + "/reset?token=" + token
+        sent = send_email(email, "Reset your Vertil password",
+                          _reset_email_html(rec.get("name") or "there", link))
+        if not sent:  # no email provider yet — log the link so it's testable
+            print(f"[Vertil] password-reset link for {email}: {link}", flush=True)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/auth/reset")
+def auth_reset():
+    d = request.get_json(force=True) or {}
+    pw = d.get("password") or ""
+    if len(pw) < 6:
+        return jsonify({"error": "Choose a password of at least 6 characters."}), 400
+    token_hash = hashlib.sha256((d.get("token") or "").encode()).hexdigest()
+    uid = db.consume_password_reset(token_hash)
+    if not uid:
+        return jsonify({"error": "This reset link is invalid or has expired. Please request a new one."}), 400
+    db.update_password(uid, generate_password_hash(pw))
+    return jsonify({"ok": True})
 
 
 @app.post("/api/logout")

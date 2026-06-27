@@ -126,6 +126,11 @@ async function api(path, opts = {}) {
 
 async function boot() {
   state.config = await api("/api/config").catch(() => null);
+  if (location.pathname === "/reset") {
+    renderReset(new URLSearchParams(location.search).get("token") || "");
+    if (window.__hideSplash) window.__hideSplash();
+    return;
+  }
   try {
     const me = await api("/api/me");
     state.user = me.user; state.usage = me.usage;
@@ -179,7 +184,9 @@ function renderAuth() {
             <input name="name" placeholder="Your name" class="auth-input"/></div>`}
           <div><label class="text-xs font-semibold text-muted">Email</label>
             <input name="email" type="email" required placeholder="you@brand.com" class="auth-input"/></div>
-          <div><label class="text-xs font-semibold text-muted">Password</label>
+          <div><div class="flex items-center justify-between">
+              <label class="text-xs font-semibold text-muted">Password</label>
+              ${login ? `<button type="button" id="forgotLink" class="text-xs text-brand font-semibold hover:text-brand-dark">Forgot password?</button>` : ""}</div>
             <input name="password" type="password" required minlength="6" placeholder="At least 6 characters" class="auth-input"/></div>
           <p id="authErr" class="text-xs text-rose-500 hidden"></p>
           <button id="authBtn" type="submit" class="w-full py-2.5 rounded-xl font-semibold text-sm text-white bg-brand hover:bg-brand-dark shadow-sm">
@@ -201,7 +208,95 @@ function renderAuth() {
 
   $("#authToggle").onclick = () => { state.authMode = login ? "signup" : "login"; renderAuth(); };
   $("#authForm").onsubmit = doAuth;
+  const fl = $("#forgotLink"); if (fl) fl.onclick = renderForgot;
   initGoogleButton();
+}
+
+function authShell(inner) {
+  $("#app").innerHTML = `
+  <div class="min-h-screen grid lg:grid-cols-2">
+    <div class="hidden lg:flex flex-col justify-between p-12 text-white bg-gradient-to-br from-forest via-brand-dark to-brand relative overflow-hidden">
+      <a href="/" class="flex items-center gap-2.5">${vword({ size: "22px", color: "#f4f7f6", accent: "#2dd4bf" })}</a>
+      <div class="relative z-10">
+        <h1 class="font-display font-extrabold text-4xl leading-tight">Content that sounds<br>like your brand.</h1>
+        <p class="mt-4 text-white/85 max-w-sm leading-relaxed">Vertil helps Nigerian businesses and creators produce on-brand content in seconds.</p>
+      </div>
+      <p class="text-white/60 text-xs relative z-10">The Nigerian brand voice engine</p>
+      <div class="absolute -right-16 -bottom-16 w-72 h-72 rounded-full bg-white/10"></div>
+      <div class="absolute right-24 top-24 w-32 h-32 rounded-full bg-white/10"></div>
+    </div>
+    <div class="flex items-center justify-center p-6 sm:p-12">
+      <div class="w-full max-w-sm">
+        <div class="lg:hidden mb-8">${vword({ size: "22px" })}</div>
+        ${inner}
+      </div>
+    </div>
+  </div>
+  <style>.auth-input{width:100%;margin-top:.25rem;background:#fff;border:1px solid #eceef1;border-radius:.6rem;padding:.6rem .75rem;font-size:.9rem;outline:none}
+  .auth-input:focus{border-color:#0b8457;box-shadow:0 0 0 3px rgba(11,132,87,.15)}</style>`;
+}
+
+function renderForgot() {
+  authShell(`
+    <h2 class="font-display font-extrabold text-2xl">Reset your password</h2>
+    <p class="text-sm text-muted mt-1">Enter your email and we'll send you a reset link.</p>
+    <form id="forgotForm" class="mt-6 space-y-3">
+      <div><label class="text-xs font-semibold text-muted">Email</label>
+        <input name="email" type="email" required placeholder="you@brand.com" class="auth-input"/></div>
+      <p id="forgotMsg" class="text-xs hidden"></p>
+      <button id="forgotBtn" type="submit" class="w-full py-2.5 rounded-xl font-semibold text-sm text-white bg-brand hover:bg-brand-dark shadow-sm">Send reset link</button>
+    </form>
+    <p class="text-sm text-muted mt-5 text-center"><button id="backToLogin" class="text-brand font-semibold hover:text-brand-dark">← Back to log in</button></p>`);
+  $("#backToLogin").onclick = () => { state.authMode = "login"; renderAuth(); };
+  $("#forgotForm").onsubmit = async e => {
+    e.preventDefault();
+    const email = new FormData(e.target).get("email");
+    const btn = $("#forgotBtn"), msg = $("#forgotMsg");
+    btn.disabled = true; btn.textContent = "Sending…";
+    try {
+      await api("/api/auth/forgot", { method: "POST", body: JSON.stringify({ email }) });
+      msg.className = "text-xs text-brand-dark bg-brand-tint border border-brand/20 rounded-lg p-3";
+      msg.textContent = "If that email has an account, a reset link is on its way. Check your inbox (and spam).";
+      msg.classList.remove("hidden");
+      btn.textContent = "Sent ✓";
+    } catch (ex) {
+      msg.className = "text-xs text-rose-500"; msg.textContent = ex.message; msg.classList.remove("hidden");
+      btn.disabled = false; btn.textContent = "Send reset link";
+    }
+  };
+}
+
+function renderReset(token) {
+  if (!token) {
+    authShell(`<h2 class="font-display font-extrabold text-2xl">Invalid link</h2>
+      <p class="text-sm text-muted mt-1">This reset link is missing or broken.</p>
+      <a href="/app" class="inline-block mt-5 text-sm font-semibold text-white bg-brand hover:bg-brand-dark px-5 py-2.5 rounded-xl">Back to Vertil</a>`);
+    return;
+  }
+  authShell(`
+    <h2 class="font-display font-extrabold text-2xl">Choose a new password</h2>
+    <p class="text-sm text-muted mt-1">Enter a new password for your account.</p>
+    <form id="resetForm" class="mt-6 space-y-3">
+      <div><label class="text-xs font-semibold text-muted">New password</label>
+        <input name="password" type="password" required minlength="6" placeholder="At least 6 characters" class="auth-input"/></div>
+      <p id="resetMsg" class="text-xs text-rose-500 hidden"></p>
+      <button id="resetBtn" type="submit" class="w-full py-2.5 rounded-xl font-semibold text-sm text-white bg-brand hover:bg-brand-dark shadow-sm">Update password</button>
+    </form>`);
+  $("#resetForm").onsubmit = async e => {
+    e.preventDefault();
+    const password = new FormData(e.target).get("password");
+    const btn = $("#resetBtn"), msg = $("#resetMsg");
+    btn.disabled = true; btn.textContent = "Updating…"; msg.classList.add("hidden");
+    try {
+      await api("/api/auth/reset", { method: "POST", body: JSON.stringify({ token, password }) });
+      authShell(`<h2 class="font-display font-extrabold text-2xl">Password updated ✓</h2>
+        <p class="text-sm text-muted mt-1">You can now log in with your new password.</p>
+        <a href="/app" class="inline-block mt-5 text-sm font-semibold text-white bg-brand hover:bg-brand-dark px-5 py-2.5 rounded-xl">Go to log in</a>`);
+    } catch (ex) {
+      msg.textContent = ex.message; msg.classList.remove("hidden");
+      btn.disabled = false; btn.textContent = "Update password";
+    }
+  };
 }
 
 function initGoogleButton() {

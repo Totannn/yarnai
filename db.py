@@ -174,6 +174,15 @@ def init_db() -> None:
                 text       TEXT NOT NULL,
                 created_at {_REAL} NOT NULL
             )""")
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS password_resets (
+                id         {_PK},
+                user_id    INTEGER NOT NULL,
+                token      TEXT NOT NULL,
+                expires_at {_REAL} NOT NULL,
+                used       INTEGER NOT NULL DEFAULT 0,
+                created_at {_REAL} NOT NULL
+            )""")
         # migrations (idempotent on both backends)
         for tbl in ("brands", "generations", "calendars"):
             _add_col(c, tbl, "user_id", "INTEGER")
@@ -223,6 +232,25 @@ def get_password_hash(user_id: int) -> str | None:
 def update_password(user_id: int, password_hash: str) -> None:
     with _conn() as c:
         c.execute("UPDATE users SET password_hash=? WHERE id=?", (password_hash, user_id))
+
+
+def create_password_reset(user_id: int, token_hash: str, expires_at: float) -> None:
+    """Store a single active reset token per user (replaces any prior one)."""
+    with _conn() as c:
+        c.execute("DELETE FROM password_resets WHERE user_id=?", (user_id,))
+        _insert(c, "INSERT INTO password_resets (user_id, token, expires_at, used, created_at) "
+                   "VALUES (?,?,?,?,?)", (user_id, token_hash, expires_at, 0, time.time()))
+
+
+def consume_password_reset(token_hash: str) -> int | None:
+    """Return the user_id for a valid (unused, unexpired) token and mark it used."""
+    with _conn() as c:
+        r = c.execute("SELECT id, user_id, expires_at, used FROM password_resets WHERE token=?",
+                      (token_hash,)).fetchone()
+        if not r or r["used"] or r["expires_at"] < time.time():
+            return None
+        c.execute("UPDATE password_resets SET used=1 WHERE id=?", (r["id"],))
+        return r["user_id"]
 
 
 def get_user_by_email(email: str) -> dict | None:
