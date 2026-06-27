@@ -649,7 +649,7 @@ function homeView() {
     <section>
       <div class="flex items-center justify-between mb-3"><h3 class="font-display font-bold text-[17px]">Your toolkit</h3>
         <span class="text-xs text-faint hidden sm:block">Quick access to every module</span></div>
-      <div class="grid grid-cols-2 lg:grid-cols-3 gap-4">${toolkit}</div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">${toolkit}</div>
     </section>
     <section class="space-y-4">
       <h3 class="font-display font-bold text-[17px]">Your month at a glance</h3>
