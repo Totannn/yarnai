@@ -6,7 +6,7 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const state = {
   config: null, user: null, usage: null,
   brands: [], activeBrandId: null,
-  view: "studio",
+  view: "home", home: null, suggestIdx: 0,
   authMode: "login",
   // studio
   tone: "pidgin", contentType: "instagram_caption", variants: 3, brief: "",
@@ -32,6 +32,7 @@ const MONTHS = ["January","February","March","April","May","June","July","August
 const MONTH_ABBR = {January:"Jan",February:"Feb",March:"Mar",April:"Apr",May:"May",June:"Jun",July:"Jul",August:"Aug",September:"Sep",October:"Oct",November:"Nov",December:"Dec"};
 
 const ICON = {
+  home: '<path d="M3 10.5 12 3l9 7.5M5.5 9.5V20h13V9.5"/><path d="M9.5 20v-6h5v6"/>',
   studio: '<path d="M4 5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v3M4 5v14a2 2 0 0 0 2 2h6M4 5H3m13 3 4 4m0 0-7 7-4 1 1-4 7-7m4 4-4-4"/>',
   calendar: '<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9h18M8 2.5v4M16 2.5v4M7.5 13h2m4.5 0h2m-8.5 4h2m4.5 0h2"/>',
   calendars: '<path d="M8 7h12M8 12h12M8 17h12M3.5 7h.01M3.5 12h.01M3.5 17h.01"/>',
@@ -147,6 +148,7 @@ async function boot() {
 async function loadData() {
   state.brands = await api("/api/brands");
   if (state.brands.length && !state.activeBrandId) state.activeBrandId = state.brands[0].id;
+  state.home = await api("/api/home").catch(() => null);
 }
 
 async function refreshUsage() {
@@ -319,7 +321,7 @@ async function onGoogleCredential(resp) {
     const d = await api("/api/auth/google", { method: "POST", body: JSON.stringify({ credential: resp.credential }) });
     state.user = d.user; state.usage = d.usage;
     await loadData();
-    state.view = "studio";
+    state.view = "home";
     render();
     maybeStartTour();
   } catch (ex) {
@@ -338,7 +340,7 @@ async function doAuth(e) {
     const d = await api(path, { method: "POST", body: JSON.stringify(fd) });
     state.user = d.user; state.usage = d.usage;
     await loadData();
-    state.view = "studio";
+    state.view = "home";
     render();
     maybeStartTour();
   } catch (ex) {
@@ -371,6 +373,7 @@ function render() {
 
 function routeView() {
   switch (state.view) {
+    case "home": return homeView();
     case "studio": return studioView();
     case "calendar": return calendarView();
     case "calendars": return savedCalendarsView();
@@ -402,7 +405,7 @@ function sidebar() {
         <div class="text-[10px] font-mono uppercase tracking-wider text-faint leading-none mt-1">Voice engine</div></div>
     </div>
     <nav class="space-y-1">
-      ${item("studio","Studio")}${item("script","Script Writer")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
+      ${item("home","Home")}${item("studio","Studio")}${item("script","Script Writer")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
       ${item("brands","Brands")}${item("favorites","Saved Copy")}${item("history","History")}
       <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">Advisors</div>
       ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("gigs","Gig Diary")}
@@ -429,7 +432,7 @@ function sidebar() {
         <button data-mclose class="text-faint hover:text-ink p-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" class="w-5 h-5"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       </div>
       <nav class="space-y-1">
-        ${item("studio","Studio")}${item("script","Script Writer")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
+        ${item("home","Home")}${item("studio","Studio")}${item("script","Script Writer")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
         ${item("brands","Brands")}${item("favorites","Saved Copy")}${item("history","History")}
         <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">Advisors</div>
         ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("gigs","Gig Diary")}
@@ -468,6 +471,7 @@ function usageCard() {
 
 function topbar() {
   const titles = {
+    home:["Home", new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"})],
     studio:["Studio","Generate on-brand Naija copy in seconds"],
     calendar:["Content Calendar","A month of posts, tuned to the Nigerian calendar"],
     calendars:["Saved Plans","Your generated content calendars"],
@@ -511,6 +515,313 @@ function topbar() {
       </div>
     </div>
   </header>`;
+}
+
+/* =============================== HOME ============================== */
+
+const NAIJA_MON = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+function svgIcon(path, cls = "w-5 h-5") {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" class="${cls}">${path}</svg>`;
+}
+function relTime(epoch) {
+  const s = Math.floor(Date.now() / 1000 - (epoch || 0));
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60); if (m < 60) return m + "m ago";
+  const hh = Math.floor(m / 60); if (hh < 24) return hh + "h ago";
+  const d = Math.floor(hh / 24); if (d === 1) return "Yesterday";
+  if (d < 7) return d + " days ago";
+  return new Date((epoch || 0) * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+function naijaEvents() {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const DAY = 86400000;
+  const nextAnnual = (m, d) => { let y = today.getFullYear(); let dt = new Date(y, m, d); if (dt < today) dt = new Date(y + 1, m, d); return dt; };
+  const nextMonthly = (d) => { let dt = new Date(today.getFullYear(), today.getMonth(), d); if (dt < today) dt = new Date(today.getFullYear(), today.getMonth() + 1, d); return dt; };
+  const EVENTS = [
+    { key: "payday", name: "Payday week", blurb: "Salaries land — shoppers have cash to spend.", date: nextMonthly(28) },
+    { key: "indep", name: "Independence Day", blurb: "Green-white-green pride — lean local & proud.", date: nextAnnual(9, 1) },
+    { key: "school", name: "Back-to-school", blurb: "Resumption rush — parents are kitting kids out.", date: nextAnnual(8, 9) },
+    { key: "bf", name: "Black Friday", blurb: "The biggest sale day — build the waitlist now.", date: nextAnnual(10, 27) },
+    { key: "detty", name: "Detty December", blurb: "Peak festive spending, all month long.", date: nextAnnual(11, 1) },
+    { key: "val", name: "Valentine", blurb: "Love, treats and last-minute gifting.", date: nextAnnual(1, 14) },
+  ];
+  EVENTS.forEach(e => e.days = Math.round((e.date - today) / DAY));
+  EVENTS.sort((a, b) => a.days - b.days);
+  return EVENTS;
+}
+const daysLabel = d => d === 0 ? "Today" : d === 1 ? "Tomorrow" : "in " + d + " days";
+const SUGGESTIONS = {
+  payday: { idea: "Drop a “payday treat” bundle — an affordable small luxury for the week salary lands.", tone: "pidgin", type: "instagram_caption" },
+  indep:  { idea: "Tie your product to Naija pride — green-white-green, made-in-Nigeria excellence.", tone: "lagos_corporate", type: "ad_copy" },
+  school: { idea: "Run a resumption bundle for parents kitting their kids out for the new term.", tone: "friendly", type: "whatsapp_broadcast" },
+  bf:     { idea: "Tease your Black Friday deal early to build a “notify me” waitlist.", tone: "pidgin", type: "whatsapp_broadcast" },
+  detty:  { idea: "Kick off Detty December with a festive flash sale — owambe-ready picks.", tone: "yoruba", type: "instagram_caption" },
+  val:    { idea: "Pitch a Valentine gifting bundle for the bae who has everything.", tone: "pidgin", type: "ad_copy" },
+};
+const ACT_ICON = {
+  content_calendar: "calendar", script: "script", rate_advisor: "rate",
+  personal_brand: "advisor",
+};
+function homeBrandName() {
+  const b = state.brands.find(x => x.id === state.activeBrandId) || state.brands[0];
+  return b ? b.name : "your brand";
+}
+
+function homeView() {
+  const h = state.home;
+  if (!h) return `<div class="grid place-items-center py-24"><div class="w-9 h-9 border-[3px] border-brand/25 border-t-brand rounded-full spin"></div></div>`;
+  const u = state.user || {}, hu = h.usage || {}, sm = h.summary || {};
+  const name = (u.name || "there").split(" ")[0];
+  const hr = new Date().getHours(), greet = hr < 12 ? "morning" : hr < 17 ? "afternoon" : "evening";
+  const limit = hu.limit, used = hu.used || 0;
+  const unlimited = limit == null;
+  const left = unlimited ? "∞" : Math.max(0, limit - used);
+  const pct = unlimited ? 100 : Math.min(100, Math.round(used / Math.max(1, limit) * 100));
+  const circ = 97.4, off = (circ * (1 - (unlimited ? 0 : pct) / 100)).toFixed(1);
+  const streak = h.streak || 0;
+  const summaryLine = (sm.pieces_month || 0) > 0
+    ? `You've created <b class="text-white">${sm.pieces_month} ${sm.pieces_month === 1 ? "piece" : "pieces"}</b> this month across <b class="text-white">${sm.brands_count} brand ${sm.brands_count === 1 ? "voice" : "voices"}</b>${sm.top_voice ? ` — your <b class="text-white">${esc(sm.top_voice)}</b> voice is doing the most work.` : "."}`
+    : `Welcome to your workspace. Spin up your first on-brand piece — it takes seconds.`;
+
+  // toolkit
+  const TOOLS = [
+    ["studio", "Studio", "Generate captions, ads, WhatsApp & more", "brand"],
+    ["script", "Script Writer", "Scene-by-scene short-video scripts", "brand"],
+    ["calendar", "Content Calendar", "Plan a month tuned to Naija", "gold"],
+    ["rate", "Rate Advisor", "Know what to charge, in Naira", "brand"],
+    ["advisor", "Brand Advisor", "Grow your personal brand", "brand"],
+    ["gigs", "Gig Diary", "Track every gig & what you earn", "brand"],
+  ];
+  const toolkit = TOOLS.map(([k, t, d, c]) => `
+    <button data-nav="${k}" class="text-left bg-white border border-line rounded-xl2 shadow-card p-4 flex items-start gap-3.5 hometile">
+      <span class="w-11 h-11 rounded-xl ${c === "gold" ? "bg-gold-tint text-gold" : "bg-brand-tint text-brand"} grid place-items-center shrink-0">${svgIcon(ICON[k] || ICON.studio, "w-5 h-5")}</span>
+      <div class="min-w-0"><div class="font-display font-bold text-[15px] leading-tight">${t}</div>
+        <div class="text-xs text-muted mt-0.5 leading-snug">${d}</div></div>
+      <span class="ml-auto text-faint mt-1">${svgIcon('<path d="M9 6l6 6-6 6"/>', "w-4 h-4")}</span></button>`).join("");
+
+  // kpis
+  const k = h.kpis || {};
+  const kpiRow = [
+    ["Generations", k.generations || 0, k.delta_generations ? (k.delta_generations > 0 ? "+" : "") + k.delta_generations + "%" : "", k.delta_generations >= 0],
+    ["Saved copy", k.saved_copy || 0, "", true],
+    ["Brand voices", k.brand_voices || 0, "", null],
+    ["Avg. per day", k.avg_per_day || 0, "", true],
+  ].map(([l, v, d, up]) => `
+    <div class="bg-white border border-line rounded-xl2 shadow-card p-4">
+      <div class="text-[11px] font-semibold uppercase tracking-wide text-faint">${l}</div>
+      <div class="flex items-end gap-2 mt-1"><div class="font-display font-extrabold text-2xl tabular-nums">${v}</div>
+        ${d ? `<div class="text-[11px] font-semibold mb-1 ${up ? "text-brand" : "text-rose-500"}">${d}</div>` : ""}</div></div>`).join("");
+
+  // 14-day chart
+  const bars = h.activity_14d || [];
+  const cmax = Math.max(1, ...bars);
+  const chart = bars.map((v, i) => {
+    const ht = Math.round(v / cmax * 100), today = i === bars.length - 1;
+    return `<div class="flex-1 h-full flex flex-col items-center justify-end" title="${v} generations">
+      <div class="w-full rounded-md ${today ? "bg-brand" : "bg-brand/30"} transition" style="height:${Math.max(3, ht)}%"></div></div>`;
+  }).join("");
+
+  const vmix = (h.voice_mix || []).map(m => `
+    <div><div class="flex items-center justify-between text-xs mb-1"><span class="font-medium text-ink truncate pr-2">${esc(m.name)}</span><span class="text-muted tabular-nums">${m.pct}%</span></div>
+      <div class="h-2 rounded-full bg-paper overflow-hidden"><div class="h-full rounded-full" style="width:${m.pct}%;background:${m.color}"></div></div></div>`).join("")
+    || `<p class="text-xs text-muted">No copy yet — your voice mix appears here.</p>`;
+
+  const ctmax = Math.max(1, ...(h.content_types || []).map(c => c.count));
+  const ctypes = (h.content_types || []).map(c => `
+    <div class="flex items-center gap-3"><span class="text-xs text-ink w-[140px] truncate">${esc(c.name)}</span>
+      <div class="flex-1 h-2 rounded-full bg-paper overflow-hidden"><div class="h-full bg-brand rounded-full" style="width:${Math.round(c.count / ctmax * 100)}%"></div></div>
+      <span class="text-xs text-muted tabular-nums w-7 text-right">${c.count}</span></div>`).join("")
+    || `<p class="text-xs text-muted">Nothing yet.</p>`;
+
+  const recent = (h.recent || []).map(r => `
+    <div class="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
+      <span class="w-9 h-9 rounded-lg bg-paper text-muted grid place-items-center shrink-0">${svgIcon(ICON[ACT_ICON[r.content_type]] || ICON.studio, "w-4 h-4")}</span>
+      <div class="min-w-0 flex-1"><div class="text-sm font-medium truncate">${esc(r.type)}</div>
+        <div class="text-xs text-muted truncate">${esc([r.tone, r.brand].filter(Boolean).join(" · ") || r.brief)}</div></div>
+      <div class="text-[11px] text-faint shrink-0">${relTime(r.at)}</div></div>`).join("")
+    || `<p class="text-sm text-muted py-2">No activity yet — your generations show up here.</p>`;
+
+  return `
+  <div class="space-y-8 pb-10">
+    ${homeHero(name, greet, streak, summaryLine, { pct, off, left, unlimited, resets: hu.resets_in_days })}
+    ${homeSuggestSection()}
+    ${homeJumpBack(h.continue || [])}
+    <section>
+      <div class="flex items-center justify-between mb-3"><h3 class="font-display font-bold text-[17px]">Your toolkit</h3>
+        <span class="text-xs text-faint hidden sm:block">Quick access to every module</span></div>
+      <div class="grid grid-cols-2 lg:grid-cols-3 gap-4">${toolkit}</div>
+    </section>
+    <section class="space-y-4">
+      <h3 class="font-display font-bold text-[17px]">Your month at a glance</h3>
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">${kpiRow}</div>
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div class="lg:col-span-2 bg-white border border-line rounded-xl2 shadow-card p-5">
+          <div class="flex items-center justify-between mb-4">
+            <div><div class="text-[13px] font-semibold">Generations · last 14 days</div>
+              <div class="text-xs text-muted mt-0.5">Daily output across all brands</div></div>
+            <div class="text-right"><div class="font-display font-extrabold text-xl tabular-nums">${k.generations || 0}</div>
+              ${k.delta_generations ? `<div class="text-[10px] font-semibold ${k.delta_generations >= 0 ? "text-brand" : "text-rose-500"}">${k.delta_generations > 0 ? "+" : ""}${k.delta_generations}% vs last month</div>` : ""}</div></div>
+          <div class="flex items-end gap-1.5 h-[150px]">${chart}</div>
+        </div>
+        <div class="bg-white border border-line rounded-xl2 shadow-card p-5">
+          <div class="text-[13px] font-semibold mb-1">Voice mix</div><div class="text-xs text-muted mb-4">How your copy is split</div>
+          <div class="space-y-3">${vmix}</div></div>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div class="lg:col-span-2 bg-white border border-line rounded-xl2 shadow-card p-5">
+          <div class="flex items-center justify-between mb-3"><div class="text-[13px] font-semibold">Recent activity</div>
+            <button data-nav="history" class="text-xs font-semibold text-brand hover:text-brand-dark">See all →</button></div>
+          <div class="divide-y divide-line">${recent}</div></div>
+        <div class="space-y-4">
+          <div class="bg-white border border-line rounded-xl2 shadow-card p-5">
+            <div class="text-[13px] font-semibold mb-3">Top content types</div><div class="space-y-2.5">${ctypes}</div></div>
+          <div class="rounded-xl2 p-5 text-white" style="background:linear-gradient(135deg,#0f322d,#0c7a70)">
+            <div class="text-[11px] font-mono uppercase tracking-wide text-brand-bright mb-1.5">Gig diary</div>
+            <div class="font-display font-extrabold text-2xl tabular-nums">${naira(h.gig?.earned || 0)}</div>
+            <div class="text-xs text-white/70 mt-0.5">earned across ${h.gig?.count || 0} logged gigs</div>
+            <button data-nav="gigs" class="inline-flex items-center gap-1 text-xs font-semibold text-brand-bright mt-3 hover:brightness-110">Open Gig Diary →</button></div>
+        </div>
+      </div>
+    </section>
+  </div>
+  <style>.hometile{transition:box-shadow .15s,border-color .15s,transform .15s}.hometile:hover{box-shadow:var(--tw-shadow,0 6px 16px rgba(12,39,36,.08));border-color:rgba(14,148,136,.35);transform:translateY(-2px)}</style>`;
+}
+
+function homeHero(name, greet, streak, summaryLine, ring) {
+  return `
+  <section class="fade-up relative overflow-hidden rounded-xl2 text-white" style="background:linear-gradient(135deg,#0c2724 0%,#0c7a70 70%,#0e9488 100%)">
+    <div class="absolute inset-0 opacity-[0.18]" style="background-image:radial-gradient(circle at 1px 1px,#2dd4bf 1px,transparent 0);background-size:34px 34px"></div>
+    <div class="absolute -right-16 -top-20 w-72 h-72 rounded-full bg-brand-bright/15 blur-3xl"></div>
+    <div class="relative p-6 sm:p-8 flex flex-col lg:flex-row lg:items-center gap-6">
+      <div class="flex-1 min-w-0">
+        ${streak > 0 ? `<div class="inline-flex items-center gap-2.5 mb-5">
+          <span class="flex items-end gap-[3px] h-[20px]">
+            ${[8, 11, 13, 16, 18, 20].map((hh, i) => `<span class="w-[4px] rounded-[1px] bg-brand-bright${i === 5 ? " streak-pulse" : "/" + (45 + i * 10)}" style="height:${hh}px"></span>`).join("")}
+          </span>
+          <span class="text-[13.5px] font-semibold text-white leading-none">${streak}-day streak<span class="text-white/45 font-normal"> · keep it going</span></span></div>` : ""}
+        <h2 class="font-display font-extrabold text-[28px] sm:text-[34px] leading-tight">Good ${greet}, ${esc(name)}.</h2>
+        <p class="text-white/75 mt-2 max-w-xl leading-relaxed">${summaryLine}</p>
+        <div class="flex flex-wrap items-center gap-2.5 mt-5">
+          <button data-nav="studio" class="inline-flex items-center gap-2 text-sm font-semibold text-forest bg-brand-bright hover:brightness-105 px-4 py-2.5 rounded-xl shadow-lg transition">
+            ${svgIcon('<path d="m12 3 1.6 5L19 9.6l-5.4 1.6L12 17l-1.6-5.8L5 9.6 10.4 8z"/>', "w-4 h-4")} New generation</button>
+          <button data-nav="calendar" class="inline-flex items-center gap-2 text-sm font-semibold text-white/90 hover:text-white border border-white/20 hover:border-white/40 px-4 py-2.5 rounded-xl transition">Plan this month</button>
+        </div>
+      </div>
+      <div class="shrink-0 flex items-center gap-5 bg-white/5 border border-white/10 rounded-xl2 p-5">
+        <div class="relative w-[92px] h-[92px]">
+          <svg viewBox="0 0 36 36" class="w-full h-full -rotate-90">
+            <circle cx="18" cy="18" r="15.5" fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="3.4"/>
+            <circle cx="18" cy="18" r="15.5" fill="none" stroke="#2dd4bf" stroke-width="3.4" stroke-linecap="round" stroke-dasharray="${97.4}" stroke-dashoffset="${ring.off}"/></svg>
+          <div class="absolute inset-0 grid place-items-center text-center leading-none">
+            <div><div class="font-display font-extrabold text-xl tabular-nums">${ring.unlimited ? "∞" : ring.pct + "%"}</div><div class="text-[9px] text-white/55 font-mono uppercase tracking-wide mt-0.5">used</div></div></div>
+        </div>
+        <div class="leading-tight">
+          <div class="text-[11px] font-mono uppercase tracking-wide text-white/55">This month</div>
+          <div class="font-display font-extrabold text-2xl tabular-nums mt-1">${ring.left} <span class="text-sm text-white/55 font-normal">left</span></div>
+          ${ring.resets != null ? `<div class="text-[11px] text-white/60 mt-1">Resets in ${ring.resets} day${ring.resets === 1 ? "" : "s"}</div>` : ""}</div>
+      </div>
+    </div>
+  </section>`;
+}
+
+function homeSuggestSection() {
+  const events = naijaEvents();
+  const top = events[(state.suggestIdx || 0) % events.length];
+  const s = SUGGESTIONS[top.key] || SUGGESTIONS.payday;
+  const brand = homeBrandName();
+  const chip = t => `<span class="text-[11px] font-medium text-muted bg-paper border border-line rounded-md px-2 py-1">${esc(t)}</span>`;
+  const typeLabel = label("content_types", s.type), toneLabel = label("tones", s.tone);
+  const naija = events.slice(0, 4).map(e => `
+    <button data-nav="calendar" class="w-full text-left flex items-center gap-3 py-2.5 group">
+      <span class="w-11 h-11 rounded-lg bg-brand-tint text-brand-dark grid place-items-center leading-none shrink-0">
+        <span class="text-[9px] font-semibold -mb-0.5">${NAIJA_MON[e.date.getMonth()]}</span><span class="text-base font-extrabold">${e.date.getDate()}</span></span>
+      <div class="min-w-0 flex-1"><div class="text-[13.5px] font-semibold truncate group-hover:text-brand-dark">${e.name}</div>
+        <div class="text-[11.5px] text-muted truncate">${e.blurb}</div></div>
+      <span class="text-[11px] text-faint shrink-0 font-medium">${daysLabel(e.days)}</span></button>`).join("");
+  return `
+  <section class="fade-up grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <div class="lg:col-span-2">
+      <div class="relative overflow-hidden bg-white border border-line rounded-xl2 shadow-card p-5 h-full flex flex-col">
+        <div class="absolute -right-8 -top-8 w-32 h-32 rounded-full bg-brand-tint/70"></div>
+        <div class="relative flex items-center justify-between mb-3">
+          <div class="inline-flex items-center gap-2 text-[11px] font-mono uppercase tracking-[1.5px] text-brand-dark font-bold">
+            ${svgIcon('<path d="m12 3 1.6 5L19 9.6l-5.4 1.6L12 17l-1.6-5.8L5 9.6 10.4 8z"/>', "w-4 h-4")} Suggested for today</div>
+          <button data-home-shuffle class="inline-flex items-center gap-1.5 text-xs font-medium text-muted hover:text-ink border border-line bg-white rounded-lg px-2.5 py-1.5">
+            ${svgIcon('<path d="M3.5 12a8.5 8.5 0 0 1 14.3-6.2L21 8M21 4v4h-4"/>', "w-3.5 h-3.5")} Shuffle</button>
+        </div>
+        <span class="relative inline-flex self-start items-center gap-1.5 text-[11px] font-medium text-gold bg-gold-tint border border-gold/20 rounded-full px-2.5 py-1 mb-2.5">${top.name} · ${daysLabel(top.days)}</span>
+        <div class="relative font-display font-bold text-[21px] leading-snug">${esc(s.idea)}</div>
+        <p class="relative text-sm text-muted mt-2">For <b class="text-ink font-semibold">${esc(brand)}</b> — Vertil pre-fills the voice, format and cultural angle.</p>
+        <div class="relative flex flex-wrap gap-1.5 mt-3.5">${chip(typeLabel)}${chip(toneLabel)}${chip(brand)}</div>
+        <div class="relative flex items-center gap-2 mt-auto pt-4">
+          <button data-home-suggest class="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-brand hover:bg-brand-dark rounded-lg px-4 py-2.5 transition">Write this post →</button>
+          <button data-home-shuffle class="text-sm font-medium text-muted hover:text-ink rounded-lg px-3 py-2.5">Not today</button>
+        </div>
+      </div>
+    </div>
+    <div class="bg-white border border-line rounded-xl2 shadow-card p-5 flex flex-col">
+      <div class="flex items-center gap-2">
+        <span class="w-7 h-7 rounded-lg bg-brand-tint text-brand grid place-items-center shrink-0">${svgIcon(ICON.calendar, "w-4 h-4")}</span>
+        <div class="text-[13px] font-semibold leading-none">Coming up in Naija</div></div>
+      <p class="text-xs text-muted mt-1.5 mb-2">Plan ahead for the moments that move money.</p>
+      <div class="divide-y divide-line -mt-1">${naija}</div>
+      <button data-nav="calendar" class="mt-auto pt-3 text-left text-xs font-semibold text-brand hover:text-brand-dark">Open content calendar →</button>
+    </div>
+  </section>`;
+}
+
+function homeJumpBack(cont) {
+  if (!cont.length) return "";
+  const card = c => {
+    if (c.kind === "resume") return `
+      <div class="bg-white border border-line rounded-xl2 shadow-card p-4 flex flex-col hometile">
+        <div class="flex items-center gap-2 mb-3"><span class="w-9 h-9 rounded-lg bg-brand-tint text-brand grid place-items-center">${svgIcon('<path d="M20 11.5a7.5 7.5 0 0 1-10.9 6.7L4 20l1.9-5A7.5 7.5 0 1 1 20 11.5Z"/>', "w-[18px] h-[18px]")}</span>
+          <div class="text-[11px] font-mono uppercase tracking-wide text-faint">Last draft</div></div>
+        <div class="text-sm font-semibold leading-snug">${esc(c.title)}</div>
+        ${c.preview ? `<p class="text-xs text-muted mt-1 leading-relaxed line-clamp-2">${esc(c.preview)}</p>` : ""}
+        ${c.brand ? `<div class="flex items-center gap-1.5 mt-2.5 mb-3"><span class="text-[10.5px] text-muted bg-paper border border-line rounded-md px-1.5 py-0.5">${esc(c.brand)}</span></div>` : '<div class="mb-3"></div>'}
+        <button data-home-resume class="mt-auto inline-flex items-center justify-center gap-1.5 text-sm font-semibold text-white bg-brand hover:bg-brand-dark rounded-lg py-2 transition">Resume in Studio</button></div>`;
+    if (c.kind === "plan") return `
+      <div class="bg-white border border-line rounded-xl2 shadow-card p-4 flex flex-col hometile">
+        <div class="flex items-center gap-2 mb-3"><span class="w-9 h-9 rounded-lg bg-gold-tint text-gold grid place-items-center">${svgIcon(ICON.calendar, "w-[18px] h-[18px]")}</span>
+          <div class="text-[11px] font-mono uppercase tracking-wide text-faint">Content plan</div></div>
+        <div class="text-sm font-semibold leading-snug">${esc(c.title || "Content plan")}</div>
+        <p class="text-xs text-muted mt-1 leading-relaxed">${esc(c.preview)}</p>
+        <div class="mt-auto pt-3"><button data-nav="calendars" class="w-full inline-flex items-center justify-center gap-1.5 text-sm font-semibold text-brand-dark bg-brand-tint hover:bg-brand hover:text-white rounded-lg py-2 transition">Open plan</button></div></div>`;
+    return `
+      <div class="bg-white border border-line rounded-xl2 shadow-card p-4 flex flex-col hometile">
+        <div class="flex items-center gap-2 mb-3"><span class="w-9 h-9 rounded-lg bg-brand-tint text-brand grid place-items-center">${svgIcon(ICON.brands, "w-[18px] h-[18px]")}</span>
+          <div class="text-[11px] font-mono uppercase tracking-wide text-faint">Suggested</div></div>
+        <div class="text-sm font-semibold leading-snug">${esc(c.title)}</div>
+        <p class="text-xs text-muted mt-1 leading-relaxed">${esc(c.preview)}</p>
+        <div class="mt-auto pt-3"><button data-home-brand="${c.brand_id}" class="w-full inline-flex items-center justify-center gap-1.5 text-sm font-semibold text-brand-dark border border-line hover:border-brand/40 rounded-lg py-2 transition">Finish setup</button></div></div>`;
+  };
+  return `
+  <section>
+    <div class="flex items-center justify-between mb-3"><h3 class="font-display font-bold text-[17px]">Jump back in</h3>
+      <button data-nav="history" class="text-xs font-semibold text-brand hover:text-brand-dark">View history →</button></div>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">${cont.map(card).join("")}</div>
+  </section>`;
+}
+
+function applySuggestion() {
+  const events = naijaEvents();
+  const ev = events[(state.suggestIdx || 0) % events.length];
+  const s = SUGGESTIONS[ev.key] || SUGGESTIONS.payday;
+  state.brief = s.idea;
+  if ((state.config.content_types || []).some(c => c.key === s.type)) state.contentType = s.type;
+  if ((state.config.tones || []).some(t => t.key === s.tone)) state.tone = s.tone;
+  goto("studio");
+}
+function resumeDraft() {
+  const c = (state.home?.continue || []).find(x => x.kind === "resume");
+  if (c) {
+    state.brief = c.preview || "";
+    if ((state.config.content_types || []).some(x => x.key === c.content_type)) state.contentType = c.content_type;
+    if ((state.config.tones || []).some(x => x.key === c.tone)) state.tone = c.tone;
+    if (c.brand_id) state.activeBrandId = c.brand_id;
+  }
+  goto("studio");
 }
 
 /* ============================== STUDIO ============================== */
@@ -1157,6 +1468,13 @@ function wire() {
   const acct = $("[data-acct]"); if (acct) acct.onclick = () => { state.acctMenu = !state.acctMenu; render(); };
   $$("[data-acctclose]").forEach(b => b.onclick = () => { state.acctMenu = false; render(); });
 
+  if (state.view === "home") {
+    $$("[data-home-shuffle]").forEach(b => b.onclick = () => { state.suggestIdx = (state.suggestIdx || 0) + 1; render(); });
+    const ws = $("[data-home-suggest]"); if (ws) ws.onclick = applySuggestion;
+    const rs = $("[data-home-resume]"); if (rs) rs.onclick = resumeDraft;
+    $$("[data-home-brand]").forEach(b => b.onclick = () => { const br = state.brands.find(x => x.id === +b.dataset.homeBrand); if (br) state.editing = br; goto("brands"); });
+  }
+
   if (state.view === "studio") {
     const bs = $("#brandSelect"); if (bs) bs.onchange = e => state.activeBrandId = +e.target.value;
     $$("[data-tone]").forEach(b => b.onclick = () => { state.tone = b.dataset.tone; render(); });
@@ -1233,6 +1551,7 @@ async function goto(view) {
   state.acctMenu = false;
   state.view = view;
   try {
+    if (view === "home") state.home = await api("/api/home");
     if (view === "history") state.history = await api("/api/history");
     if (view === "favorites") state.favorites = await api("/api/favorites");
     if (view === "calendars") state.savedCalendars = await api("/api/calendars");

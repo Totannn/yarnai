@@ -537,6 +537,66 @@ def gig_summary(user_id: int) -> dict:
     }
 
 
+# ------------------------------- home/dashboard --------------------------- #
+
+def home_overview(user_id: int) -> dict:
+    """Everything the Home dashboard needs, in one shot, for one user."""
+    now = time.time()
+    win30 = now - 30 * 86400          # current quota window
+    prev30 = win30 - 30 * 86400        # the 30 days before that
+    win14 = now - 14 * 86400
+    REAL = "g.content_type != 'content_calendar'"   # exclude calendar-builder rows
+    with _conn() as c:
+        total = c.execute(
+            f"SELECT COUNT(*) AS n FROM generations g WHERE g.user_id=? AND {REAL}",
+            (user_id,)).fetchone()["n"]
+        month = c.execute(
+            f"SELECT COUNT(*) AS n FROM generations g WHERE g.user_id=? AND {REAL} AND g.created_at>=?",
+            (user_id, win30)).fetchone()["n"]
+        prev = c.execute(
+            f"SELECT COUNT(*) AS n FROM generations g WHERE g.user_id=? AND {REAL} "
+            f"AND g.created_at>=? AND g.created_at<?", (user_id, prev30, win30)).fetchone()["n"]
+        by_tone = [dict(r) for r in c.execute(
+            f"SELECT g.tone, COUNT(*) AS n FROM generations g WHERE g.user_id=? AND {REAL} "
+            f"AND g.tone IS NOT NULL AND g.tone != '' GROUP BY g.tone ORDER BY 2 DESC LIMIT 6",
+            (user_id,)).fetchall()]
+        by_type = [dict(r) for r in c.execute(
+            f"SELECT g.content_type, COUNT(*) AS n FROM generations g WHERE g.user_id=? AND {REAL} "
+            f"GROUP BY g.content_type ORDER BY 2 DESC LIMIT 5", (user_id,)).fetchall()]
+        daily = [dict(r) for r in c.execute(
+            f"SELECT {_DAY} AS d, COUNT(*) AS n FROM generations g WHERE g.user_id=? AND g.created_at>=? "
+            f"GROUP BY 1 ORDER BY 1", (user_id, win14)).fetchall()]
+        active_days = [r["d"] for r in c.execute(
+            f"SELECT DISTINCT {_DAY} AS d FROM generations g WHERE g.user_id=? AND g.created_at>=? "
+            f"ORDER BY 1 DESC", (user_id, now - 70 * 86400)).fetchall()]
+        recent = [dict(r) for r in c.execute(
+            "SELECT g.content_type, g.tone, g.brief, g.created_at, b.name AS brand_name "
+            "FROM generations g LEFT JOIN brands b ON b.id=g.brand_id "
+            "WHERE g.user_id=? ORDER BY g.created_at DESC LIMIT 6", (user_id,)).fetchall()]
+        last_gen = c.execute(
+            "SELECT g.content_type, g.tone, g.brief, g.brand_id, g.created_at, b.name AS brand_name "
+            "FROM generations g LEFT JOIN brands b ON b.id=g.brand_id "
+            f"WHERE g.user_id=? AND {REAL} ORDER BY g.created_at DESC LIMIT 1", (user_id,)).fetchone()
+        saved = c.execute("SELECT COUNT(*) AS n FROM favorites WHERE user_id=?", (user_id,)).fetchone()["n"]
+        brands_n = c.execute("SELECT COUNT(*) AS n FROM brands WHERE user_id=?", (user_id,)).fetchone()["n"]
+        last_cal = c.execute(
+            "SELECT id, month, year, posts FROM calendars WHERE user_id=? ORDER BY created_at DESC LIMIT 1",
+            (user_id,)).fetchone()
+        # a brand that still has no samples (good "finish setup" nudge)
+        thin_brand = c.execute(
+            "SELECT id, name FROM brands WHERE user_id=? AND (samples IS NULL OR samples='') "
+            "ORDER BY created_at DESC LIMIT 1", (user_id,)).fetchone()
+    return {
+        "total": total, "month": month, "prev_month": prev,
+        "by_tone": by_tone, "by_type": by_type, "daily": daily,
+        "active_days": active_days, "recent": recent,
+        "last_gen": dict(last_gen) if last_gen else None,
+        "saved": saved, "brands": brands_n,
+        "last_calendar": dict(last_cal) if last_cal else None,
+        "thin_brand": dict(thin_brand) if thin_brand else None,
+    }
+
+
 # ------------------------------- admin ------------------------------------ #
 
 def admin_overview() -> dict:

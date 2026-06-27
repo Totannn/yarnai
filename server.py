@@ -8,6 +8,7 @@ Paystack checkout. Generation streams from Claude (claude-opus-4-8) over SSE.
 
 from __future__ import annotations
 
+import datetime
 import functools
 import hashlib
 import hmac
@@ -234,6 +235,90 @@ def config():
         "google_client_id": GOOGLE_CLIENT_ID,
         "advisor_options": voice.advisor_options(),
         "script_options": voice.script_options(),
+    })
+
+
+# ------------------------------- home ------------------------------------- #
+
+_VOICE_COLORS = ["#0e9488", "#2dd4bf", "#0c7a70", "#7cc9bf", "#b7791f", "#cbd5d2"]
+
+
+@app.get("/api/home")
+@auth
+def home(user):
+    o = db.home_overview(user["id"])
+    tone_label = {t["key"]: t["label"] for t in voice.list_tones()}
+    lbl_type = lambda k: _TYPE_LABELS.get(k, (k or "").replace("_", " ").title())
+    lbl_tone = lambda k: tone_label.get(k, (k or "").replace("_", " ").title())
+
+    # 14-day activity array (UTC days, oldest → newest) to match db's _DAY
+    day_n = {d["d"]: d["n"] for d in o["daily"]}
+    today = datetime.datetime.utcnow().date()
+    activity_14d = [day_n.get((today - datetime.timedelta(days=13 - i)).isoformat(), 0) for i in range(14)]
+
+    # streak: consecutive active days ending today or yesterday
+    active = set(o["active_days"])
+    streak = 0
+    cur = today if today.isoformat() in active else today - datetime.timedelta(days=1)
+    while cur.isoformat() in active:
+        streak += 1
+        cur -= datetime.timedelta(days=1)
+
+    # days until the start of next calendar month (the "resets in" framing)
+    nxt = (today.replace(day=28) + datetime.timedelta(days=4)).replace(day=1)
+    resets_in_days = (nxt - today).days
+
+    total_voice = sum(t["n"] for t in o["by_tone"]) or 1
+    voice_mix = [{"name": lbl_tone(t["tone"]), "pct": round(t["n"] / total_voice * 100),
+                  "color": _VOICE_COLORS[i % len(_VOICE_COLORS)]} for i, t in enumerate(o["by_tone"])]
+    content_types = [{"name": lbl_type(t["content_type"]), "count": t["n"]} for t in o["by_type"]]
+    top_voice = voice_mix[0]["name"] if voice_mix else None
+
+    recent = [{"type": lbl_type(r["content_type"]), "tone": lbl_tone(r["tone"]),
+               "brief": r.get("brief") or "", "brand": r.get("brand_name") or "",
+               "content_type": r["content_type"], "at": r["created_at"]} for r in o["recent"]]
+
+    delta = (round((o["month"] - o["prev_month"]) / o["prev_month"] * 100) if o["prev_month"]
+             else (100 if o["month"] else 0))
+    days_active = len({d["d"] for d in o["daily"]}) or 1
+    kpis = {
+        "generations": o["month"], "saved_copy": o["saved"], "brand_voices": o["brands"],
+        "avg_per_day": round(o["month"] / days_active, 1),
+        "delta_generations": delta,
+    }
+
+    # "Jump back in" cards
+    cont = []
+    lg = o["last_gen"]
+    if lg:
+        cont.append({"kind": "resume", "title": f"{lbl_type(lg['content_type'])} · {lbl_tone(lg['tone'])}",
+                     "preview": (lg.get("brief") or "")[:120], "brand": lg.get("brand_name") or "",
+                     "brand_id": lg.get("brand_id"), "content_type": lg["content_type"], "tone": lg["tone"]})
+    lc = o["last_calendar"]
+    if lc:
+        try:
+            posts = json.loads(lc.get("posts") or "[]")
+        except Exception:
+            posts = []
+        cont.append({"kind": "plan", "title": f"{lc.get('month','')} {lc.get('year','')}".strip(),
+                     "preview": f"{len(posts)} posts mapped to the Naija calendar.",
+                     "cal_id": lc["id"], "posts": len(posts)})
+    tb = o["thin_brand"]
+    if tb:
+        cont.append({"kind": "brand", "title": f"Finish “{tb['name']}” voice",
+                     "preview": "Add samples so this brand sounds even more like itself.",
+                     "brand_id": tb["id"]})
+
+    p = plan_of(user)
+    return jsonify({
+        "streak": streak,
+        "summary": {"pieces_month": o["month"], "brands_count": o["brands"], "top_voice": top_voice},
+        "usage": {"used": db.monthly_generation_count(user["id"]), "limit": p["gen_limit"],
+                  "resets_in_days": resets_in_days},
+        "kpis": kpis, "activity_14d": activity_14d,
+        "voice_mix": voice_mix, "content_types": content_types,
+        "recent": recent, "continue": cont,
+        "gig": {"earned": db.gig_summary(user["id"])["earned"], "count": db.gig_summary(user["id"])["count"]},
     })
 
 
