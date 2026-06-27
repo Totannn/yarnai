@@ -1151,7 +1151,7 @@ async function saveGig(e) {
 
 function wire() {
   $$("[data-nav]").forEach(b => b.onclick = () => goto(b.dataset.nav));
-  const lo = $("[data-logout]"); if (lo) lo.onclick = logout;
+  $$("[data-logout]").forEach(b => b.onclick = logout);
   const mt = $("[data-mtoggle]"); if (mt) mt.onclick = () => { state.mobileNav = !state.mobileNav; render(); };
   $$("[data-mclose]").forEach(b => b.onclick = () => { state.mobileNav = false; render(); });
   const acct = $("[data-acct]"); if (acct) acct.onclick = () => { state.acctMenu = !state.acctMenu; render(); };
