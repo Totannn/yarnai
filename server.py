@@ -322,6 +322,106 @@ def home(user):
     })
 
 
+# Nigerian cultural moments, computed in WAT (UTC+1) so they match users' clocks.
+_STATIC_SUGGEST = {
+    "payday": {"idea": "Drop a 'payday treat' bundle — an affordable small luxury for the week salary lands.", "tone": "pidgin", "type": "instagram_caption"},
+    "indep":  {"idea": "Tie your product to Naija pride — green-white-green, made-in-Nigeria excellence.", "tone": "lagos_corporate", "type": "ad_copy"},
+    "school": {"idea": "Run a resumption bundle for parents kitting their kids out for the new term.", "tone": "friendly", "type": "whatsapp_broadcast"},
+    "bf":     {"idea": "Tease your Black Friday deal early to build a 'notify me' waitlist.", "tone": "pidgin", "type": "whatsapp_broadcast"},
+    "detty":  {"idea": "Kick off Detty December with a festive flash sale — owambe-ready picks.", "tone": "yoruba_mix", "type": "instagram_caption"},
+    "val":    {"idea": "Pitch a Valentine gifting bundle for the bae who has everything.", "tone": "luxury", "type": "ad_copy"},
+}
+
+
+def _naija_events():
+    wat = (datetime.datetime.utcnow() + datetime.timedelta(hours=1)).date()
+
+    def annual(m, d):
+        dt = datetime.date(wat.year, m, d)
+        return dt if dt >= wat else datetime.date(wat.year + 1, m, d)
+
+    def monthly(d):
+        try:
+            dt = datetime.date(wat.year, wat.month, d)
+        except ValueError:
+            dt = datetime.date(wat.year, wat.month, 28)
+        if dt >= wat:
+            return dt
+        y, mo = (wat.year + 1, 1) if wat.month == 12 else (wat.year, wat.month + 1)
+        return datetime.date(y, mo, d)
+
+    events = [
+        {"key": "payday", "name": "Payday week", "blurb": "Salaries land — shoppers have cash to spend.", "date": monthly(28)},
+        {"key": "indep", "name": "Independence Day", "blurb": "Green-white-green pride — lean local & proud.", "date": annual(10, 1)},
+        {"key": "school", "name": "Back-to-school", "blurb": "Resumption rush — parents are kitting kids out.", "date": annual(9, 9)},
+        {"key": "bf", "name": "Black Friday", "blurb": "The biggest sale day — build the waitlist now.", "date": annual(11, 27)},
+        {"key": "detty", "name": "Detty December", "blurb": "Peak festive spending, all month long.", "date": annual(12, 1)},
+        {"key": "val", "name": "Valentine", "blurb": "Love, treats and last-minute gifting.", "date": annual(2, 14)},
+    ]
+    for e in events:
+        e["days"] = (e["date"] - wat).days
+    events.sort(key=lambda e: e["days"])
+    return events, wat.isoformat()
+
+
+def _days_label(d):
+    return "Today" if d == 0 else "Tomorrow" if d == 1 else f"in {d} days"
+
+
+@app.get("/api/suggestion")
+@auth
+def suggestion(user):
+    """Today's bespoke post idea for this user's brand + the nearest cultural
+    moment. Generated once with Claude, then cached per user/day/moment."""
+    events, day = _naija_events()
+    try:
+        idx = int(request.args.get("idx", 0))
+    except (TypeError, ValueError):
+        idx = 0
+    ev = events[idx % len(events)]
+    try:
+        brand_id = int(request.args.get("brand_id")) if request.args.get("brand_id") else None
+    except (TypeError, ValueError):
+        brand_id = None
+
+    s = db.get_suggestion(user["id"], day, ev["key"], brand_id)
+    if not (s and s.get("idea")):
+        profile = db.get_brand(user["id"], brand_id) if brand_id else None
+        out = None
+        client = get_client()
+        if client is not None:
+            try:
+                with client.messages.stream(
+                    model=MODEL, max_tokens=400, thinking={"type": "adaptive"},
+                    output_config={"effort": "low"},
+                    system=voice.build_suggestion_system(profile),
+                    messages=[{"role": "user", "content": voice.build_suggestion_user(
+                        ev["name"], ev["blurb"], _days_label(ev["days"]))}],
+                ) as st:
+                    text = "".join(st.text_stream)
+                out = voice.parse_suggestion_json(text)
+            except Exception:
+                out = None
+        if not out:
+            fb = _STATIC_SUGGEST.get(ev["key"], _STATIC_SUGGEST["payday"])
+            out = {"idea": fb["idea"], "tone": fb["tone"], "content_type": fb["type"]}
+        db.save_suggestion(user["id"], day, ev["key"], brand_id,
+                           out["idea"], out.get("tone") or "", out.get("content_type") or "")
+        s = {"idea": out["idea"], "voice": out.get("tone") or "", "type": out.get("content_type") or ""}
+
+    tone_label = {t["key"]: t["label"] for t in voice.list_tones()}
+    brands = db.list_brands(user["id"])
+    brand = next((b for b in brands if b["id"] == brand_id), None) or (brands[0] if brands else None)
+    return jsonify({
+        "event_key": ev["key"], "event_name": ev["name"], "days_label": _days_label(ev["days"]),
+        "idea": s["idea"],
+        "tone_key": s.get("voice") or "", "type_key": s.get("type") or "",
+        "voice_label": tone_label.get(s.get("voice"), ""),
+        "type_label": _TYPE_LABELS.get(s.get("type"), ""),
+        "brand": brand["name"] if brand else "your brand",
+    })
+
+
 # -------------------------------- auth ------------------------------------ #
 
 def send_email(to: str, subject: str, html: str) -> bool:

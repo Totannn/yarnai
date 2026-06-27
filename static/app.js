@@ -6,7 +6,7 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const state = {
   config: null, user: null, usage: null,
   brands: [], activeBrandId: null,
-  view: "home", home: null, suggestIdx: 0,
+  view: "home", home: null, suggestIdx: 0, suggestCache: {}, suggestLoading: false,
   authMode: "login",
   // studio
   tone: "pidgin", contentType: "instagram_caption", variants: 3, brief: "",
@@ -555,7 +555,7 @@ const SUGGESTIONS = {
   indep:  { idea: "Tie your product to Naija pride — green-white-green, made-in-Nigeria excellence.", tone: "lagos_corporate", type: "ad_copy" },
   school: { idea: "Run a resumption bundle for parents kitting their kids out for the new term.", tone: "friendly", type: "whatsapp_broadcast" },
   bf:     { idea: "Tease your Black Friday deal early to build a “notify me” waitlist.", tone: "pidgin", type: "whatsapp_broadcast" },
-  detty:  { idea: "Kick off Detty December with a festive flash sale — owambe-ready picks.", tone: "yoruba", type: "instagram_caption" },
+  detty:  { idea: "Kick off Detty December with a festive flash sale — owambe-ready picks.", tone: "yoruba_mix", type: "instagram_caption" },
   val:    { idea: "Pitch a Valentine gifting bundle for the bae who has everything.", tone: "pidgin", type: "ad_copy" },
 };
 const ACT_ICON = {
@@ -726,11 +726,27 @@ function homeHero(name, greet, streak, summaryLine, ring) {
 
 function homeSuggestSection() {
   const events = naijaEvents();
-  const top = events[(state.suggestIdx || 0) % events.length];
-  const s = SUGGESTIONS[top.key] || SUGGESTIONS.payday;
-  const brand = homeBrandName();
-  const chip = t => `<span class="text-[11px] font-medium text-muted bg-paper border border-line rounded-md px-2 py-1">${esc(t)}</span>`;
-  const typeLabel = label("content_types", s.type), toneLabel = label("tones", s.tone);
+  const idx = state.suggestIdx || 0;
+  const top = events[idx % events.length];
+  const cached = state.suggestCache[idx];
+  const brand = (cached && cached.brand) || homeBrandName();
+  const chip = t => t ? `<span class="text-[11px] font-medium text-muted bg-paper border border-line rounded-md px-2 py-1">${esc(t)}</span>` : "";
+
+  let ideaBlock, chipsBlock, writeBtn;
+  if (cached && cached.idea) {
+    ideaBlock = `<div class="relative font-display font-bold text-[21px] leading-snug">${esc(cached.idea)}</div>
+      <p class="relative text-sm text-muted mt-2">For <b class="text-ink font-semibold">${esc(brand)}</b> — written for this brand, with the voice & format pre-picked.</p>`;
+    chipsBlock = `<div class="relative flex flex-wrap gap-1.5 mt-3.5">${chip(cached.type_label || label("content_types", cached.type_key))}${chip(cached.voice_label || label("tones", cached.tone_key))}${chip(brand)}</div>`;
+    writeBtn = `<button data-home-suggest class="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-brand hover:bg-brand-dark rounded-lg px-4 py-2.5 transition">Write this post →</button>`;
+  } else {
+    ideaBlock = `<div class="relative space-y-2.5 mt-1">
+        <div class="h-4 rounded bg-paper animate-pulse w-[88%]"></div>
+        <div class="h-4 rounded bg-paper animate-pulse w-[64%]"></div>
+        <div class="flex items-center gap-2 text-xs text-muted pt-1"><span class="w-3.5 h-3.5 border-2 border-brand/30 border-t-brand rounded-full spin"></span> Tailoring an idea for ${esc(brand)}…</div></div>`;
+    chipsBlock = "";
+    writeBtn = `<button disabled class="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-brand/50 rounded-lg px-4 py-2.5 cursor-default">Write this post →</button>`;
+  }
+
   const naija = events.slice(0, 4).map(e => `
     <button data-nav="calendar" class="w-full text-left flex items-center gap-3 py-2.5 group">
       <span class="w-11 h-11 rounded-lg bg-brand-tint text-brand-dark grid place-items-center leading-none shrink-0">
@@ -750,11 +766,10 @@ function homeSuggestSection() {
             ${svgIcon('<path d="M3.5 12a8.5 8.5 0 0 1 14.3-6.2L21 8M21 4v4h-4"/>', "w-3.5 h-3.5")} Shuffle</button>
         </div>
         <span class="relative inline-flex self-start items-center gap-1.5 text-[11px] font-medium text-gold bg-gold-tint border border-gold/20 rounded-full px-2.5 py-1 mb-2.5">${top.name} · ${daysLabel(top.days)}</span>
-        <div class="relative font-display font-bold text-[21px] leading-snug">${esc(s.idea)}</div>
-        <p class="relative text-sm text-muted mt-2">For <b class="text-ink font-semibold">${esc(brand)}</b> — Vertil pre-fills the voice, format and cultural angle.</p>
-        <div class="relative flex flex-wrap gap-1.5 mt-3.5">${chip(typeLabel)}${chip(toneLabel)}${chip(brand)}</div>
+        ${ideaBlock}
+        ${chipsBlock}
         <div class="relative flex items-center gap-2 mt-auto pt-4">
-          <button data-home-suggest class="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-brand hover:bg-brand-dark rounded-lg px-4 py-2.5 transition">Write this post →</button>
+          ${writeBtn}
           <button data-home-shuffle class="text-sm font-medium text-muted hover:text-ink rounded-lg px-3 py-2.5">Not today</button>
         </div>
       </div>
@@ -804,13 +819,28 @@ function homeJumpBack(cont) {
   </section>`;
 }
 
+async function fetchSuggestion(idx) {
+  if (state.suggestLoading || state.suggestCache[idx]) return;
+  state.suggestLoading = true;
+  try {
+    state.suggestCache[idx] = await api(`/api/suggestion?idx=${idx}&brand_id=${state.activeBrandId || ""}`);
+  } catch { /* leave uncached — retries next visit/shuffle */ }
+  state.suggestLoading = false;
+  if (state.view === "home") render();
+}
 function applySuggestion() {
-  const events = naijaEvents();
-  const ev = events[(state.suggestIdx || 0) % events.length];
-  const s = SUGGESTIONS[ev.key] || SUGGESTIONS.payday;
-  state.brief = s.idea;
-  if ((state.config.content_types || []).some(c => c.key === s.type)) state.contentType = s.type;
-  if ((state.config.tones || []).some(t => t.key === s.tone)) state.tone = s.tone;
+  const idx = state.suggestIdx || 0;
+  const c = state.suggestCache[idx];
+  if (c && c.idea) {
+    state.brief = c.idea;
+    if (c.type_key && (state.config.content_types || []).some(x => x.key === c.type_key)) state.contentType = c.type_key;
+    if (c.tone_key && (state.config.tones || []).some(x => x.key === c.tone_key)) state.tone = c.tone_key;
+  } else {
+    const ev = naijaEvents()[idx % 6], s = SUGGESTIONS[ev.key] || SUGGESTIONS.payday;
+    state.brief = s.idea;
+    if ((state.config.content_types || []).some(x => x.key === s.type)) state.contentType = s.type;
+    if ((state.config.tones || []).some(x => x.key === s.tone)) state.tone = s.tone;
+  }
   goto("studio");
 }
 function resumeDraft() {
@@ -1473,6 +1503,7 @@ function wire() {
     const ws = $("[data-home-suggest]"); if (ws) ws.onclick = applySuggestion;
     const rs = $("[data-home-resume]"); if (rs) rs.onclick = resumeDraft;
     $$("[data-home-brand]").forEach(b => b.onclick = () => { const br = state.brands.find(x => x.id === +b.dataset.homeBrand); if (br) state.editing = br; goto("brands"); });
+    if (state.home) fetchSuggestion(state.suggestIdx || 0);  // load today's bespoke idea
   }
 
   if (state.view === "studio") {

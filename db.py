@@ -183,6 +183,16 @@ def init_db() -> None:
                 used       INTEGER NOT NULL DEFAULT 0,
                 created_at {_REAL} NOT NULL
             )""")
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS suggestions (
+                id         {_PK},
+                user_id    INTEGER NOT NULL,
+                day        TEXT NOT NULL,
+                event_key  TEXT NOT NULL,
+                brand_id   INTEGER,
+                idea       TEXT, voice TEXT, type TEXT,
+                created_at {_REAL} NOT NULL
+            )""")
         # migrations (idempotent on both backends)
         for tbl in ("brands", "generations", "calendars"):
             _add_col(c, tbl, "user_id", "INTEGER")
@@ -535,6 +545,25 @@ def gig_summary(user_id: int) -> dict:
         "count": count, "month_earned": round(month_earned, 2),
         "avg": round(earned / count, 2) if count else 0,
     }
+
+
+# ------------------------------- suggestions ------------------------------ #
+
+def get_suggestion(user_id: int, day: str, event_key: str, brand_id) -> dict | None:
+    bid = brand_id if brand_id else -1
+    with _conn() as c:
+        r = c.execute(
+            "SELECT idea, voice, type FROM suggestions WHERE user_id=? AND day=? AND event_key=? "
+            "AND COALESCE(brand_id,-1)=? ORDER BY id DESC LIMIT 1",
+            (user_id, day, event_key, bid)).fetchone()
+    return dict(r) if r else None
+
+
+def save_suggestion(user_id: int, day: str, event_key: str, brand_id, idea: str, voice: str, type_: str) -> None:
+    with _conn() as c:
+        _insert(c, "INSERT INTO suggestions (user_id, day, event_key, brand_id, idea, voice, type, created_at) "
+                   "VALUES (?,?,?,?,?,?,?,?)",
+                (user_id, day, event_key, brand_id, idea, voice, type_, time.time()))
 
 
 # ------------------------------- home/dashboard --------------------------- #

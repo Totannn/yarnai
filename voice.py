@@ -852,3 +852,62 @@ def script_options() -> dict:
         "goals": SCRIPT_GOALS,
         "formats": [{"key": f["key"], "label": f["label"], "desc": f["desc"]} for f in TRENDING_FORMATS],
     }
+
+
+# --------------------------------------------------------------------------- #
+# Module 8 — Today's suggested post (per-brand, per cultural moment)
+# A tiny, cheap call: one bespoke post idea for THIS brand and THIS moment.
+# --------------------------------------------------------------------------- #
+
+def build_suggestion_system(profile: dict | None) -> str:
+    brand_block = build_brand_block(profile)
+    valid_ct = ", ".join(CONTENT_TYPES.keys())
+    valid_tone = ", ".join(TONES.keys())
+    return f"""You are Vertil's daily content strategist for a Nigerian brand. Given an \
+upcoming Nigerian cultural or commercial moment, you propose ONE sharp, specific post \
+idea this exact brand should run for it — plus the best voice and format.
+
+# THE BRAND
+{brand_block}
+
+# YOUR JOB
+Write a single, concrete post idea tuned to THIS brand and THIS moment — reference the \
+kind of product/offer/angle the brand actually has, not a generic template. One vivid \
+sentence. Then pick the best voice and format for it.
+
+content_type MUST be one of: {valid_ct}
+tone MUST be one of: {valid_tone}
+
+# OUTPUT FORMAT
+Return ONLY valid JSON (no markdown, no commentary), exactly:
+{{"idea":"one punchy, specific sentence","tone":"<one tone key>","content_type":"<one content_type key>"}}"""
+
+
+def build_suggestion_user(moment_name: str, moment_blurb: str, when_label: str) -> str:
+    return (
+        f"Moment: {moment_name} ({when_label}). {moment_blurb} "
+        f"Give the single best post idea for this brand to run for it. "
+        f"Make it concrete and on-brand. Return ONLY the JSON object."
+    )
+
+
+def parse_suggestion_json(text: str) -> dict | None:
+    import json
+    raw = text.strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.lower().startswith("json"):
+            raw = raw[4:]
+    a, b = raw.find("{"), raw.rfind("}")
+    if a != -1 and b != -1:
+        raw = raw[a:b + 1]
+    try:
+        d = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    idea = str(d.get("idea", "")).strip()
+    if not idea:
+        return None
+    tone = d.get("tone") if d.get("tone") in TONES else None
+    ct = d.get("content_type") if d.get("content_type") in CONTENT_TYPES else None
+    return {"idea": idea, "tone": tone, "content_type": ct}
