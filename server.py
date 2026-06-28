@@ -259,6 +259,24 @@ self.addEventListener('fetch', e => {
 """
 
 
+# Digital Asset Links — verifies the Android TWA so it opens with no URL bar.
+_ASSETLINKS = [{
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+        "namespace": "android_app",
+        "package_name": "ng.vertil.twa",
+        "sha256_cert_fingerprints": [
+            "D2:5E:73:D8:5B:D1:1F:1C:01:15:1D:86:53:94:9A:2E:3C:AA:6B:84:C7:F1:70:21:74:9A:FC:3C:44:4C:21:09"
+        ],
+    },
+}]
+
+
+@app.get("/.well-known/assetlinks.json")
+def assetlinks():
+    return app.response_class(json.dumps(_ASSETLINKS), mimetype="application/json")
+
+
 @app.get("/manifest.webmanifest")
 def manifest():
     return app.response_class(json.dumps(_MANIFEST), mimetype="application/manifest+json")
