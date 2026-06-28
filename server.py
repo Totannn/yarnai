@@ -222,6 +222,56 @@ def favicon():
     return send_from_directory(app.static_folder, "favicon.svg", mimetype="image/svg+xml")
 
 
+# --------------------------- PWA (installable app) ------------------------- #
+
+_MANIFEST = {
+    "name": "Vertil — Nigerian brand voice engine",
+    "short_name": "Vertil",
+    "description": "On-brand content for Nigerian businesses and creators — captions, ads, WhatsApp, scripts and more.",
+    "start_url": "/app",
+    "scope": "/",
+    "display": "standalone",
+    "orientation": "portrait",
+    "background_color": "#0c2724",
+    "theme_color": "#0e9488",
+    "icons": [
+        {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+        {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+        {"src": "/static/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+    ],
+}
+
+# Network-first service worker. Never touches /api or non-GET requests, so SSE
+# streaming, auth and POSTs are unaffected; just enables install + offline shell.
+_SERVICE_WORKER = """
+const CACHE = 'vertil-v1';
+const SHELL = ['/app', '/static/app.js', '/manifest.webmanifest', '/static/icon-192.png'];
+self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).catch(()=>{})); self.skipWaiting(); });
+self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k))))); self.clients.claim(); });
+self.addEventListener('fetch', e => {
+  const req = e.request;
+  if (req.method !== 'GET' || new URL(req.url).pathname.startsWith('/api/')) return;
+  e.respondWith(
+    fetch(req).then(res => { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)).catch(()=>{}); return res; })
+      .catch(() => caches.match(req).then(r => r || caches.match('/app')))
+  );
+});
+"""
+
+
+@app.get("/manifest.webmanifest")
+def manifest():
+    return app.response_class(json.dumps(_MANIFEST), mimetype="application/manifest+json")
+
+
+@app.get("/sw.js")
+def service_worker():
+    resp = app.response_class(_SERVICE_WORKER, mimetype="application/javascript")
+    resp.headers["Service-Worker-Allowed"] = "/"
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 @app.get("/api/config")
 def config():
     return jsonify({

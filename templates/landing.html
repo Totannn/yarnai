@@ -6,6 +6,11 @@
   <title>Vertil — AI content that sounds like your Nigerian brand</title>
   <meta name="description" content="Vertil is the Nigerian brand voice engine. Generate on-brand copy in real Pidgin, Yoruba, Igbo and Hausa — plus content calendars, rate advice and more." />
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#0e9488" />
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}" />
+  <meta name="apple-mobile-web-app-title" content="Vertil" />
+  <script>if("serviceWorker" in navigator){window.addEventListener("load",function(){navigator.serviceWorker.register("/sw.js").catch(function(){});});}</script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
