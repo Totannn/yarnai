@@ -1579,7 +1579,7 @@ function wire() {
   }
 }
 
-async function goto(view) {
+async function goto(view, fromPop) {
   state.editing = null;
   state.mobileNav = false;
   state.acctMenu = false;
@@ -1592,7 +1592,24 @@ async function goto(view) {
     if (view === "gigs") { state.gigEditing = null; await loadGigs(); }
   } catch {}
   render();
+  // Add a browser history entry so the phone's Back gesture returns to the
+  // previous screen instead of exiting the app. (Skip when Back triggered us.)
+  if (!fromPop) history.pushState({ view }, "");
 }
+
+// Phone/browser Back: if an overlay is open, just close it; otherwise step back
+// to the previous screen. Only acts while logged into the app.
+window.addEventListener("popstate", (e) => {
+  if (!state.user) return;
+  if (state.mobileNav || state.acctMenu || state.editing || state.gigEditing) {
+    state.mobileNav = state.acctMenu = false;
+    state.editing = state.gigEditing = null;
+    render();
+    history.pushState({ view: state.view }, "");  // re-anchor so next Back navigates
+    return;
+  }
+  goto((e.state && e.state.view) || "home", true);
+});
 
 async function saveBrand(e) {
   e.preventDefault();
