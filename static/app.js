@@ -869,10 +869,12 @@ function studioView() {
       ${card(`<span class="text-[13px] font-semibold">The brief</span>
         <textarea id="brief" rows="3" placeholder="e.g. Black Friday: 30% off all Ankara gowns, free Lagos delivery this weekend"
           class="w-full mt-2 bg-paper border border-line rounded-lg px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand">${esc(state.brief)}</textarea>
-        <div class="flex items-center gap-3 mt-3">
-          <span class="text-xs text-muted">Options</span>
-          <div class="flex gap-1.5">${[1,2,3,4].map(n=>`<button data-var="${n}" class="w-9 h-9 rounded-lg text-sm font-semibold transition ${state.variants===n?'bg-brand text-white shadow-sm':'bg-paper text-muted hover:bg-line'}">${n}</button>`).join("")}</div>
-          <button id="genBtn" ${state.generating?'disabled':''} class="ml-auto inline-flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm text-white bg-brand hover:bg-brand-dark shadow-sm disabled:opacity-50">
+        <div class="flex flex-col sm:flex-row sm:items-center gap-3 mt-3">
+          <div class="flex items-center gap-3">
+            <span class="text-xs text-muted">Options</span>
+            <div class="flex gap-1.5">${[1,2,3,4].map(n=>`<button data-var="${n}" class="w-9 h-9 rounded-lg text-sm font-semibold transition ${state.variants===n?'bg-brand text-white shadow-sm':'bg-paper text-muted hover:bg-line'}">${n}</button>`).join("")}</div>
+          </div>
+          <button id="genBtn" ${state.generating?'disabled':''} class="sm:ml-auto w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm text-white bg-brand hover:bg-brand-dark shadow-sm disabled:opacity-50">
             ${state.generating?'<span class="w-4 h-4 border-2 border-white/40 border-t-white rounded-full spin"></span> Generating…':ic("spark","w-4 h-4")+' Generate'}</button>
         </div>`)}
     </section>
