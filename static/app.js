@@ -53,6 +53,7 @@ const ADVISOR_LABELS = { rate_advisor: "Rate Advisor", personal_brand: "Brand Ad
 const ICONP = {
   // content types
   instagram_caption: '<rect x="3" y="6" width="18" height="14" rx="2.5"/><circle cx="12" cy="13" r="3.2"/><path d="M8.5 6 10 3.6h4L15.5 6"/>',
+  tiktok_caption: '<path d="M9 17.5V8.2a4.5 4.5 0 1 0 3 4.2V4h.5a4 4 0 0 0 4 4"/>',
   tweet: '<path d="M4 5h16v10H9l-5 4z"/><path d="M8.5 9h7M8.5 11.5h4"/>',
   whatsapp_broadcast: '<path d="M20 11.5a7.5 7.5 0 0 1-10.9 6.7L4 20l1.9-5A7.5 7.5 0 1 1 20 11.5Z"/><path d="M9 11h6M9 13.5h3.5"/>',
   product_description: '<path d="M3.5 11.5 11.5 3.5H20V12l-8 8z"/><circle cx="15.5" cy="8.5" r="1.4"/>',

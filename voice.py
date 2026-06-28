@@ -129,6 +129,17 @@ CONTENT_TYPES: dict[str, dict] = {
             "Use line breaks for readability. Emojis welcome but tasteful."
         ),
     },
+    "tiktok_caption": {
+        "label": "TikTok Caption",
+        "emoji": "🎵",
+        "spec": (
+            "Write a punchy TikTok caption to sit under a video. Open with a curiosity hook that "
+            "makes people stop and watch (and rewatch). Keep it very short and conversational — "
+            "TikTok captions are brief. Be trend-aware and a bit playful. End with a soft engagement "
+            "nudge (comment/follow/duet) and add 3-6 hashtags mixing reach tags (#fyp #foryoupage) "
+            "with Nigerian + niche tags. Optionally hint at a trending sound or format."
+        ),
+    },
     "tweet": {
         "label": "X / Twitter Post",
         "emoji": "🐦",
