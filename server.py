@@ -23,10 +23,12 @@ from flask import (Flask, Response, jsonify, redirect, render_template,
                    request, session, stream_with_context)
 from werkzeug.security import check_password_hash, generate_password_hash
 
+# Load .env BEFORE importing db — db reads DATABASE_URL at import time, so the
+# env must be populated first (matters when config comes from a .env file).
+load_dotenv()
+
 import db
 import voice
-
-load_dotenv()
 
 API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 LIVE = bool(API_KEY) and not API_KEY.startswith("sk-ant-xxxx")
