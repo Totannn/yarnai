@@ -26,7 +26,42 @@ const state = {
   // misc
   history: [], favorites: [], editing: null, brandMode: "form", extracting: false,
   tour: null, mobileNav: false, acctMenu: false,
+  onboarding: null,
 };
+
+/* ---- onboarding wizard data ---- */
+const OB_INDUSTRIES = [
+  { id: "fashion", label: "Fashion & style" }, { id: "beauty", label: "Beauty & skincare" },
+  { id: "food", label: "Food & drinks" }, { id: "tech", label: "Tech & digital services" },
+  { id: "events", label: "Events & planning" }, { id: "retail", label: "Retail & marketplace" },
+  { id: "finance", label: "Finance & Naira services" }, { id: "other", label: "Something else" },
+];
+const OB_TONES = [
+  { id: "pidgin", label: "Naija Pidgin", blurb: "Aunty, if you no post am today, another vendor go chop the sale." },
+  { id: "lagos", label: "Lagos Corporate", blurb: "We deliver measurable growth through disciplined, on-brand execution." },
+  { id: "yoruba", label: "Yoruba Warmth", blurb: "Ẹ ku iṣẹ́ ma — we dey here, we go take care of you well well." },
+  { id: "igbo", label: "Igbo Hustle", blurb: "Nwanne, hustle no dey tire — na why we package your grind well." },
+  { id: "hausa", label: "Hausa Grace", blurb: "Sannu, mun sani darajarka — quality wey go last, no shortcut." },
+  { id: "luxury", label: "Luxury & Polished", blurb: "Crafted for those who notice the details others walk past." },
+  { id: "faith", label: "Faith & Purpose", blurb: "Every step of this business dey covered — we're building with purpose." },
+  { id: "friendly", label: "Friendly Neighbor", blurb: "Come as you are — we go gist small then handle business." },
+];
+const OB_PLATFORMS = [
+  { id: "instagram", label: "Instagram" }, { id: "whatsapp", label: "WhatsApp" },
+  { id: "facebook", label: "Facebook" }, { id: "tiktok", label: "TikTok" },
+  { id: "email", label: "Email" }, { id: "web", label: "Blog / website" },
+  { id: "x", label: "X (Twitter)" }, { id: "market", label: "In-person / market" },
+];
+const OB_GOALS = [
+  { id: "sales", label: "Sell more", sub: "Turn content into orders" },
+  { id: "awareness", label: "Build awareness", sub: "Get more people to know the brand" },
+  { id: "community", label: "Grow my community", sub: "More comments, replies, loyal fans" },
+  { id: "launch", label: "Launch something new", sub: "A product, service, or event" },
+  { id: "consistency", label: "Stay consistent posting", sub: "Never miss a week again" },
+  { id: "time", label: "Save time writing", sub: "Less staring at a blank caption box" },
+];
+// onboarding tone id → the app's real tone key
+const OB_TONE_MAP = { pidgin: "pidgin", lagos: "lagos_corporate", yoruba: "yoruba_mix", igbo: "igbo_market", hausa: "hausa_north", luxury: "luxury", faith: "religious", friendly: "friendly" };
 
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTH_ABBR = {January:"Jan",February:"Feb",March:"Mar",April:"Apr",May:"May",June:"Jun",July:"Jul",August:"Aug",September:"Sep",October:"Oct",November:"Nov",December:"Dec"};
@@ -138,8 +173,8 @@ async function boot() {
     state.user = me.user; state.usage = me.usage;
     await loadData();
     handleUpgradeReturn();
-    render();
-    maybeStartTour();
+    if (state.user.onboarded) { render(); }
+    else { startOnboarding(); }
   } catch {
     renderAuth();
   }
@@ -322,9 +357,8 @@ async function onGoogleCredential(resp) {
     const d = await api("/api/auth/google", { method: "POST", body: JSON.stringify({ credential: resp.credential }) });
     state.user = d.user; state.usage = d.usage;
     await loadData();
-    state.view = "home";
-    render();
-    maybeStartTour();
+    if (state.user.onboarded) { state.view = "home"; render(); }
+    else { startOnboarding(); }
   } catch (ex) {
     const err = document.getElementById("authErr");
     if (err) { err.textContent = ex.message; err.classList.remove("hidden"); } else toast("⚠ " + ex.message);
@@ -341,9 +375,8 @@ async function doAuth(e) {
     const d = await api(path, { method: "POST", body: JSON.stringify(fd) });
     state.user = d.user; state.usage = d.usage;
     await loadData();
-    state.view = "home";
-    render();
-    maybeStartTour();
+    if (state.user.onboarded) { state.view = "home"; render(); }
+    else { startOnboarding(); }
   } catch (ex) {
     err.textContent = ex.message; err.classList.remove("hidden");
     btn.disabled = false; btn.textContent = state.authMode === "login" ? "Log in" : "Create account";
@@ -355,6 +388,177 @@ async function logout() {
   Object.assign(state, { user: null, brands: [], activeBrandId: null, cards: null, calendar: null });
   state.authMode = "login";
   renderAuth();
+}
+
+/* ============================ ONBOARDING =========================== */
+
+function maybeStartOnboarding() {
+  if (state.user && !state.user.onboarded) { startOnboarding(); return true; }
+  return false;
+}
+function startOnboarding() {
+  const name = (state.user?.name || "").trim();
+  state.onboarding = { step: 0, busy: false, businessName: name && !name.includes("@") ? name : "", industry: null, tone: null, platforms: [], goal: null };
+  renderOnboarding();
+}
+
+function obCanAdvance() {
+  const o = state.onboarding;
+  if (o.step === 1) return o.businessName.trim().length > 0 && !!o.industry;
+  if (o.step === 2) return !!o.tone;
+  if (o.step === 3) return o.platforms.length > 0;
+  if (o.step === 4) return !!o.goal;
+  return true;
+}
+function obNext() {
+  const o = state.onboarding;
+  if (o.step >= 1 && o.step <= 4 && !obCanAdvance()) return;
+  o.step = Math.min(o.step + 1, 5);
+  renderOnboarding();
+}
+function obBack() { const o = state.onboarding; o.step = Math.max(o.step === 5 ? 4 : 1, o.step - 1); renderOnboarding(); }
+
+function obChip(item, selected) {
+  const sub = item.blurb || item.sub;
+  return `<button data-ob-chip="${item.id}" class="w-full text-left rounded-xl border px-4 py-3 transition flex items-center gap-3 ${selected ? "border-brand bg-brand-tint ring-1 ring-brand" : "border-line bg-white hover:border-brand/40"}">
+    <span class="flex-1 min-w-0"><span class="block text-sm font-semibold text-ink">${esc(item.label)}</span>
+      ${sub ? `<span class="block text-xs text-muted mt-0.5 truncate">${esc(sub)}</span>` : ""}</span>
+    <span class="w-5 h-5 rounded-full grid place-items-center shrink-0 border-2 ${selected ? "border-brand bg-brand text-white" : "border-line"}">${selected ? '<svg viewBox="0 0 24 24" class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>' : ""}</span>
+  </button>`;
+}
+
+function renderOnboarding() {
+  const o = state.onboarding;
+  let body;
+
+  if (o.step === 0) {
+    body = `
+    <div class="min-h-screen w-full flex flex-col items-center justify-center text-center p-8 sm:p-10 relative overflow-hidden text-white" style="background:linear-gradient(135deg,#0c2724,#0c7a70 70%,#0e9488)">
+      <div class="absolute -right-20 -top-20 w-72 h-72 rounded-full bg-white/[.08]"></div>
+      <div class="absolute -left-16 -bottom-24 w-64 h-64 rounded-full bg-white/[.06]"></div>
+      <div class="relative flex items-center gap-2.5 mb-9 fade-up">${vmark(36)}<span class="font-display font-semibold text-xl tracking-tight">Vertil</span></div>
+      <p class="relative font-mono text-[11px] tracking-[0.12em] uppercase text-white/65 mb-3.5 fade-up" style="animation-delay:80ms">Before you start</p>
+      <h1 class="relative font-display font-extrabold leading-tight mb-3.5 max-w-[520px] fade-up" style="font-size:clamp(26px,4.2vw,40px);animation-delay:140ms">Let's teach Vertil your brand's voice.</h1>
+      <p class="relative text-white/85 max-w-[420px] leading-relaxed mb-9 text-[15px] fade-up" style="animation-delay:220ms">Four quick questions — your business, your tone, where you show up, and what you're chasing. Vertil uses this to write like you from day one.</p>
+      <button data-ob-next class="relative font-semibold text-[15px] px-7 py-3.5 rounded-xl bg-white text-brand-dark shadow-card hover:brightness-95 transition fade-up" style="animation-delay:300ms">Get started</button>
+      <button data-ob-skip class="relative text-xs text-white/55 hover:text-white/80 mt-4 fade-up" style="animation-delay:360ms">Skip for now</button>
+    </div>`;
+  } else if (o.step === 5) {
+    const name = o.businessName.trim() || "your business";
+    const row = (k, v) => `<div class="flex justify-between gap-3 ${k !== "Business" ? "border-t border-line pt-3.5" : ""}"><span class="text-xs text-muted">${k}</span><span class="text-[13px] font-semibold text-ink text-right">${esc(v)}</span></div>`;
+    const industryLabel = (OB_INDUSTRIES.find(i => i.id === o.industry) || {}).label || "—";
+    const toneLabel = (OB_TONES.find(t => t.id === o.tone) || {}).label || "—";
+    const goalLabel = (OB_GOALS.find(g => g.id === o.goal) || {}).label || "—";
+    const platformsLabel = o.platforms.map(id => (OB_PLATFORMS.find(p => p.id === id) || {}).label).filter(Boolean).join(", ") || "—";
+    body = `
+    <div class="min-h-screen w-full flex items-start sm:items-center justify-center bg-paper">
+      <div class="w-full max-w-[560px] px-6 py-14 flex flex-col items-center text-center">
+        <span class="w-13 h-13 rounded-2xl bg-brand grid place-items-center mb-5" style="width:52px;height:52px"><svg viewBox="0 0 24 24" class="w-6 h-6" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span>
+        <h2 class="font-display font-extrabold text-[26px] leading-tight mb-1.5 max-w-[420px] text-ink">You're set, ${esc(name)}.</h2>
+        <p class="text-sm text-muted mb-7 max-w-[420px]">Vertil will write in this voice — you can change it anytime in Brands.</p>
+        <div class="w-full text-left bg-white border border-line rounded-xl2 shadow-card p-5">
+          <div class="flex flex-col gap-3.5">
+            ${row("Business", name)}${row("Industry", industryLabel)}${row("Voice", toneLabel)}${row("Where you show up", platformsLabel)}${row("Goal", goalLabel)}
+          </div>
+        </div>
+        <button data-ob-enter ${o.busy ? "disabled" : ""} class="w-full mt-7 inline-flex items-center justify-center gap-2 text-sm font-semibold text-white bg-brand hover:bg-brand-dark rounded-xl py-3 shadow-sm disabled:opacity-60 transition">${o.busy ? '<span class="w-4 h-4 border-2 border-white/40 border-t-white rounded-full spin"></span> Setting up…' : "Enter your studio"}</button>
+        <button data-ob-back class="text-xs text-muted hover:text-ink mt-3.5 underline">Go back and change something</button>
+      </div>
+    </div>`;
+  } else {
+    // steps 1–4
+    let inner = "";
+    if (o.step === 1) {
+      inner = `
+        <h2 class="font-display font-bold text-2xl mb-1.5 text-ink">What's your business?</h2>
+        <p class="text-[13px] text-muted mb-5">So Vertil knows who it's writing for.</p>
+        <label class="block"><span class="text-xs font-semibold text-muted">Business name</span>
+          <input data-ob-name value="${esc(o.businessName)}" placeholder="e.g. Ola's Kitchen" class="mt-1.5 w-full bg-paper border border-line rounded-lg px-3.5 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand"/></label>
+        <div class="mt-5 text-xs font-semibold text-muted mb-2">What do you sell or offer?</div>
+        <div class="flex flex-col gap-2">${OB_INDUSTRIES.map(it => obChip(it, o.industry === it.id)).join("")}</div>`;
+    } else if (o.step === 2) {
+      inner = `
+        <h2 class="font-display font-bold text-2xl mb-1.5 text-ink">Pick your voice.</h2>
+        <p class="text-[13px] text-muted mb-5">Each one is a real Nigerian tone — pick the one that sounds like you.</p>
+        <div class="flex flex-col gap-2">${OB_TONES.map(t => obChip(t, o.tone === t.id)).join("")}</div>`;
+    } else if (o.step === 3) {
+      inner = `
+        <h2 class="font-display font-bold text-2xl mb-1.5 text-ink">Where do you show up?</h2>
+        <p class="text-[13px] text-muted mb-5">Pick everywhere you post or message customers. Choose as many as apply.</p>
+        <div class="flex flex-col gap-2">${OB_PLATFORMS.map(p => obChip(p, o.platforms.includes(p.id))).join("")}</div>`;
+    } else {
+      inner = `
+        <h2 class="font-display font-bold text-2xl mb-1.5 text-ink">What's the goal?</h2>
+        <p class="text-[13px] text-muted mb-5">We'll shape suggestions and templates around this.</p>
+        <div class="flex flex-col gap-2">${OB_GOALS.map(g => obChip(g, o.goal === g.id)).join("")}</div>`;
+    }
+    const disabled = !obCanAdvance();
+    body = `
+    <div class="min-h-screen w-full flex justify-center bg-paper">
+      <div class="w-full max-w-[600px] px-6 py-12 sm:py-14 flex flex-col">
+        <div class="flex items-center gap-2.5 mb-7">${vmark(28)}<span class="font-display font-semibold text-base tracking-tight text-ink">Vertil</span></div>
+        <div class="font-mono text-[11px] tracking-[0.1em] uppercase text-muted mb-2">Step ${o.step} of 4</div>
+        <div class="h-1.5 rounded-full bg-line overflow-hidden"><div class="h-full bg-brand rounded-full transition-all duration-300" style="width:${o.step / 4 * 100}%"></div></div>
+        <div class="mt-8 fade-up" key="${o.step}">${inner}</div>
+        <div class="flex gap-2.5 mt-9">
+          <button data-ob-back class="text-sm font-medium text-muted hover:text-ink border border-line rounded-xl px-5 py-2.5">Back</button>
+          <button data-ob-next ${disabled ? "disabled" : ""} class="flex-1 text-sm font-semibold text-white bg-brand hover:bg-brand-dark rounded-xl py-2.5 shadow-sm disabled:opacity-50 transition">${o.step === 4 ? "Review" : "Continue"}</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  $("#app").innerHTML = body;
+  wireOnboarding();
+}
+
+function wireOnboarding() {
+  const o = state.onboarding;
+  $$("[data-ob-next]").forEach(b => b.onclick = obNext);
+  $$("[data-ob-back]").forEach(b => b.onclick = obBack);
+  const skip = $("[data-ob-skip]"); if (skip) skip.onclick = () => finishOnboarding(true);
+  const enter = $("[data-ob-enter]"); if (enter) enter.onclick = () => finishOnboarding(false);
+  const name = $("[data-ob-name]");
+  if (name) name.oninput = () => {
+    o.businessName = name.value;
+    const nx = $("[data-ob-next]"); if (nx) nx.disabled = !obCanAdvance();
+  };
+  $$("[data-ob-chip]").forEach(b => b.onclick = () => {
+    const id = b.dataset.obChip;
+    if (o.step === 1) o.industry = id;
+    else if (o.step === 2) o.tone = id;
+    else if (o.step === 3) o.platforms = o.platforms.includes(id) ? o.platforms.filter(x => x !== id) : [...o.platforms, id];
+    else if (o.step === 4) o.goal = id;
+    renderOnboarding();
+  });
+}
+
+async function finishOnboarding(skipped) {
+  const o = state.onboarding;
+  if (!skipped) {
+    o.busy = true; renderOnboarding();
+    const industryLabel = (OB_INDUSTRIES.find(i => i.id === o.industry) || {}).label || "";
+    const goalLabel = (OB_GOALS.find(g => g.id === o.goal) || {}).label || "";
+    const platformsLabel = o.platforms.map(id => (OB_PLATFORMS.find(p => p.id === id) || {}).label).filter(Boolean).join(", ");
+    const toneKey = OB_TONE_MAP[o.tone] || "pidgin";
+    try {
+      const brand = await api("/api/brands", {
+        method: "POST", body: JSON.stringify({
+          name: o.businessName.trim() || "My Brand",
+          industry: industryLabel,
+          description: (platformsLabel || goalLabel) ? `Shows up on: ${platformsLabel || "—"}. Main goal: ${goalLabel || "—"}.` : "",
+        }),
+      });
+      if (brand && brand.id) state.activeBrandId = brand.id;
+      state.tone = toneKey;
+    } catch (ex) { /* brand limit or error — proceed anyway */ }
+  }
+  try { await api("/api/onboarded", { method: "POST" }); } catch {}
+  if (state.user) state.user.onboarded = 1;
+  state.onboarding = null;
+  await loadData();
+  state.view = "home";
+  render();
 }
 
 /* ============================== SHELL =============================== */
@@ -725,7 +929,9 @@ function homeHero(name, greet, streak, summaryLine, ring) {
   </section>`;
 }
 
-function homeSuggestSection() {
+// The "Suggested for today" card only. Refreshed on Shuffle WITHOUT re-rendering
+// the whole dashboard (which would replay all the entrance animations = flash).
+function homeSuggestCard() {
   const events = naijaEvents();
   const idx = state.suggestIdx || 0;
   const top = events[idx % events.length];
@@ -747,17 +953,7 @@ function homeSuggestSection() {
     chipsBlock = "";
     writeBtn = `<button disabled class="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-brand/50 rounded-lg px-4 py-2.5 cursor-default">Write this post →</button>`;
   }
-
-  const naija = events.slice(0, 4).map(e => `
-    <button data-nav="calendar" class="w-full text-left flex items-center gap-3 py-2.5 group">
-      <span class="w-11 h-11 rounded-lg bg-brand-tint text-brand-dark grid place-items-center leading-none shrink-0">
-        <span class="text-[9px] font-semibold -mb-0.5">${NAIJA_MON[e.date.getMonth()]}</span><span class="text-base font-extrabold">${e.date.getDate()}</span></span>
-      <div class="min-w-0 flex-1"><div class="text-[13.5px] font-semibold truncate group-hover:text-brand-dark">${e.name}</div>
-        <div class="text-[11.5px] text-muted truncate">${e.blurb}</div></div>
-      <span class="text-[11px] text-faint shrink-0 font-medium">${daysLabel(e.days)}</span></button>`).join("");
   return `
-  <section class="fade-up grid grid-cols-1 lg:grid-cols-3 gap-4">
-    <div class="lg:col-span-2">
       <div class="relative overflow-hidden bg-white border border-line rounded-xl2 shadow-card p-5 h-full flex flex-col">
         <div class="absolute -right-8 -top-8 w-32 h-32 rounded-full bg-brand-tint/70"></div>
         <div class="relative flex items-center justify-between mb-3">
@@ -773,8 +969,21 @@ function homeSuggestSection() {
           ${writeBtn}
           <button data-home-shuffle class="text-sm font-medium text-muted hover:text-ink rounded-lg px-3 py-2.5">Not today</button>
         </div>
-      </div>
-    </div>
+      </div>`;
+}
+
+function homeSuggestSection() {
+  const events = naijaEvents();
+  const naija = events.slice(0, 4).map(e => `
+    <button data-nav="calendar" class="w-full text-left flex items-center gap-3 py-2.5 group">
+      <span class="w-11 h-11 rounded-lg bg-brand-tint text-brand-dark grid place-items-center leading-none shrink-0">
+        <span class="text-[9px] font-semibold -mb-0.5">${NAIJA_MON[e.date.getMonth()]}</span><span class="text-base font-extrabold">${e.date.getDate()}</span></span>
+      <div class="min-w-0 flex-1"><div class="text-[13.5px] font-semibold truncate group-hover:text-brand-dark">${e.name}</div>
+        <div class="text-[11.5px] text-muted truncate">${e.blurb}</div></div>
+      <span class="text-[11px] text-faint shrink-0 font-medium">${daysLabel(e.days)}</span></button>`).join("");
+  return `
+  <section class="fade-up grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <div class="lg:col-span-2" id="homeSuggestCard">${homeSuggestCard()}</div>
     <div class="bg-white border border-line rounded-xl2 shadow-card p-5 flex flex-col">
       <div class="flex items-center gap-2">
         <span class="w-7 h-7 rounded-lg bg-brand-tint text-brand grid place-items-center shrink-0">${svgIcon(ICON.calendar, "w-4 h-4")}</span>
@@ -784,6 +993,17 @@ function homeSuggestSection() {
       <button data-nav="calendar" class="mt-auto pt-3 text-left text-xs font-semibold text-brand hover:text-brand-dark">Open content calendar →</button>
     </div>
   </section>`;
+}
+
+// Update only the suggestion card in place — no full re-render, no animation flash.
+function refreshSuggestion() {
+  const el = $("#homeSuggestCard");
+  if (!el) { if (state.view === "home") render(); return; }
+  el.innerHTML = homeSuggestCard();
+  el.querySelectorAll("[data-home-shuffle]").forEach(b => b.onclick = () => { state.suggestIdx = (state.suggestIdx || 0) + 1; refreshSuggestion(); });
+  const ws = el.querySelector("[data-home-suggest]"); if (ws) ws.onclick = applySuggestion;
+  const idx = state.suggestIdx || 0;
+  if (!state.suggestCache[idx]) fetchSuggestion(idx);
 }
 
 function homeJumpBack(cont) {
@@ -825,9 +1045,13 @@ async function fetchSuggestion(idx) {
   state.suggestLoading = true;
   try {
     state.suggestCache[idx] = await api(`/api/suggestion?idx=${idx}&brand_id=${state.activeBrandId || ""}`);
-  } catch { /* leave uncached — retries next visit/shuffle */ }
+  } catch {
+    // cache a static fallback so we never loop (render → refetch → error → render …)
+    const ev = naijaEvents()[idx % 6], s = SUGGESTIONS[ev.key] || SUGGESTIONS.payday;
+    state.suggestCache[idx] = { idea: s.idea, tone_key: s.tone, type_key: s.type, brand: homeBrandName(), fallback: true };
+  }
   state.suggestLoading = false;
-  if (state.view === "home") render();
+  if (state.view === "home") refreshSuggestion();
 }
 function applySuggestion() {
   const idx = state.suggestIdx || 0;
@@ -1502,7 +1726,7 @@ function wire() {
   $$("[data-acctclose]").forEach(b => b.onclick = () => { state.acctMenu = false; render(); });
 
   if (state.view === "home") {
-    $$("[data-home-shuffle]").forEach(b => b.onclick = () => { state.suggestIdx = (state.suggestIdx || 0) + 1; render(); });
+    $$("[data-home-shuffle]").forEach(b => b.onclick = () => { state.suggestIdx = (state.suggestIdx || 0) + 1; refreshSuggestion(); });
     const ws = $("[data-home-suggest]"); if (ws) ws.onclick = applySuggestion;
     const rs = $("[data-home-resume]"); if (rs) rs.onclick = resumeDraft;
     $$("[data-home-brand]").forEach(b => b.onclick = () => { const br = state.brands.find(x => x.id === +b.dataset.homeBrand); if (br) state.editing = br; goto("brands"); });
