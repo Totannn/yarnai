@@ -61,6 +61,20 @@
     .marquee { animation: scrollx 26s linear infinite; }
     @keyframes scrollx { to { transform: translateX(-50%); } }
     .scroll-thin::-webkit-scrollbar { display:none; }
+    /* animated voice equalizer (hero badge) */
+    .eq { display:inline-flex; align-items:flex-end; gap:2px; height:11px; }
+    .eq i { width:2.5px; background:#2dd4bf; border-radius:2px; animation:eqbar 1.1s ease-in-out infinite; }
+    .eq i:nth-child(1){height:40%;animation-delay:0s}
+    .eq i:nth-child(2){height:75%;animation-delay:.15s}
+    .eq i:nth-child(3){height:100%;animation-delay:.3s}
+    .eq i:nth-child(4){height:60%;animation-delay:.45s}
+    @keyframes eqbar { 0%,100%{transform:scaleY(.35)} 50%{transform:scaleY(1)} }
+    /* blinking caret + typed reveal for the sample post */
+    .caret { display:inline-block; width:2px; height:1em; background:#2dd4bf; margin-left:2px; vertical-align:-2px; animation:blink 1s step-end infinite; }
+    @keyframes blink { 50%{opacity:0} }
+    @keyframes lineIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none} }
+    .line-in { opacity:0; animation:lineIn .5s ease forwards; }
+    @keyframes popHeart { 0%{transform:scale(.6);opacity:0} 60%{transform:scale(1.15)} 100%{transform:scale(1);opacity:1} }
   </style>
 </head>
 <body class="bg-paper text-ink antialiased">
@@ -88,17 +102,17 @@
     <div class="absolute -top-24 -right-24 w-96 h-96 rounded-full bg-brand-bright/15 blur-3xl"></div>
     <div class="absolute -bottom-32 -left-20 w-96 h-96 rounded-full bg-brand/20 blur-3xl"></div>
     <div class="relative max-w-6xl mx-auto px-5 sm:px-8 pt-20 pb-24 text-center">
-      <div class="inline-flex items-center gap-2 text-[11px] font-mono uppercase tracking-[2px] text-brand-bright bg-white/5 border border-white/10 rounded-full px-3 py-1.5 mb-8 reveal">
-        <span class="w-1.5 h-1.5 rounded-full bg-brand-bright"></span> The Nigerian brand voice engine
+      <div class="inline-flex items-center gap-2.5 text-[11px] font-mono uppercase tracking-[2px] text-brand-bright bg-white/5 border border-white/10 rounded-full pl-3 pr-3.5 py-1.5 mb-8 reveal">
+        <span class="eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span> The Nigerian brand voice engine
       </div>
       <div class="vword justify-center text-[clamp(56px,12vw,128px)] mb-6 reveal" style="--vi:#2dd4bf;color:#f4f7f6;">
         Vert<span class="vi anim-launch"><span class="vi-trail anim-trail"></span><span class="vi-tip"></span><span class="vi-stem"></span></span>l
       </div>
       <h1 class="font-display font-bold text-[clamp(28px,5vw,52px)] leading-[1.05] tracking-tight max-w-3xl mx-auto reveal">
-        Content that sounds like<br><span class="text-brand-bright">your Nigerian brand</span> — not generic AI.
+        Content that captivates.<br><span class="text-brand-bright">In your customers' language.</span>
       </h1>
       <p class="text-base sm:text-lg text-white/70 max-w-xl mx-auto mt-6 leading-relaxed reveal">
-        Generate on-brand copy in real Pidgin, Yoruba, Igbo and Hausa. Plan a month of posts. Know what to charge. Vertil understands Naija consumers — and writes like it.
+        Generate on-brand copy your audience actually connects with — from real Pidgin, Yoruba and Igbo to polished corporate and luxury — and grow faster because of it.
       </p>
       <div class="flex flex-wrap items-center justify-center gap-3 mt-9 reveal">
         <a href="/app" class="inline-flex items-center gap-2 text-sm font-semibold text-forest bg-brand-bright hover:brightness-105 px-6 py-3 rounded-xl shadow-lg shadow-brand-bright/20 transition">
@@ -109,14 +123,26 @@
       </div>
       <p class="text-xs text-white/45 mt-5 font-mono reveal">No card needed · 10 free generations / month</p>
 
-      <!-- sample output card -->
-      <div class="reveal max-w-lg mx-auto mt-14 text-left bg-white/5 backdrop-blur border border-white/10 rounded-xl2 p-5 float">
-        <div class="flex items-center gap-2 text-[11px] font-mono uppercase tracking-wide text-brand-bright mb-3">
-          <span class="w-2 h-2 rounded-full bg-brand-bright"></span> WhatsApp broadcast · Naija Pidgin
+      <!-- sample output card (Instagram post mock) -->
+      <div class="reveal max-w-md mx-auto mt-14 text-left bg-white/5 backdrop-blur border border-white/10 rounded-xl2 p-5 float">
+        <div class="flex items-center gap-2.5 mb-3.5">
+          <span class="w-9 h-9 rounded-full grid place-items-center text-forest font-bold text-xs shrink-0" style="background:linear-gradient(135deg,#2dd4bf,#0e9488)">MK</span>
+          <div class="leading-tight min-w-0">
+            <div class="text-[13px] font-semibold text-white truncate">mamaskitchen.ng</div>
+            <div class="text-[10px] font-mono uppercase tracking-wide text-brand-bright">Instagram caption</div>
+          </div>
+          <svg viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5 text-white/40 ml-auto"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
         </div>
         <p class="text-[15px] leading-relaxed text-white/90">
-          Aunty, <b>Black Friday don land!</b> That Ankara gown wey you dey eye? <b>30% OFF</b> — as e dey hot. This weekend only, delivery for Lagos na free. <b>Reply YES</b> make I package am for you sharp sharp.
+          <span class="line-in" style="animation-delay:.35s">POV: she said she no dey hungry… 🤭</span><br>
+          <span class="line-in" style="animation-delay:.75s">Five minutes later, na my <b>smoky party jollof</b> she dey fight for 🍚🔥 Come chop your stress commot — we go package am hot for you.</span><br>
+          <span class="line-in text-brand-bright" style="animation-delay:1.15s">#JollofWars #LagosFoodie #NaijaCatering<span class="caret"></span></span>
         </p>
+        <div class="flex items-center gap-4 mt-4 pt-3.5 border-t border-white/10 text-white/55">
+          <span class="inline-flex items-center gap-1.5 text-xs"><svg viewBox="0 0 24 24" fill="currentColor" class="w-[18px] h-[18px] text-brand-bright" style="animation:popHeart .5s ease 1.5s both"><path d="M12 21s-7.5-4.6-10-9.3C.6 8.9 2 5.5 5.2 5.5c1.9 0 3.1 1 3.8 2 .7-1 1.9-2 3.8-2 3.2 0 4.6 3.4 3.2 6.2C19.5 16.4 12 21 12 21z"/></svg>1,204</span>
+          <span class="inline-flex items-center gap-1.5 text-xs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="w-[18px] h-[18px]"><path d="M21 11.5a8.5 8.5 0 0 1-12.2 7.7L3 21l1.9-5A8.5 8.5 0 1 1 21 11.5Z"/></svg>86</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="w-[18px] h-[18px] ml-auto"><path d="M4 4h16v11H9l-5 4z"/></svg>
+        </div>
       </div>
     </div>
   </section>
@@ -124,9 +150,9 @@
   <!-- MOAT -->
   <section class="max-w-6xl mx-auto px-5 sm:px-8 py-20 sm:py-28 text-center">
     <div class="text-[11px] font-mono uppercase tracking-[2px] text-brand mb-4 reveal">Why Vertil</div>
-    <h2 class="font-display font-bold text-3xl sm:text-4xl tracking-tight max-w-2xl mx-auto reveal">Generic AI writes copy. Vertil writes <span class="text-brand">your</span> copy.</h2>
+    <h2 class="font-display font-bold text-3xl sm:text-4xl tracking-tight max-w-2xl mx-auto reveal">Set it up once. <span class="text-brand">It writes like you forever.</span></h2>
     <p class="text-muted max-w-2xl mx-auto mt-5 leading-relaxed reveal">
-      Set up your brand once — industry, audience, personality, even samples you like — and Vertil injects it into every single generation. The result sounds like it came from a brand rooted in Surulere, Aba, Kano or Enugu. That local voice is the whole point.
+      Tell Vertil about your brand once — your industry, audience, personality, even a few posts you love. From then on it's baked into every generation, so your copy always sounds unmistakably like <span class="text-ink font-medium">you</span> — whether that's street-smart Pidgin, polished corporate, or full-on luxury. Whatever your brand, wherever you are.
     </p>
     <div class="grid sm:grid-cols-3 gap-4 mt-12 text-left">
       <div class="reveal bg-white border border-line rounded-xl2 p-6 shadow-sm">
@@ -159,8 +185,8 @@
   <!-- VOICES -->
   <section id="voices" class="max-w-6xl mx-auto px-5 sm:px-8 py-20 sm:py-28 text-center overflow-hidden">
     <div class="text-[11px] font-mono uppercase tracking-[2px] text-brand mb-4 reveal">The language layer</div>
-    <h2 class="font-display font-bold text-3xl sm:text-4xl tracking-tight reveal">Real voices. Not "broken English".</h2>
-    <p class="text-muted max-w-xl mx-auto mt-5 reveal">Pick the tone that fits the moment — Vertil nails the rhythm, slang and warmth of each.</p>
+    <h2 class="font-display font-bold text-3xl sm:text-4xl tracking-tight reveal">From street-smart to boardroom-sharp.</h2>
+    <p class="text-muted max-w-xl mx-auto mt-5 reveal">Pick the voice that fits the moment — Pidgin swagger, corporate polish, Yoruba warmth, luxury cool. Vertil captures the rhythm and nuance of each, like a native.</p>
     <div class="relative mt-12 reveal">
       <div class="flex gap-3 w-max marquee" id="voiceTrack"></div>
       <div class="pointer-events-none absolute inset-y-0 left-0 w-20 bg-gradient-to-r from-paper to-transparent"></div>
@@ -225,16 +251,28 @@
   <script>
     const I = (p) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5">${p}</svg>`;
     const FEATURES = [
-      { t:"Studio", d:"Generate captions, WhatsApp blasts, product descriptions, ads, emails and SMS — in any Nigerian voice, with multiple options every time.", i:'<path d="M4 5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v3M4 5v14a2 2 0 0 0 2 2h6M16 8l4 4-7 7-4 1 1-4z"/>' },
-      { t:"Brand Voices", d:"Save unlimited brand profiles. Each one is injected into every generation so the copy always sounds like that brand.", i:'<path d="M3 9.5 12 4l9 5.5M5 11v8h14v-8M9.5 19v-5h5v5"/>' },
-      { t:"Content Calendar", d:"Plan a whole month of posts tuned to the Nigerian calendar — Detty December, ember months, salary cycles, holidays.", i:'<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9h18M8 2.5v4M16 2.5v4M12 12.5v5M9.5 15h5"/>' },
-      { t:"Rate Advisor", d:"Never undercharge again. Get realistic Naira rates for any gig, plus a script to quote clients with confidence.", i:'<path d="M12 4v16M6 7h12M6.5 7 4 13a3 3 0 0 0 5 0L6.5 7Zm11 0L15 13a3 3 0 0 0 5 0l-2.5-6ZM8 20h8"/>' },
-      { t:"Brand Advisor", d:"Building a personal brand? Get positioning, content pillars, a target-brand hit-list and next steps tailored to you.", i:'<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.2"/><circle cx="12" cy="12" r="1"/>' },
-      { t:"Gig Diary", d:"Log every gig and what you made. Watch your earnings add up and see what's pending — all in one place.", i:'<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5.5A2.5 2.5 0 0 1 10.5 3h3A2.5 2.5 0 0 1 16 5.5V7M3 12.5h18"/>' },
+      { t:"Studio", tier:"All plans", d:"Generate captions, WhatsApp blasts, TikTok & IG posts, product descriptions, ads, emails and SMS — in any voice, with multiple options every time.", i:'<path d="M4 5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v3M4 5v14a2 2 0 0 0 2 2h6M16 8l4 4-7 7-4 1 1-4z"/>' },
+      { t:"Learn My Brand", tier:"Pro", d:"Upload a brand guide, past posts or your website — Vertil learns your voice and hands back a full breakdown, a ready content pack, a playbook and an on-brand checker.", i:'<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="m10.5 12.4 .8 1.8 1.8.8-1.8.8-.8 1.8-.8-1.8-1.8-.8 1.8-.8z"/>' },
+      { t:"Smart Home", tier:"All plans", d:"Open the app and get a fresh post idea for the nearest money-moving moment — payday, Detty December, Black Friday — written for your brand, plus your streak & stats.", i:'<path d="M3 10.5 12 3l9 7.5M5.5 9.5V20h13V9.5M9.5 20v-6h5v6"/>' },
+      { t:"Content Calendar", tier:"Growth", d:"Plan a whole month of posts tuned to the Nigerian calendar — Detty December, salary cycles, holidays — each with a visual direction and one tap to write it.", i:'<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9h18M8 2.5v4M16 2.5v4M12 12.5v5M9.5 15h5"/>' },
+      { t:"Script Writer", tier:"All plans", d:"Scene-by-scene scripts for TikTok, Reels and Shorts — built on trending formats, with hooks, on-screen text and sound suggestions.", i:'<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/>' },
+      { t:"Brand Voices", tier:"All plans", d:"Save multiple brand profiles. Each one is injected into every generation so the copy always sounds like that brand — from street-smart Pidgin to polished corporate.", i:'<path d="M3 9.5 12 4l9 5.5M5 11v8h14v-8M9.5 19v-5h5v5"/>' },
+      { t:"Rate Advisor", tier:"All plans", d:"Never undercharge again. Get realistic Naira rates for any gig, plus a script to quote clients with confidence.", i:'<path d="M12 4v16M6 7h12M6.5 7 4 13a3 3 0 0 0 5 0L6.5 7Zm11 0L15 13a3 3 0 0 0 5 0l-2.5-6ZM8 20h8"/>' },
+      { t:"Brand Advisor", tier:"All plans", d:"Building a personal brand? Get positioning, content pillars, a target-brand hit-list and next steps tailored to you.", i:'<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.2"/><circle cx="12" cy="12" r="1"/>' },
+      { t:"Gig Diary", tier:"All plans", d:"Log every gig and what you made. Watch your earnings add up and see what's pending — all in one place.", i:'<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5.5A2.5 2.5 0 0 1 10.5 3h3A2.5 2.5 0 0 1 16 5.5V7M3 12.5h18"/>' },
     ];
+    const tierPill = (tier) => {
+      const c = tier === "Pro" ? "text-white bg-brand"
+        : tier === "Growth" ? "text-brand-dark bg-brand-tint border border-brand/20"
+        : "text-faint bg-paper border border-line";
+      return `<span class="text-[10px] font-bold uppercase tracking-wide rounded-full px-2 py-0.5 ${c}">${tier}</span>`;
+    };
     document.getElementById("featGrid").innerHTML = FEATURES.map(f=>`
       <div class="reveal bg-paper border border-line rounded-xl2 p-6 hover:shadow-md hover:border-brand/30 transition">
-        <div class="w-11 h-11 rounded-xl bg-brand-tint text-brand grid place-items-center mb-4">${I(f.i)}</div>
+        <div class="flex items-center justify-between mb-4">
+          <div class="w-11 h-11 rounded-xl bg-brand-tint text-brand grid place-items-center">${I(f.i)}</div>
+          ${f.tier?tierPill(f.tier):''}
+        </div>
         <div class="font-display font-bold text-lg">${f.t}</div>
         <p class="text-sm text-muted mt-1.5 leading-relaxed">${f.d}</p>
       </div>`).join("");
