@@ -27,7 +27,11 @@ const state = {
   history: [], favorites: [], editing: null, brandMode: "form", extracting: false,
   tour: null, mobileNav: false, acctMenu: false,
   onboarding: null,
+  learn: { files: [], text: "", note: "", url: "", loading: false, result: null, saving: false,
+           pack: null, packLoading: false, checkText: "", checkResult: null, checkLoading: false },
 };
+const LEARN_INIT = () => ({ files: [], text: "", note: "", url: "", loading: false, result: null, saving: false,
+  pack: null, packLoading: false, checkText: "", checkResult: null, checkLoading: false });
 
 /* ---- onboarding wizard data ---- */
 const OB_INDUSTRIES = [
@@ -68,6 +72,7 @@ const MONTH_ABBR = {January:"Jan",February:"Feb",March:"Mar",April:"Apr",May:"Ma
 
 const ICON = {
   home: '<path d="M3 10.5 12 3l9 7.5M5.5 9.5V20h13V9.5"/><path d="M9.5 20v-6h5v6"/>',
+  learn: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="m10.5 12.5 .8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7-1.7-.8 1.7-.8z"/>',
   studio: '<path d="M4 5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v3M4 5v14a2 2 0 0 0 2 2h6M4 5H3m13 3 4 4m0 0-7 7-4 1 1-4 7-7m4 4-4-4"/>',
   calendar: '<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9h18M8 2.5v4M16 2.5v4M7.5 13h2m4.5 0h2m-8.5 4h2m4.5 0h2"/>',
   calendars: '<path d="M8 7h12M8 12h12M8 17h12M3.5 7h.01M3.5 12h.01M3.5 17h.01"/>',
@@ -125,6 +130,7 @@ const ICONP = {
   quote: '<path d="M7 7H4v5h3l-1.5 4M16 7h-3v5h3l-1.5 4"/>',
   film: '<rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M3 9.5h18M3 14.5h18M8 4.5v15M16 4.5v15"/>',
   download: '<path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M4.5 19.5h15"/>',
+  preview: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
 };
 
 function ic(name, cls = "w-4 h-4") {
@@ -579,6 +585,7 @@ function render() {
 function routeView() {
   switch (state.view) {
     case "home": return homeView();
+    case "learn": return learnView();
     case "studio": return studioView();
     case "calendar": return calendarView();
     case "calendars": return savedCalendarsView();
@@ -611,7 +618,7 @@ function sidebar() {
     </div>
     <nav class="space-y-1">
       ${item("home","Home")}${item("studio","Studio")}${item("script","Script Writer")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
-      ${item("brands","Brands")}${item("favorites","Saved Copy")}${item("history","History")}
+      ${item("brands","Brands")}${item("learn","Learn My Brand")}${item("favorites","Saved Copy")}${item("history","History")}
       <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">Advisors</div>
       ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("gigs","Gig Diary")}
     </nav>
@@ -638,7 +645,7 @@ function sidebar() {
       </div>
       <nav class="space-y-1">
         ${item("home","Home")}${item("studio","Studio")}${item("script","Script Writer")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
-        ${item("brands","Brands")}${item("favorites","Saved Copy")}${item("history","History")}
+        ${item("brands","Brands")}${item("learn","Learn My Brand")}${item("favorites","Saved Copy")}${item("history","History")}
         <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">Advisors</div>
         ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("gigs","Gig Diary")}
         ${item("pricing","Plans & Pricing")}
@@ -681,6 +688,7 @@ function topbar() {
     calendar:["Content Calendar","A month of posts, tuned to the Nigerian calendar"],
     calendars:["Saved Plans","Your generated content calendars"],
     brands:["Brands","Your brand voices — injected into every generation"],
+    learn:["Learn My Brand","Upload your material — Vertil learns your brand and breaks it down"],
     favorites:["Saved Copy","Your starred, ready-to-use copy"],
     history:["History","Everything you've generated"],
     pricing:["Plans & Pricing","Upgrade to unlock more"],
@@ -1079,6 +1087,222 @@ function resumeDraft() {
   goto("studio");
 }
 
+/* =========================== LEARN MY BRAND ======================== */
+
+const LEARN_STYLE = `<style>
+@keyframes lbRing{from{stroke-dashoffset:var(--rc)}}
+.lb-cascade>*{animation:fadeUp .45s ease both}
+.lb-cascade>*:nth-child(2){animation-delay:.05s}.lb-cascade>*:nth-child(3){animation-delay:.1s}
+.lb-cascade>*:nth-child(4){animation-delay:.15s}.lb-cascade>*:nth-child(5){animation-delay:.2s}
+.lb-cascade>*:nth-child(6){animation-delay:.25s}.lb-cascade>*:nth-child(7){animation-delay:.3s}
+.lb-cascade>*:nth-child(n+8){animation-delay:.35s}
+</style>`;
+
+function learnView() {
+  const s = LEARN_STYLE;
+  if (!state.usage?.brand_learn) return s + learnLocked();
+  const L = state.learn;
+  if (L.loading) return s + `<div class="fade-up">${card(`<div class="text-center py-16"><div class="w-9 h-9 mx-auto border-[3px] border-brand/25 border-t-brand rounded-full spin"></div>
+    <p class="text-sm font-semibold mt-4">Studying your brand…</p><p class="text-xs text-muted mt-1">Reading your material and reverse-engineering your voice</p></div>`)}</div>`;
+  if (L.result) return s + learnResult(L.result);
+  return s + `<div class="fade-up">${learnUpload(L)}</div>`;
+}
+
+function learnLocked() {
+  return card(`<div class="text-center py-14"><div class="w-12 h-12 mx-auto rounded-xl2 bg-paper text-faint grid place-items-center mb-3">${ic("lock","w-6 h-6")}</div>
+    <p class="font-display font-bold text-lg">Learn My Brand is a Pro feature</p>
+    <p class="text-sm text-muted mt-1 max-w-md mx-auto">Upload your brand guide, past posts or business plan and Vertil reverse-engineers your voice — with a full breakdown. Upgrade to Pro to unlock it.</p>
+    <button data-nav="pricing" class="mt-4 text-sm font-semibold text-white bg-brand hover:bg-brand-dark px-5 py-2.5 rounded-xl">See plans</button></div>`);
+}
+
+function learnUpload(L) {
+  const files = L.files.map((f, i) => `<div class="flex items-center gap-2 text-xs bg-paper border border-line rounded-lg px-2.5 py-1.5"><span class="truncate flex-1">${esc(f.name)}</span><button data-learn-rmfile="${i}" class="text-faint hover:text-rose-500 shrink-0">✕</button></div>`).join("");
+  const hasInput = L.files.length > 0 || L.text.trim().length > 0 || L.url.trim().length > 0;
+  return `<div class="max-w-2xl space-y-4 pb-24 md:pb-0">
+    ${card(`
+      <div class="text-center mb-4"><div class="w-12 h-12 mx-auto rounded-xl2 bg-brand-tint text-brand grid place-items-center mb-2">${ic("learn","w-6 h-6")}</div>
+        <p class="font-display font-bold text-lg">Teach Vertil your brand</p>
+        <p class="text-sm text-muted mt-1 max-w-md mx-auto">Upload a brand guide, past captions, your website copy or a business plan — Vertil learns your voice and gives you a full breakdown.</p></div>
+      <label class="block border-2 border-dashed border-line rounded-xl2 p-6 text-center cursor-pointer hover:border-brand/40 transition">
+        <input type="file" id="learnFile" multiple accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg,.webp" class="hidden"/>
+        <div class="text-brand">${ic("learn","w-7 h-7 mx-auto")}</div>
+        <div class="text-sm font-semibold mt-2">Click to upload files</div>
+        <div class="text-xs text-muted mt-0.5">PDF, Word, images or text · up to 16MB</div>
+      </label>
+      ${files ? `<div class="flex flex-col gap-1.5 mt-3">${files}</div>` : ""}
+      <div class="mt-4"><span class="text-xs font-semibold text-muted">Or learn from your website</span>
+        <input id="learnUrl" value="${esc(L.url)}" placeholder="yourbrand.com" class="mt-1.5 w-full bg-paper border border-line rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand/30"/>
+        <div class="text-[11px] text-faint mt-1">Tip: Instagram/TikTok can't be read directly — paste a few posts or upload a screenshot instead.</div></div>
+      <div class="mt-4"><span class="text-xs font-semibold text-muted">Or paste your brand material</span>
+        <textarea id="learnText" rows="4" placeholder="Paste captions, your about page, product descriptions…" class="mt-1.5 w-full bg-paper border border-line rounded-lg px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-brand/30">${esc(L.text)}</textarea></div>
+      <div class="mt-3"><span class="text-xs font-semibold text-muted">Anything to add? (optional)</span>
+        <input id="learnNote" value="${esc(L.note)}" placeholder="e.g. we sell to young mums in Lagos" class="mt-1.5 w-full bg-paper border border-line rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand/30"/></div>
+      <button id="learnBtn" ${hasInput ? "" : "disabled"} class="w-full mt-4 inline-flex items-center justify-center gap-2 text-sm font-semibold text-white bg-brand hover:bg-brand-dark rounded-xl py-3 shadow-sm disabled:opacity-50 transition">${ic("learn","w-4 h-4")} Learn my brand</button>
+    `)}
+  </div>`;
+}
+
+function learnResult(r) {
+  const chips = (arr, cls) => arr.map(x => `<span class="text-[11px] font-medium ${cls} rounded-full px-2.5 py-1">${esc(x)}</span>`).join("");
+  const list = (arr, icon, color) => arr.map(x => `<li class="flex gap-2 text-sm"><span class="${color} shrink-0 mt-0.5 leading-none">${icon}</span><span class="text-ink/85">${esc(x)}</span></li>`).join("");
+  const toneLabel = label("tones", r.closest_tone);
+  const x = '<svg viewBox="0 0 24 24" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+  return `<div class="max-w-3xl space-y-4 pb-24 md:pb-0 lb-cascade">
+    <div class="rounded-xl2 p-5 text-white" style="background:linear-gradient(135deg,#0c2724,#0c7a70 75%,#0e9488)">
+      <div class="text-[11px] font-mono uppercase tracking-wide text-brand-bright mb-1.5">Your brand, decoded</div>
+      <div class="font-display font-extrabold text-2xl">${esc(r.brand_name || "Your brand")}</div>
+      <p class="text-white/85 mt-1.5 leading-relaxed">${esc(r.essence)}</p>
+      <div class="flex flex-wrap gap-1.5 mt-3">${r.industry ? `<span class="text-[11px] bg-white/10 rounded-full px-2.5 py-1">${esc(r.industry)}</span>` : ""}<span class="text-[11px] bg-brand-bright/20 text-brand-bright rounded-full px-2.5 py-1">Voice: ${esc(toneLabel)}</span></div>
+    </div>
+    ${card(`<div class="text-[13px] font-semibold mb-1.5">How your brand sounds</div><p class="text-sm text-ink/85 leading-relaxed">${esc(r.voice_summary)}</p>
+      ${r.personality.length ? `<div class="flex flex-wrap gap-1.5 mt-3">${chips(r.personality, "text-brand-dark bg-brand-tint")}</div>` : ""}`)}
+    ${r.audience ? card(`<div class="text-[13px] font-semibold mb-1.5">Who you're talking to</div><p class="text-sm text-ink/85 leading-relaxed">${esc(r.audience)}</p>`) : ""}
+    ${r.value_props.length ? card(`<div class="text-[13px] font-semibold mb-2">Your core messages</div><ul class="space-y-1.5">${list(r.value_props, ic("check","w-4 h-4"), "text-brand")}</ul>`) : ""}
+    <div class="grid sm:grid-cols-2 gap-4">
+      ${r.dos.length ? card(`<div class="text-[13px] font-semibold mb-2 text-brand-dark">Sound like this</div><ul class="space-y-1.5">${list(r.dos, ic("check","w-4 h-4"), "text-brand")}</ul>`) : ""}
+      ${r.donts.length ? card(`<div class="text-[13px] font-semibold mb-2 text-rose-600">Avoid this</div><ul class="space-y-1.5">${list(r.donts, x, "text-rose-500")}</ul>`) : ""}
+    </div>
+    ${r.sample_caption ? card(`<div class="flex items-center justify-between mb-1.5"><div class="text-[13px] font-semibold">Sample caption in your voice</div><button data-learn-copy class="text-xs text-brand font-semibold">Copy</button></div><p class="text-sm whitespace-pre-wrap bg-paper border border-line rounded-lg p-3 leading-relaxed">${esc(r.sample_caption)}</p>`) : ""}
+    <div class="grid sm:grid-cols-2 gap-4">
+      ${r.strengths.length ? card(`<div class="text-[13px] font-semibold mb-2">Strengths</div><ul class="space-y-1.5">${list(r.strengths, "★", "text-gold")}</ul>`) : ""}
+      ${r.opportunities.length ? card(`<div class="text-[13px] font-semibold mb-2">Opportunities</div><ul class="space-y-1.5">${list(r.opportunities, "→", "text-brand font-bold")}</ul>`) : ""}
+    </div>
+    <div id="learnPackWrap">${learnPackSection()}</div>
+    <div id="learnCheckWrap">${learnCheckSection()}</div>
+    <div class="flex flex-col sm:flex-row gap-2">
+      <button data-learn-save ${state.learn.saving ? "disabled" : ""} class="flex-1 inline-flex items-center justify-center gap-2 text-sm font-semibold text-white bg-brand hover:bg-brand-dark rounded-xl py-3 shadow-sm disabled:opacity-60 transition">${state.learn.saving ? '<span class="w-4 h-4 border-2 border-white/40 border-t-white rounded-full spin"></span> Saving…' : ic("save","w-4 h-4") + " Save as brand voice"}</button>
+      <button data-learn-playbook class="inline-flex items-center justify-center gap-2 text-sm font-semibold text-brand-dark border border-line rounded-xl px-5 py-3 hover:border-brand/40">${ic("download","w-4 h-4")} Playbook</button>
+      <button data-learn-again class="inline-flex items-center justify-center gap-2 text-sm font-semibold text-brand-dark border border-line rounded-xl px-5 py-3 hover:border-brand/40">Analyze another</button>
+    </div>
+  </div>`;
+}
+
+function scoreRing(score) {
+  const c = 2 * Math.PI * 20, off = c * (1 - score / 100);
+  const col = score >= 80 ? "#0e9488" : score >= 50 ? "#b7791f" : "#e11d48";
+  return `<svg viewBox="0 0 48 48" class="w-14 h-14 absolute inset-0" style="transform:rotate(-90deg)"><circle cx="24" cy="24" r="20" fill="none" stroke="#e2e8e6" stroke-width="4"/>
+    <circle cx="24" cy="24" r="20" fill="none" stroke="${col}" stroke-width="4" stroke-linecap="round" stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}" style="--rc:${c.toFixed(1)};animation:lbRing .9s cubic-bezier(.4,0,.2,1) both"/></svg>
+    <div class="absolute inset-0 grid place-items-center text-xs font-extrabold" style="animation:fadeUp .5s ease .3s both">${score}</div>`;
+}
+
+function learnPackSection() {
+  const L = state.learn;
+  if (L.packLoading) return `<div class="fade-up">${card(`<div class="flex items-center gap-2 text-sm text-muted py-2"><span class="w-4 h-4 border-2 border-brand/30 border-t-brand rounded-full spin"></span> Writing your starter pack…</div>`)}</div>`;
+  if (!L.pack) return card(`<div class="flex items-center justify-between gap-3 flex-wrap"><div class="min-w-0"><div class="text-[13px] font-semibold">Get a head start</div><div class="text-xs text-muted mt-0.5">Turn this voice into ready content — bio, taglines, captions & a WhatsApp blast.</div></div>
+    <button data-learn-pack class="text-sm font-semibold text-white bg-brand hover:bg-brand-dark rounded-lg px-4 py-2 shrink-0 inline-flex items-center gap-1.5">${ic("spark","w-4 h-4")} Generate content pack</button></div>`);
+  const p = L.pack;
+  const block = (id, lbl, val, d) => `<div class="bg-paper border border-line rounded-lg p-3 fade-up" style="animation-delay:${d}ms"><div class="flex items-center justify-between mb-1"><span class="text-[11px] font-mono uppercase tracking-wide text-faint">${lbl}</span><button data-copy-pack="${id}" class="text-xs text-brand font-semibold">Copy</button></div><p class="text-sm whitespace-pre-wrap" data-packval="${id}">${esc(val)}</p></div>`;
+  let d = 0; const nx = () => (d += 60);
+  return `<div class="fade-up">${card(`<div class="text-[13px] font-semibold mb-3">Your starter content pack</div><div class="space-y-3">
+    ${p.bio ? block("bio", "Bio", p.bio, nx()) : ""}
+    ${p.taglines.length ? `<div class="fade-up" style="animation-delay:${nx()}ms"><div class="text-[11px] font-mono uppercase tracking-wide text-faint mb-1.5">Taglines</div><div class="flex flex-wrap gap-1.5">${p.taglines.map(t => `<span class="text-xs bg-brand-tint text-brand-dark rounded-full px-2.5 py-1">${esc(t)}</span>`).join("")}</div></div>` : ""}
+    ${p.captions.map((c, i) => block("cap" + i, "Caption " + (i + 1), c, nx())).join("")}
+    ${p.whatsapp ? block("wa", "WhatsApp broadcast", p.whatsapp, nx()) : ""}
+  </div>`)}</div>`;
+}
+
+function learnCheckSection() {
+  const L = state.learn, res = L.checkResult;
+  return card(`<div class="text-[13px] font-semibold mb-1.5">On-brand checker</div>
+    <div class="text-xs text-muted mb-2.5">Paste any copy — Vertil scores how on-brand it is and rewrites it.</div>
+    <textarea id="checkText" rows="3" placeholder="Paste a caption, ad or message…" class="w-full bg-paper border border-line rounded-lg px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-brand/30">${esc(L.checkText)}</textarea>
+    <button data-learn-check ${L.checkLoading ? "disabled" : ""} class="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-white bg-brand hover:bg-brand-dark rounded-lg px-4 py-2 disabled:opacity-50">${L.checkLoading ? '<span class="w-4 h-4 border-2 border-white/40 border-t-white rounded-full spin"></span> Checking…' : "Check my copy"}</button>
+    ${res ? `<div class="mt-4 border-t border-line pt-4 fade-up">
+      <div class="flex items-center gap-3 mb-2.5"><div class="relative w-14 h-14 shrink-0">${scoreRing(res.score)}</div>
+        <div><div class="text-sm font-semibold">${res.score}% on-brand</div><div class="text-xs text-muted">${esc(res.verdict)}</div></div></div>
+      ${res.issues.length ? `<ul class="space-y-1 mb-3">${res.issues.map((x, i) => `<li class="flex gap-2 text-xs text-muted fade-up" style="animation-delay:${i * 60}ms"><span class="text-gold shrink-0">•</span>${esc(x)}</li>`).join("")}</ul>` : ""}
+      <div class="bg-brand-tint border border-brand/20 rounded-lg p-3 fade-up" style="animation-delay:.18s"><div class="flex items-center justify-between mb-1"><span class="text-[11px] font-mono uppercase tracking-wide text-brand-dark">On-brand rewrite</span><button data-copy-rewrite class="text-xs text-brand font-semibold">Copy</button></div><p class="text-sm whitespace-pre-wrap" id="checkRewrite">${esc(res.rewrite)}</p></div>
+    </div>` : ""}`);
+}
+
+function playbookDocHTML(r) {
+  const li = arr => arr.map(x => `<li>${esc(x)}</li>`).join("");
+  return `<h1>${esc(r.brand_name || "Brand")} — Voice Playbook</h1>
+    <p class="muted">${esc(r.essence)}</p>
+    <h2>How the brand sounds</h2><p>${esc(r.voice_summary)}</p>
+    ${r.personality.length ? `<p><b>Personality:</b> ${esc(r.personality.join(", "))}</p>` : ""}
+    ${r.audience ? `<h2>Audience</h2><p>${esc(r.audience)}</p>` : ""}
+    ${r.value_props.length ? `<h2>Core messages</h2><ul>${li(r.value_props)}</ul>` : ""}
+    ${r.dos.length ? `<h2>Do — sound like this</h2><ul>${li(r.dos)}</ul>` : ""}
+    ${r.donts.length ? `<h2>Don't</h2><ul>${li(r.donts)}</ul>` : ""}
+    ${r.sample_caption ? `<h2>Sample caption</h2><p>${esc(r.sample_caption)}</p>` : ""}
+    ${r.opportunities.length ? `<h2>Opportunities</h2><ul>${li(r.opportunities)}</ul>` : ""}`;
+}
+
+// Rebind the pack + checker controls (used after in-place updates too).
+function wireLearnDynamic() {
+  const pk = $("[data-learn-pack]"); if (pk) pk.onclick = runStarter;
+  $$("[data-copy-pack]").forEach(b => b.onclick = () => { const el = $(`[data-packval="${b.dataset.copyPack}"]`); if (el) { navigator.clipboard.writeText(el.textContent); b.textContent = "Copied ✓"; setTimeout(() => b.textContent = "Copy", 1400); } });
+  const ct = $("#checkText"); if (ct) ct.oninput = () => state.learn.checkText = ct.value;
+  const ck = $("[data-learn-check]"); if (ck) ck.onclick = runCheck;
+  const cr = $("[data-copy-rewrite]"); if (cr) cr.onclick = () => { navigator.clipboard.writeText($("#checkRewrite").textContent); cr.textContent = "Copied ✓"; setTimeout(() => cr.textContent = "Copy", 1400); };
+}
+function refreshLearnPack() { const w = $("#learnPackWrap"); if (w) { w.innerHTML = learnPackSection(); wireLearnDynamic(); } else render(); }
+function refreshLearnCheck() { const w = $("#learnCheckWrap"); if (w) { w.innerHTML = learnCheckSection(); wireLearnDynamic(); } else render(); }
+
+async function runStarter() {
+  const L = state.learn;
+  if (!L.result || L.packLoading) return;
+  L.packLoading = true; refreshLearnPack();
+  try {
+    const d = await api("/api/brand/starter", { method: "POST", body: JSON.stringify({ breakdown: L.result }) });
+    L.pack = d.pack;
+  } catch (ex) { toast("⚠ " + ex.message); }
+  L.packLoading = false; refreshLearnPack();
+}
+
+async function runCheck() {
+  const L = state.learn;
+  if (!L.checkText.trim() || L.checkLoading) return;
+  L.checkLoading = true; refreshLearnCheck();
+  try {
+    const d = await api("/api/brand/check", { method: "POST", body: JSON.stringify({ breakdown: L.result, copy: L.checkText.trim() }) });
+    L.checkResult = d.result;
+  } catch (ex) { toast("⚠ " + ex.message); }
+  L.checkLoading = false; refreshLearnCheck();
+}
+
+async function runLearn() {
+  const L = state.learn;
+  if (!L.files.length && !L.text.trim() && !L.url.trim()) return;
+  L.loading = true; render();
+  try {
+    const fd = new FormData();
+    L.files.forEach(f => fd.append("files", f));
+    if (L.text.trim()) fd.append("text", L.text.trim());
+    if (L.url.trim()) fd.append("url", L.url.trim());
+    if (L.note.trim()) fd.append("note", L.note.trim());
+    const res = await fetch("/api/brand/learn", { method: "POST", body: fd });
+    const d = await res.json().catch(() => ({}));
+    if (res.status === 402) { L.loading = false; return openUpgrade(d.error); }
+    if (!res.ok) throw new Error(d.error || "Analysis failed");
+    L.result = d.breakdown; L.loading = false; render();
+    if (d.demo) toast("Demo breakdown — AI is offline on this machine");
+  } catch (ex) { L.loading = false; render(); toast("⚠ " + ex.message); }
+}
+
+async function saveLearnedBrand() {
+  const r = state.learn.result; if (!r) return;
+  state.learn.saving = true; render();
+  try {
+    const brand = await api("/api/brands", {
+      method: "POST", body: JSON.stringify({
+        name: r.brand_name || "My Brand", industry: r.industry || "", audience: r.audience || "",
+        description: r.voice_summary || "", personality: (r.personality || []).join(", "), samples: r.sample_caption || "",
+      }),
+    });
+    if (brand && brand.id) state.activeBrandId = brand.id;
+    if ((state.config.tones || []).some(t => t.key === r.closest_tone)) state.tone = r.closest_tone;
+    state.brands = await api("/api/brands");
+    toast("Saved as a brand voice ✓");
+    state.learn.saving = false;
+    goto("brands");
+  } catch (ex) {
+    state.learn.saving = false; render();
+    if (ex.data && ex.data.upgrade) openUpgrade(ex.message); else toast("⚠ " + ex.message);
+  }
+}
+
 /* ============================== STUDIO ============================== */
 
 function studioView() {
@@ -1140,7 +1364,7 @@ function outputPanel() {
     <div class="px-5 py-3.5 border-b border-line flex items-center gap-2">
       <span class="text-sm font-semibold">Output</span>
       <span id="streamDot" class="hidden text-brand text-[10px] typing"><span>●</span><span>●</span><span>●</span></span>
-      <span class="ml-auto text-[11px] text-faint">${state.config.live?'Live · '+state.config.model:'Demo'}</span></div>
+      </div>
     <div id="output" class="p-5 flex-1 overflow-y-auto scroll-thin space-y-3">${state.cards?'':emptyOutput()}</div></div>`;
 }
 function emptyOutput() {
@@ -1733,6 +1957,21 @@ function wire() {
     if (state.home) fetchSuggestion(state.suggestIdx || 0);  // load today's bespoke idea
   }
 
+  if (state.view === "learn") {
+    const en = () => { const b = $("#learnBtn"); if (b) b.disabled = !(state.learn.files.length || state.learn.text.trim() || state.learn.url.trim()); };
+    const fi = $("#learnFile"); if (fi) fi.onchange = e => { state.learn.files = [...state.learn.files, ...e.target.files]; render(); };
+    $$("[data-learn-rmfile]").forEach(b => b.onclick = () => { state.learn.files.splice(+b.dataset.learnRmfile, 1); render(); });
+    const tx = $("#learnText"); if (tx) tx.oninput = () => { state.learn.text = tx.value; en(); };
+    const ur = $("#learnUrl"); if (ur) ur.oninput = () => { state.learn.url = ur.value; en(); };
+    const nt = $("#learnNote"); if (nt) nt.oninput = () => state.learn.note = nt.value;
+    const lb = $("#learnBtn"); if (lb) lb.onclick = runLearn;
+    const sv = $("[data-learn-save]"); if (sv) sv.onclick = saveLearnedBrand;
+    const ag = $("[data-learn-again]"); if (ag) ag.onclick = () => { state.learn = LEARN_INIT(); render(); };
+    const cp = $("[data-learn-copy]"); if (cp) cp.onclick = () => { navigator.clipboard.writeText(state.learn.result.sample_caption); cp.textContent = "Copied ✓"; setTimeout(() => cp.textContent = "Copy", 1400); };
+    const pb = $("[data-learn-playbook]"); if (pb) pb.onclick = () => { const r = state.learn.result; downloadDoc(`Vertil ${r.brand_name || "brand"} Playbook.doc`, `${r.brand_name || "Brand"} Voice Playbook`, playbookDocHTML(r)); toast("Playbook downloaded"); };
+    wireLearnDynamic();
+  }
+
   if (state.view === "studio") {
     const bs = $("#brandSelect"); if (bs) bs.onchange = e => state.activeBrandId = +e.target.value;
     $$("[data-tone]").forEach(b => b.onclick = () => { state.tone = b.dataset.tone; render(); });
@@ -1890,21 +2129,187 @@ async function generate() {
   finally { state.generating=false; const d=$("#streamDot"); if(d)d.classList.add("hidden"); const btn=$("#genBtn"); if(btn){btn.disabled=false;btn.innerHTML=ic("spark","w-4 h-4")+" Generate";} }
 }
 
+/* ── Studio Output Preview ──────────────────────────────────────────────
+   Renders generated copy inside a phone-bezel mockup of its destination
+   format (feed post, chat, messages, email, product, ad, pro post, short
+   video). Per-card toggle: each result flips between text and preview and
+   can be viewed across other formats. Generic chrome — no third-party logos. */
+const PV = { teal: "#0e9488", dark: "#0c7a70", tint: "#e4f3f1" };
+const PV_WRAP = "width:100%;height:100%;display:flex;flex-direction:column;background:#fff;font-family:-apple-system,system-ui";
+const PV_TYPES = [
+  { k: "ig", label: "Feed post" }, { k: "wa", label: "Chat" }, { k: "sms", label: "Messages" },
+  { k: "email", label: "Email" }, { k: "product", label: "Product" }, { k: "ad", label: "Ad" },
+  { k: "linkedin", label: "Pro post" }, { k: "tiktok", label: "Short video" },
+];
+const PV_BY_CT = {
+  instagram_caption: "ig", tiktok_caption: "tiktok", tweet: "linkedin",
+  whatsapp_broadcast: "wa", product_description: "product", sms: "sms",
+  ad_copy: "ad", email: "email",
+};
+const PV_STYLE = `<style>
+@keyframes pvPop{from{opacity:0;transform:scale(.92) translateY(8px)}to{opacity:1;transform:none}}
+@keyframes pvFade{from{opacity:0}to{opacity:1}}
+.pv-pop{animation:pvPop .34s cubic-bezier(.2,.7,.2,1) both}
+.pv-fade{animation:pvFade .22s ease both}
+.pv-chip{transition:border-color .15s,background .15s,color .15s}
+</style>`;
+
+function pvAvatar(label, size = 34, bg = PV.teal) {
+  return `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${bg};color:#fff;display:flex;align-items:center;justify-content:center;font-size:${size * 0.4}px;font-weight:700;flex-shrink:0">${esc(label)}</div>`;
+}
+function pvImg(ratio = "1/1", label = "") {
+  return `<div style="width:100%;aspect-ratio:${ratio};background:linear-gradient(135deg,${PV.tint},#cfeae6);display:flex;align-items:center;justify-content:center;position:relative;flex-shrink:0">
+    <svg viewBox="0 0 24 24" width="15%" height="15%" fill="none" stroke="${PV.dark}" stroke-width="1.4" style="opacity:.55"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10.5" r="1.8"/><path d="m3 16 5.5-5 4 3.5L18 10l3 4"/></svg>
+    ${label ? `<span style="position:absolute;bottom:10px;left:10px;font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:${PV.dark};background:rgba(255,255,255,.7);padding:3px 7px;border-radius:6px">${label}</span>` : ""}
+  </div>`;
+}
+function pvIg(text, biz) {
+  const nm = esc(biz || "yourbrand");
+  return `<div style="${PV_WRAP}">
+    <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid #f0f0f0">${pvAvatar((biz || "V").slice(0, 1).toUpperCase())}
+      <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:#111">${nm}</div><div style="font-size:11px;color:#8e8e8e">Sponsored</div></div>
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#111" stroke-width="1.8"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg></div>
+    ${pvImg()}
+    <div style="display:flex;align-items:center;gap:14px;padding:10px 14px 4px">
+      <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="#111" stroke-width="1.7"><path d="M20.8 8.6c0 4.8-8.8 10.4-8.8 10.4S3.2 13.4 3.2 8.6a4.8 4.8 0 0 1 8.8-2.6 4.8 4.8 0 0 1 8.8 2.6Z"/></svg>
+      <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="#111" stroke-width="1.7"><path d="M21 11.5a8.5 8.5 0 0 1-12.4 7.5L3 20l1.2-5.4A8.5 8.5 0 1 1 21 11.5Z"/></svg>
+      <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="#111" stroke-width="1.7"><path d="m3 12 18-8-7 18-3-7-8-3Z"/></svg>
+      <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="#111" stroke-width="1.7" style="margin-left:auto"><path d="M6 3.5h12v17l-6-4-6 4Z"/></svg></div>
+    <div style="padding:2px 14px 16px;font-size:13px;line-height:1.5">
+      <div style="font-weight:700;margin-bottom:4px">128 likes</div>
+      <div><span style="font-weight:700">${nm}</span> <span style="color:#222">${esc(text)}</span></div>
+      <div style="color:#8e8e8e;font-size:11px;margin-top:6px;text-transform:uppercase;letter-spacing:.3px">2 hours ago</div></div>
+  </div>`;
+}
+function pvWa(text, biz) {
+  return `<div style="${PV_WRAP};background:#f6f6f4">
+    <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:#fff;border-bottom:1px solid #ececec">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#333" stroke-width="2"><path d="M15 5 8 12l7 7"/></svg>${pvAvatar((biz || "V").slice(0, 1).toUpperCase(), 30)}
+      <div><div style="font-size:13.5px;font-weight:700;color:#111">${esc(biz || "Your business")}</div><div style="font-size:10.5px;color:#8a8a8a">online</div></div></div>
+    <div style="flex:1;padding:14px;display:flex;flex-direction:column;gap:10px">
+      <div style="align-self:flex-start;max-width:72%;background:#fff;border-radius:4px 14px 14px 14px;padding:9px 12px;font-size:12.5px;color:#666;box-shadow:0 1px 1px rgba(0,0,0,.04)">Hi! Saw your post, is this still available?</div>
+      <div style="align-self:flex-end;max-width:78%;background:${PV.teal};color:#fff;border-radius:14px 4px 14px 14px;padding:10px 13px;font-size:13px;line-height:1.5;box-shadow:0 1px 2px rgba(0,0,0,.08)">${esc(text)}</div>
+      <div style="align-self:flex-end;font-size:10px;color:#a3a3a3">Delivered · 9:41 AM</div></div>
+  </div>`;
+}
+function pvSms(text, biz) {
+  return `<div style="${PV_WRAP}">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:14px 14px 10px;border-bottom:1px solid #efefef">${pvAvatar((biz || "V").slice(0, 1).toUpperCase(), 40)}
+      <div style="font-size:12.5px;font-weight:600;color:#111">${esc(biz || "Your business")}</div></div>
+    <div style="flex:1;padding:14px;display:flex;flex-direction:column;gap:8px">
+      <div style="align-self:center;font-size:10px;color:#a3a3a3;margin-bottom:4px">Today 9:41 AM</div>
+      <div style="align-self:flex-start;max-width:80%;background:#eee;color:#111;border-radius:16px;padding:9px 13px;font-size:13px;line-height:1.5">${esc(text)}</div></div>
+  </div>`;
+}
+function pvEmail(text, biz) {
+  const subject = esc((text.split(/[.!\n]/)[0] || "").slice(0, 46)), body = esc(text), nm = esc(biz || "Your business");
+  return `<div style="${PV_WRAP}">
+    <div style="padding:14px 16px;border-bottom:1px solid #efefef;font-size:15px;font-weight:700;color:#111">Inbox</div>
+    <div style="display:flex;gap:10px;padding:12px 16px;border-bottom:1px solid #f4f4f4">${pvAvatar((biz || "V").slice(0, 1).toUpperCase(), 32)}
+      <div style="flex:1;min-width:0"><div style="display:flex;justify-content:space-between"><span style="font-size:12.5px;font-weight:700;color:#111">${nm}</span><span style="font-size:10px;color:#a3a3a3">9:41 AM</span></div>
+        <div style="font-size:12px;font-weight:600;color:#333;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${subject}</div>
+        <div style="font-size:11.5px;color:#999;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${body}</div></div></div>
+    <div style="display:flex;gap:10px;padding:12px 16px;border-bottom:1px solid #f4f4f4;opacity:.4">${pvAvatar("K", 32, "#c9c9c9")}
+      <div style="flex:1;min-width:0"><div style="display:flex;justify-content:space-between"><span style="font-size:12.5px;font-weight:700;color:#111">Kemi A.</span><span style="font-size:10px;color:#a3a3a3">9:41 AM</span></div>
+        <div style="font-size:12px;font-weight:600;color:#333;margin-top:2px">Re: order update</div>
+        <div style="font-size:11.5px;color:#999;margin-top:1px">Thanks so much, received!</div></div></div>
+    <div style="margin:14px;padding:14px;border:1px solid #eee;border-radius:12px;background:#fafafa">
+      <div style="font-size:11px;color:#999;margin-bottom:6px">Subject</div>
+      <div style="font-size:13px;font-weight:700;color:#111;margin-bottom:10px">${subject}</div>
+      <div style="font-size:12.5px;color:#333;line-height:1.6">${body}</div></div>
+  </div>`;
+}
+function pvProduct(text, biz) {
+  return `<div style="${PV_WRAP}">${pvImg("4/3", "Product")}
+    <div style="padding:14px">
+      <div style="font-size:11px;color:${PV.dark};font-weight:700;text-transform:uppercase;letter-spacing:.4px">${esc(biz || "Your business")}</div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:4px"><span style="font-size:15px;font-weight:700;color:#111">Featured item</span><span style="font-size:15px;font-weight:700;color:${PV.dark}">₦24,500</span></div>
+      <p style="font-size:12.5px;line-height:1.6;color:#444;margin-top:8px">${esc(text)}</p>
+      <div style="margin-top:12px;background:${PV.teal};color:#fff;text-align:center;padding:11px 0;border-radius:10px;font-size:13px;font-weight:700">Add to cart</div></div>
+  </div>`;
+}
+function pvAd(text, biz) {
+  return `<div style="${PV_WRAP}">
+    <div style="display:flex;align-items:center;gap:8px;padding:12px 14px">${pvAvatar((biz || "V").slice(0, 1).toUpperCase(), 28)}<span style="font-size:12px;font-weight:700;color:#111">${esc(biz || "yourbrand")}</span><span style="font-size:10px;color:#a3a3a3">· Sponsored</span></div>
+    ${pvImg("1.9/1")}
+    <div style="padding:14px"><p style="font-size:12.5px;line-height:1.6;color:#333;margin:0">${esc(text)}</p>
+      <div style="margin-top:10px;background:#eef2f1;color:${PV.dark};text-align:center;padding:9px 0;border-radius:8px;font-size:12px;font-weight:700">Learn more</div></div>
+  </div>`;
+}
+function pvLinkedin(text, biz) {
+  const initials = (biz || "V").slice(0, 1).toUpperCase();
+  const act = (d, l) => `<span style="display:flex;align-items:center;gap:5px;font-size:11px;color:#666;font-weight:600"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#666" stroke-width="1.8"><path d="${d}"/></svg>${l}</span>`;
+  return `<div style="${PV_WRAP}">
+    <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid #f0f0f0">
+      <div style="width:40px;height:40px;border-radius:8px;background:${PV.teal};color:#fff;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;flex-shrink:0">${initials}</div>
+      <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:#111">${esc(biz || "Your business")}</div><div style="font-size:10.5px;color:#8e8e8e">1,204 followers · 2h</div></div>
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#111" stroke-width="1.8"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg></div>
+    <div style="padding:12px 14px 4px;font-size:12.5px;line-height:1.6;color:#222">${esc(text)}</div>
+    ${pvImg("1.7/1")}
+    <div style="display:flex;align-items:center;gap:18px;padding:10px 14px;border-top:1px solid #f0f0f0;margin-top:4px">
+      ${act("M7 11v9H4v-9h3Zm0 0 4.5-8a2 2 0 0 1 3.6 1.2L14 8h4.5A2 2 0 0 1 20.4 11l-1.8 7a2 2 0 0 1-2 1.5H7", "Like")}
+      ${act("M21 11.5a8.5 8.5 0 0 1-12.4 7.5L3 20l1.2-5.4A8.5 8.5 0 1 1 21 11.5Z", "Comment")}
+      ${act("M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v14", "Repost")}</div>
+  </div>`;
+}
+function pvTiktok(text, biz) {
+  const initials = (biz || "V").slice(0, 1).toUpperCase();
+  const handle = esc("@" + (biz || "yourbrand").replace(/\s+/g, "").toLowerCase());
+  const rail = ["M7 11v9H4v-9h3Zm0 0 4.5-8a2 2 0 0 1 3.6 1.2L14 8h4.5A2 2 0 0 1 20.4 11l-1.8 7a2 2 0 0 1-2 1.5H7", "M21 11.5a8.5 8.5 0 0 1-12.4 7.5L3 20l1.2-5.4A8.5 8.5 0 1 1 21 11.5Z", "M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v14"]
+    .map(d => `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" stroke-width="1.7"><path d="${d}"/></svg>`).join("");
+  return `<div style="${PV_WRAP};background:#161616;position:relative;color:#fff">
+    <div style="flex:1;background:linear-gradient(160deg,#1f2b29,#0e1615);display:flex;align-items:center;justify-content:center;position:relative">
+      <svg viewBox="0 0 24 24" width="15%" height="15%" fill="none" stroke="rgba(255,255,255,.5)" stroke-width="1.4"><path d="M9 7v10l8-5-8-5Z"/></svg>
+      <div style="position:absolute;right:12px;bottom:90px;display:flex;flex-direction:column;align-items:center;gap:16px">
+        <div style="width:34px;height:34px;border-radius:50%;background:${PV.teal};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700">${initials}</div>${rail}</div>
+      <div style="position:absolute;left:14px;right:70px;bottom:20px">
+        <div style="font-size:12.5px;font-weight:700;margin-bottom:6px">${handle}</div>
+        <div style="font-size:12px;line-height:1.5;color:rgba(255,255,255,.9)">${esc(text)}</div></div></div>
+  </div>`;
+}
+const PV_MOCK = { ig: pvIg, wa: pvWa, sms: pvSms, email: pvEmail, product: pvProduct, ad: pvAd, linkedin: pvLinkedin, tiktok: pvTiktok };
+function pvPhone(inner, width = 208) {
+  const r = width / 402, h = Math.round(width * 874 / 402);
+  return `<div style="width:${width}px;height:${h}px;overflow:hidden;border-radius:${Math.round(48 * r)}px;position:relative;background:#F2F2F7;box-shadow:0 20px 40px rgba(0,0,0,.16),0 0 0 1px rgba(0,0,0,.10)">
+    <div style="position:absolute;top:${Math.round(11 * r)}px;left:50%;transform:translateX(-50%);width:${Math.round(126 * r)}px;height:${Math.round(37 * r)}px;border-radius:24px;background:#000;z-index:50"></div>
+    <div style="position:absolute;inset:0;padding-top:${Math.round(58 * r)}px;padding-bottom:${Math.round(24 * r)}px;box-sizing:border-box;overflow:hidden">
+      <div style="width:402px;height:${874 - 58 - 24}px;flex-shrink:0;transform:scale(${r});transform-origin:top left;overflow:hidden">${inner}</div></div>
+    <div style="position:absolute;bottom:0;left:0;right:0;z-index:60;height:${Math.round(28 * r)}px;display:flex;justify-content:center;align-items:flex-end;padding-bottom:6px"><div style="width:${Math.round(139 * r)}px;height:4px;border-radius:100px;background:rgba(0,0,0,.25)"></div></div>
+  </div>`;
+}
+function pvCardPreview(c, i) {
+  const biz = (state.brands.find(b => b.id === state.activeBrandId) || {}).name || "";
+  const type = c.previewType || PV_BY_CT[state.contentType] || "ig";
+  const mock = (PV_MOCK[type] || pvIg)(c.text, biz);
+  return `<div class="pv-fade" style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:6px 0 2px">
+    <div class="flex flex-wrap justify-center gap-1.5">
+      ${PV_TYPES.map(t => `<button data-pvt="${i}" data-pvtk="${t.k}" class="pv-chip text-[11px] px-2 py-1 rounded-full border ${t.k === type ? "border-brand/50 bg-brand-tint text-brand-dark font-semibold" : "border-line bg-white text-muted hover:border-brand/40"}">${t.label}</button>`).join("")}
+    </div>
+    <div class="pv-pop">${pvPhone(mock)}</div>
+  </div>`;
+}
+
 function renderCards() {
   const out = $("#output"); if (!out || !state.cards) return;
   const presets = state.config.refine_presets;
-  out.innerHTML = state.cards.map((c,i)=>`
+  out.innerHTML = PV_STYLE + state.cards.map((c,i)=>`
     <div class="fade-up bg-paper border border-line rounded-xl2 p-4" style="animation-delay:${i*40}ms" data-cardwrap="${i}">
       <div class="flex items-center justify-between mb-2">
         <span class="text-xs font-semibold text-brand-dark">Option ${i+1}</span>
         <div class="flex items-center gap-1">
           <button data-fb="up" data-i="${i}" title="On-brand — learn from this" class="w-7 h-7 grid place-items-center rounded-lg border border-line bg-white text-muted hover:border-brand/40 hover:text-brand">${ic("thumb_up","w-3.5 h-3.5")}</button>
           <button data-fb="down" data-i="${i}" title="Off-brand" class="w-7 h-7 grid place-items-center rounded-lg border border-line bg-white text-muted hover:border-rose-300 hover:text-rose-500">${ic("thumb_down","w-3.5 h-3.5")}</button>
+          <div class="inline-flex items-center rounded-lg border border-line bg-white p-0.5 mr-0.5">
+            <button data-pvset="${i}" data-pvon="0" class="text-xs px-2.5 py-1 rounded-md transition ${!c.preview?'bg-brand-tint text-brand-dark font-semibold':'text-muted hover:text-brand-dark'}">Text</button>
+            <button data-pvset="${i}" data-pvon="1" class="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md transition ${c.preview?'bg-brand-tint text-brand-dark font-semibold':'text-muted hover:text-brand-dark'}">${ic("preview","w-3.5 h-3.5")} Preview</button>
+          </div>
           <button data-edit-c="${i}" class="text-xs px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand/40">${c.editing?'Done':'Edit'}</button>
           <button data-star="${i}" class="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand/40">${ic("save","w-3.5 h-3.5")} Save</button>
           <button data-copy="${i}" class="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand/40">${ic("copy","w-3.5 h-3.5")} Copy</button>
         </div></div>
-      ${c.editing
+      ${c.preview
+        ? pvCardPreview(c, i)
+        : c.editing
         ? `<textarea data-ta="${i}" rows="5" class="w-full bg-white border border-line rounded-lg px-3 py-2 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-brand/30">${esc(c.text)}</textarea>`
         : `<div class="text-sm whitespace-pre-wrap leading-relaxed ${c.busy?'opacity-40':''}">${esc(c.text)}</div>`}
       <div class="flex flex-wrap items-center gap-1.5 mt-3 pt-2.5 border-t border-line">
@@ -1920,6 +2325,8 @@ function renderCards() {
   $$("[data-star]",out).forEach(b=>b.onclick=()=>saveFavorite(+b.dataset.star));
   $$("[data-fb]",out).forEach(b=>b.onclick=()=>sendFeedback(+b.dataset.i, b.dataset.fb, b));
   $$("[data-refine]",out).forEach(b=>b.onclick=()=>refineCard(+b.dataset.refine, b.dataset.instr));
+  $$("[data-pvset]",out).forEach(b=>b.onclick=()=>{ const i=+b.dataset.pvset, c=state.cards[i], on=b.dataset.pvon==="1"; if(c.preview===on)return; c.preview=on; if(on&&!c.previewType)c.previewType=PV_BY_CT[state.contentType]||"ig"; renderCards(); });
+  $$("[data-pvt]",out).forEach(b=>b.onclick=()=>{ state.cards[+b.dataset.pvt].previewType=b.dataset.pvtk; renderCards(); });
 }
 
 async function refineCard(i, instruction) {

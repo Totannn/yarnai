@@ -8,14 +8,18 @@ Paystack checkout. Generation streams from Claude (claude-opus-4-8) over SSE.
 
 from __future__ import annotations
 
+import base64
 import datetime
 import functools
 import hashlib
 import hmac
+import io
 import json
 import os
+import re
 import secrets
 import time
+from html.parser import HTMLParser
 
 import httpx
 from dotenv import load_dotenv
@@ -85,8 +89,9 @@ PLANS = {
     },
     "pro": {
         "name": "Pro", "price": 45000, "gen_limit": None, "brands": 10, "calendar": True,
+        "brand_learn": True,
         "blurb": "Power user / team",
-        "features": ["Unlimited generations", "10 brand voices", "Everything in Growth", "Priority generation"],
+        "features": ["Unlimited generations", "10 brand voices", "Learn My Brand (AI)", "Everything in Growth"],
     },
 }
 PLAN_ORDER = ["free", "starter", "growth", "pro"]
@@ -112,6 +117,9 @@ def is_admin(user) -> bool:
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "yarn-ai-dev-secret-change-me")
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16MB upload cap (Learn My Brand)
+# Reload templates on change during local dev (no effect on the compiled prod behaviour we care about).
+app.config["TEMPLATES_AUTO_RELOAD"] = os.getenv("TEMPLATES_AUTO_RELOAD", "1") == "1"
 _client = None
 
 
@@ -120,8 +128,12 @@ def get_client():
     if not LIVE:
         return None
     if _client is None:
-        import anthropic
-        _client = anthropic.Anthropic(api_key=API_KEY)
+        try:
+            import anthropic
+            _client = anthropic.Anthropic(api_key=API_KEY)
+        except Exception as exc:  # e.g. a blocked native dep locally → fall back to demo mode
+            print(f"[Vertil] anthropic unavailable: {exc}", flush=True)
+            return None
     return _client
 
 
@@ -192,6 +204,7 @@ def usage_payload(user) -> dict:
         "brands_used": db.count_brands(user["id"]),
         "brands_limit": p["brands"],
         "calendar": p["calendar"],
+        "brand_learn": bool(p.get("brand_learn")),
     }
 
 
@@ -295,7 +308,7 @@ def service_worker():
 @app.get("/api/config")
 def config():
     return jsonify({
-        "live": LIVE, "model": MODEL,
+        "live": LIVE,
         "tones": voice.list_tones(),
         "content_types": voice.list_content_types(),
         "cadences": voice.list_cadences(),
@@ -722,6 +735,243 @@ def brand_from_posts(user):
     return jsonify(profile)
 
 
+# --------------------------- Learn My Brand (Pro) ------------------------- #
+
+_IMG_TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+              "gif": "image/gif", "webp": "image/webp"}
+
+
+def _extract_upload(file):
+    """Turn an uploaded file into (markdown_text, image_block). Text-based files
+    are converted to markdown locally (cheap); images become a vision block."""
+    name = (file.filename or "").lower()
+    ext = name.rsplit(".", 1)[-1] if "." in name else ""
+    data = file.read()
+    if ext in _IMG_TYPES:
+        b64 = base64.b64encode(data).decode()
+        return "", {"type": "image", "source": {"type": "base64", "media_type": _IMG_TYPES[ext], "data": b64}}
+    if ext == "pdf":
+        import pymupdf
+        import pymupdf4llm
+        doc = pymupdf.open(stream=data, filetype="pdf")
+        return pymupdf4llm.to_markdown(doc), None
+    if ext == "docx":
+        import docx
+        d = docx.Document(io.BytesIO(data))
+        parts = [p.text for p in d.paragraphs if p.text.strip()]
+        for t in d.tables:
+            for row in t.rows:
+                cells = [c.text.strip() for c in row.cells if c.text.strip()]
+                if cells:
+                    parts.append(" | ".join(cells))
+        return "\n".join(parts), None
+    return data.decode("utf-8", errors="ignore"), None  # txt / md / other
+
+
+class _HTMLText(HTMLParser):
+    _SKIP = {"script", "style", "noscript", "svg", "head"}
+    _BREAK = {"p", "br", "div", "li", "h1", "h2", "h3", "h4", "tr", "section", "article"}
+
+    def __init__(self):
+        super().__init__()
+        self._skip = 0
+        self.out = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self._SKIP:
+            self._skip += 1
+        elif tag in self._BREAK:
+            self.out.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in self._SKIP and self._skip:
+            self._skip -= 1
+
+    def handle_data(self, data):
+        if not self._skip:
+            t = data.strip()
+            if t:
+                self.out.append(t + " ")
+
+
+def _fetch_url_text(url):
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    r = httpx.get(url, timeout=20, follow_redirects=True,
+                  headers={"User-Agent": "Mozilla/5.0 (compatible; VertilBot/1.0)"})
+    r.raise_for_status()
+    body = r.text
+    if "html" in r.headers.get("content-type", "") or "<html" in body[:800].lower():
+        p = _HTMLText()
+        try:
+            p.feed(body)
+        except Exception:
+            pass
+        body = "".join(p.out)
+    return re.sub(r"\n\s*\n+", "\n\n", body).strip()
+
+
+def _demo_starter():
+    return {
+        "bio": "Hot home-style Naija food, delivered fast 🍲 Order on WhatsApp — we go bring am hot.",
+        "taglines": ["Home cooking, no stress", "Chop like say na your mama cook am", "Fresh. Fast. Full belle."],
+        "captions": [
+            "Aunty, hunger no be your mate today 😤 Fresh jollof + peppered chicken dey ready — tap order, we deliver am hot. 🚴",
+            "Payday don land? Treat yourself small 🍗 Our special combo dey wait. Transfer or POS, your choice.",
+            "That smell wey dey come from our kitchen? Na love 🥘 Order now before e finish."],
+        "whatsapp": "Hello 👋 Today's special: Jollof + peppered chicken for ₦3,500. Reply ORDER and we go deliver am hot to you. 🔥",
+    }
+
+
+def _demo_check(copy):
+    return {"score": 62, "verdict": "Close, but it sounds a bit generic — it needs more of the brand's warm, cheeky Naija flavour.",
+            "issues": ["Too formal for the brand's warm voice", "No local flavour or Pidgin lift", "CTA is weak — no urgency"],
+            "rewrite": (copy.strip()[:120] + " — but make am warm: 'Aunty, this one na for you 😍 Order now, we go deliver am hot!'")}
+
+
+def _demo_brand_learn():
+    return {
+        "brand_name": "Ola's Kitchen", "essence": "Home-style Naija comfort food, cooked with love and delivered hot.",
+        "industry": "Food & drinks", "audience": "Busy young Lagos professionals who crave real home cooking without the stress.",
+        "voice_summary": "Warm, familiar and a little cheeky — like a favourite aunty who happens to run the best kitchen on your street.",
+        "closest_tone": "pidgin",
+        "personality": ["Warm", "Cheeky", "Trustworthy", "Proudly local", "Generous"],
+        "value_props": ["Real home-style flavour", "Hot, fast delivery", "Fair Naira pricing", "Made fresh, never frozen"],
+        "dos": ["Talk like a warm aunty", "Use light Pidgin flavour", "Lead with the food, not the discount", "Reference Lagos life and payday moments"],
+        "donts": ["Don't sound corporate or stiff", "Don't over-use slang to the point of confusion", "Don't bury the offer in long text"],
+        "sample_caption": "Aunty, you don chop today? 🍲 Fresh jollof + peppered chicken dey ready — order now, we go deliver am hot before hunger finish you. Transfer or POS, your choice!",
+        "strengths": ["Clear, appetising brand personality", "Strong local identity"],
+        "opportunities": ["Build a weekly payday combo offer", "Turn happy-customer photos into weekly social proof posts"],
+    }
+
+
+@app.post("/api/brand/learn")
+@auth
+def brand_learn(user):
+    if not plan_of(user).get("brand_learn"):
+        return jsonify({"error": "Learn My Brand is a Pro feature. Upgrade to unlock it.", "upgrade": True}), 402
+
+    note = (request.form.get("note") or "").strip()
+    parts, images = [], []
+    pasted = (request.form.get("text") or "").strip()
+    if pasted:
+        parts.append(pasted)
+    url = (request.form.get("url") or "").strip()
+    if url:
+        try:
+            txt = _fetch_url_text(url)
+        except Exception:
+            return jsonify({"error": "Couldn't read that URL — check it's a public web page and try again."}), 400
+        if txt.strip():
+            parts.append(f"# From {url}\n\n{txt.strip()}")
+    for f in request.files.getlist("files"):
+        if not f or not f.filename:
+            continue
+        try:
+            md, img = _extract_upload(f)
+        except Exception:
+            return jsonify({"error": f"Couldn't read {f.filename}. Try a different file."}), 400
+        if img:
+            images.append(img)
+        elif md and md.strip():
+            parts.append(f"# From {f.filename}\n\n{md.strip()}")
+
+    markdown = "\n\n".join(parts).strip()
+    if not markdown and not images:
+        return jsonify({"error": "Upload a document/image or paste some text about your brand."}), 400
+    if len(markdown) > 40000:  # cap to bound token cost
+        markdown = markdown[:40000] + "\n\n[…truncated…]"
+
+    client = get_client()
+    if client is None:  # local/no-AI mode → demo so the flow is testable
+        return jsonify({"breakdown": _demo_brand_learn(), "demo": True})
+
+    user_text = voice.build_brand_learn_user(markdown or "(the brand material is the attached image)", note)
+    content = images + [{"type": "text", "text": user_text}]
+    try:
+        with client.messages.stream(
+            model=MODEL, max_tokens=3000, thinking={"type": "adaptive"},
+            output_config={"effort": "medium"},
+            system=voice.build_brand_learn_system(),
+            messages=[{"role": "user", "content": content}],
+        ) as s:
+            text = "".join(s.text_stream)
+            u = s.get_final_message().usage
+        breakdown = voice.parse_brand_learn_json(text)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    if not breakdown:
+        return jsonify({"error": "Could not analyse the brand — try a clearer document."}), 502
+
+    db.save_generation(user["id"], None, "brand_learn", "",
+                       breakdown.get("brand_name") or "brand", [breakdown.get("essence", "")],
+                       model=MODEL, input_tokens=u.input_tokens, output_tokens=u.output_tokens,
+                       cost=cost_naira(MODEL, u.input_tokens, u.output_tokens))
+    return jsonify({"breakdown": breakdown})
+
+
+@app.post("/api/brand/starter")
+@auth
+def brand_starter(user):
+    if not plan_of(user).get("brand_learn"):
+        return jsonify({"error": "Learn My Brand is a Pro feature.", "upgrade": True}), 402
+    bd = (request.get_json(force=True) or {}).get("breakdown") or {}
+    if not bd.get("essence"):
+        return jsonify({"error": "Run a brand analysis first."}), 400
+    client = get_client()
+    if client is None:
+        return jsonify({"pack": _demo_starter(), "demo": True})
+    try:
+        with client.messages.stream(
+            model=MODEL, max_tokens=1500, thinking={"type": "adaptive"}, output_config={"effort": "low"},
+            system=voice.build_starter_system(bd), messages=[{"role": "user", "content": voice.build_starter_user()}],
+        ) as s:
+            text = "".join(s.text_stream)
+            u = s.get_final_message().usage
+        pack = voice.parse_starter_json(text)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    if not pack:
+        return jsonify({"error": "Could not generate the pack — try again."}), 502
+    db.save_generation(user["id"], None, "brand_learn", "", "starter pack", ["pack"], model=MODEL,
+                       input_tokens=u.input_tokens, output_tokens=u.output_tokens,
+                       cost=cost_naira(MODEL, u.input_tokens, u.output_tokens))
+    return jsonify({"pack": pack})
+
+
+@app.post("/api/brand/check")
+@auth
+def brand_check(user):
+    if not plan_of(user).get("brand_learn"):
+        return jsonify({"error": "Learn My Brand is a Pro feature.", "upgrade": True}), 402
+    d = request.get_json(force=True) or {}
+    bd = d.get("breakdown") or {}
+    copy = (d.get("copy") or "").strip()
+    if not copy:
+        return jsonify({"error": "Paste some copy to check."}), 400
+    if not bd.get("essence"):
+        return jsonify({"error": "Run a brand analysis first."}), 400
+    client = get_client()
+    if client is None:
+        return jsonify({"result": _demo_check(copy), "demo": True})
+    try:
+        with client.messages.stream(
+            model=MODEL, max_tokens=1200, thinking={"type": "adaptive"}, output_config={"effort": "low"},
+            system=voice.build_check_system(bd), messages=[{"role": "user", "content": voice.build_check_user(copy)}],
+        ) as s:
+            text = "".join(s.text_stream)
+            u = s.get_final_message().usage
+        result = voice.parse_check_json(text)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    if not result:
+        return jsonify({"error": "Could not check the copy — try again."}), 502
+    db.save_generation(user["id"], None, "brand_learn", "", "on-brand check", ["check"], model=MODEL,
+                       input_tokens=u.input_tokens, output_tokens=u.output_tokens,
+                       cost=cost_naira(MODEL, u.input_tokens, u.output_tokens))
+    return jsonify({"result": result})
+
+
 # ------------------------------ history ----------------------------------- #
 
 @app.get("/api/history")
@@ -812,7 +1062,7 @@ def generate(user):
         system = voice.build_system_prompt(profile, tone, liked)
         usr = voice.build_user_prompt(content_type, brief, variants)
 
-        yield _sse("start", {"live": LIVE, "model": MODEL})
+        yield _sse("start", {"live": LIVE})
         full = ""
         in_tok = out_tok = 0
         client = get_client()
@@ -1193,7 +1443,7 @@ def billing_simulate(user):
 _TYPE_LABELS = {**{k: v["label"] for k, v in voice.CONTENT_TYPES.items()},
                 "content_calendar": "Content Calendar",
                 "rate_advisor": "Rate Advisor", "personal_brand": "Brand Advisor",
-                "script": "Script Writer"}
+                "script": "Script Writer", "brand_learn": "Learn My Brand"}
 
 
 @app.get("/api/admin/overview")

@@ -282,7 +282,7 @@ def monthly_generation_count(user_id: int) -> int:
     with _conn() as c:
         r = c.execute(
             "SELECT COUNT(*) AS n FROM generations WHERE user_id=? AND created_at>=? "
-            "AND content_type != 'content_calendar'",
+            "AND content_type NOT IN ('content_calendar','brand_learn')",
             (user_id, since),
         ).fetchone()
     return r["n"] if r else 0
@@ -574,7 +574,7 @@ def home_overview(user_id: int) -> dict:
     win30 = now - 30 * 86400          # current quota window
     prev30 = win30 - 30 * 86400        # the 30 days before that
     win14 = now - 14 * 86400
-    REAL = "g.content_type != 'content_calendar'"   # exclude calendar-builder rows
+    REAL = "g.content_type NOT IN ('content_calendar','brand_learn')"   # exclude non-copy rows
     with _conn() as c:
         total = c.execute(
             f"SELECT COUNT(*) AS n FROM generations g WHERE g.user_id=? AND {REAL}",

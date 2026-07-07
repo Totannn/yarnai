@@ -922,3 +922,210 @@ def parse_suggestion_json(text: str) -> dict | None:
     tone = d.get("tone") if d.get("tone") in TONES else None
     ct = d.get("content_type") if d.get("content_type") in CONTENT_TYPES else None
     return {"idea": idea, "tone": tone, "content_type": ct}
+
+
+# --------------------------------------------------------------------------- #
+# Module 9 — Learn My Brand (premium)
+# Reverse-engineer a brand from uploaded material and return a rich breakdown
+# plus a ready-to-save brand voice.
+# --------------------------------------------------------------------------- #
+
+def build_brand_learn_system() -> str:
+    valid_tone = ", ".join(TONES.keys())
+    return f"""You are Vertil's senior brand strategist for the Nigerian market. A business \
+has given you their real material (brand guide, past posts, website copy, product \
+info, a business plan — whatever they had). Your job is to reverse-engineer their \
+brand and hand back a sharp, genuinely useful breakdown — plus a ready-to-use voice \
+so Vertil can write exactly like them from now on.
+
+Read everything carefully. Infer what's implied, don't invent facts that aren't \
+supported. Be specific and Nigerian-market-aware (Naira, local platforms, culture) \
+where relevant. Write like a smart strategist, not a generic AI.
+
+closest_tone MUST be one of these Vertil voice keys: {valid_tone}
+
+# OUTPUT FORMAT
+Return ONLY valid JSON (no markdown, no commentary), exactly this shape:
+{{
+  "brand_name": "best guess at the brand/business name, or empty string",
+  "essence": "the brand in one punchy sentence",
+  "industry": "short industry/category",
+  "audience": "who they're really talking to (one or two sentences)",
+  "voice_summary": "2-3 sentences describing how the brand sounds and feels",
+  "closest_tone": "<one Vertil voice key>",
+  "personality": ["4-6 short trait words/phrases"],
+  "value_props": ["3-5 core messages or things they promise customers"],
+  "dos": ["4-6 concrete voice DO's — how to sound like them"],
+  "donts": ["3-5 voice DON'Ts — what would sound off-brand"],
+  "sample_caption": "one short on-brand Instagram caption you wrote to prove the voice works",
+  "strengths": ["2-4 things the brand is doing well"],
+  "opportunities": ["2-4 specific, actionable opportunities to grow or sharpen the brand"]
+}}"""
+
+
+def build_brand_learn_user(doc_markdown: str, note: str = "") -> str:
+    note_block = f"\n\nWhat the owner told us about the brand: {note.strip()}" if note.strip() else ""
+    return (
+        "Analyse the brand material below and return ONLY the JSON breakdown."
+        f"{note_block}\n\n"
+        "===== BRAND MATERIAL =====\n"
+        f"{doc_markdown}\n"
+        "===== END MATERIAL ====="
+    )
+
+
+def parse_brand_learn_json(text: str) -> dict | None:
+    import json
+
+    raw = text.strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.lower().startswith("json"):
+            raw = raw[4:]
+    a, b = raw.find("{"), raw.rfind("}")
+    if a != -1 and b != -1:
+        raw = raw[a:b + 1]
+    try:
+        d = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(d, dict) or not str(d.get("essence", "")).strip():
+        return None
+
+    def _list(key):
+        v = d.get(key)
+        return [str(x).strip() for x in v if str(x).strip()] if isinstance(v, list) else []
+
+    tone = d.get("closest_tone") if d.get("closest_tone") in TONES else "friendly"
+    return {
+        "brand_name": str(d.get("brand_name", "")).strip(),
+        "essence": str(d.get("essence", "")).strip(),
+        "industry": str(d.get("industry", "")).strip(),
+        "audience": str(d.get("audience", "")).strip(),
+        "voice_summary": str(d.get("voice_summary", "")).strip(),
+        "closest_tone": tone,
+        "personality": _list("personality"),
+        "value_props": _list("value_props"),
+        "dos": _list("dos"),
+        "donts": _list("donts"),
+        "sample_caption": str(d.get("sample_caption", "")).strip(),
+        "strengths": _list("strengths"),
+        "opportunities": _list("opportunities"),
+    }
+
+
+def learned_brand_block(bd: dict) -> str:
+    """Render a Learn-My-Brand breakdown into a compact voice brief for prompts."""
+    tone = bd.get("closest_tone") or "friendly"
+    tone_spec = TONES.get(tone, {}).get("spec", "")
+    lines = [
+        f"Brand: {bd.get('brand_name') or 'the brand'}",
+        f"Essence: {bd.get('essence','')}",
+        f"Industry: {bd.get('industry','')}",
+        f"Audience: {bd.get('audience','')}",
+        f"How it sounds: {bd.get('voice_summary','')}",
+        f"Vertil voice: {tone} — {tone_spec}",
+    ]
+    if bd.get("dos"):
+        lines.append("DO: " + "; ".join(bd["dos"]))
+    if bd.get("donts"):
+        lines.append("DON'T: " + "; ".join(bd["donts"]))
+    return "\n".join(x for x in lines if x.strip().split(": ", 1)[-1])
+
+
+# --- content starter pack (from a learned brand) --------------------------- #
+
+def build_starter_system(bd: dict) -> str:
+    return f"""You are Vertil writing the launch content for a Nigerian brand you have \
+just studied. Everything must sound exactly like this brand and land with a Nigerian \
+audience (Naira, local platforms, culture) where relevant.
+
+# THE BRAND
+{learned_brand_block(bd)}
+
+# OUTPUT FORMAT
+Return ONLY valid JSON (no markdown), exactly:
+{{
+  "bio": "a punchy 150-char social bio for this brand",
+  "taglines": ["3 short taglines"],
+  "captions": ["3 ready-to-post Instagram captions, each with a hook and a soft CTA"],
+  "whatsapp": "one short WhatsApp broadcast message ready to send"
+}}"""
+
+
+def build_starter_user() -> str:
+    return "Write the brand's launch starter pack now. Return ONLY the JSON object."
+
+
+def parse_starter_json(text: str) -> dict | None:
+    import json
+    raw = text.strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.lower().startswith("json"):
+            raw = raw[4:]
+    a, b = raw.find("{"), raw.rfind("}")
+    if a != -1 and b != -1:
+        raw = raw[a:b + 1]
+    try:
+        d = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+    def _list(k):
+        v = d.get(k)
+        return [str(x).strip() for x in v if str(x).strip()] if isinstance(v, list) else []
+    bio = str(d.get("bio", "")).strip()
+    caps = _list("captions")
+    if not bio and not caps:
+        return None
+    return {"bio": bio, "taglines": _list("taglines"), "captions": caps, "whatsapp": str(d.get("whatsapp", "")).strip()}
+
+
+# --- on-brand checker ------------------------------------------------------ #
+
+def build_check_system(bd: dict) -> str:
+    return f"""You are Vertil's brand-voice guardian. You judge whether a piece of copy \
+sounds like this specific brand, and you fix it.
+
+# THE BRAND
+{learned_brand_block(bd)}
+
+# OUTPUT FORMAT
+Return ONLY valid JSON (no markdown), exactly:
+{{
+  "score": 0-100 integer for how on-brand the copy is,
+  "verdict": "one short sentence summarising the judgement",
+  "issues": ["2-4 specific things that are off-brand or could be sharper"],
+  "rewrite": "the same copy rewritten to sound fully on-brand"
+}}"""
+
+
+def build_check_user(copy: str) -> str:
+    return f"Judge and rewrite this copy:\n\"\"\"\n{copy.strip()}\n\"\"\"\nReturn ONLY the JSON object."
+
+
+def parse_check_json(text: str) -> dict | None:
+    import json
+    raw = text.strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.lower().startswith("json"):
+            raw = raw[4:]
+    a, b = raw.find("{"), raw.rfind("}")
+    if a != -1 and b != -1:
+        raw = raw[a:b + 1]
+    try:
+        d = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    try:
+        score = max(0, min(100, int(d.get("score", 0))))
+    except (TypeError, ValueError):
+        score = 0
+    rewrite = str(d.get("rewrite", "")).strip()
+    if not rewrite:
+        return None
+    issues = d.get("issues")
+    issues = [str(x).strip() for x in issues if str(x).strip()] if isinstance(issues, list) else []
+    return {"score": score, "verdict": str(d.get("verdict", "")).strip(), "issues": issues, "rewrite": rewrite}
