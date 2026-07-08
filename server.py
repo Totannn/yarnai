@@ -535,6 +535,86 @@ def _reset_email_html(name: str, link: str) -> str:
     </div>"""
 
 
+def _email_shell(inner: str) -> str:
+    """Shared header/footer wrapper so all Vertil emails look consistent."""
+    return f"""<div style="font-family:'Segoe UI',Arial,sans-serif;max-width:480px;margin:0 auto;color:#13312e">
+      <div style="font-size:22px;font-weight:bold;color:#0e9488;margin-bottom:6px">Vertil</div>
+      {inner}
+      <p style="font-size:12px;color:#9aa8a4;margin-top:24px">Vertil · The Nigerian brand voice engine</p>
+    </div>"""
+
+
+def _btn(link: str, label: str) -> str:
+    return (f'<p style="margin:24px 0"><a href="{link}" style="background:#0e9488;color:#fff;'
+            'text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:bold;'
+            f'display:inline-block">{label}</a></p>')
+
+
+def _welcome_email_html(name: str, link: str) -> str:
+    vlvl = ('Vertil<span style="color:#0e9488;font-weight:bold">↗</span>')
+    return _email_shell(f"""
+      <p>Hi {name},</p>
+      <p>Welcome to Vertil 🎉 — your brand's voice engine for content that sounds unmistakably like you.</p>
+      <p>Here's a great first move: set up your brand voice, then open the Studio and generate everything your brand needs — Instagram captions, TikTok scripts, product descriptions, ads, WhatsApp blasts and more. On-brand copy, in seconds.</p>
+      <p>It's time to take your brand to the next level — the <b>{vlvl}</b> level.</p>
+      {_btn(link, "Open Vertil")}
+      <p style="font-size:13px;color:#5b6b66">Got a question? Just reply to this email — a real person reads it.</p>""")
+
+
+def _receipt_email_html(name: str, plan_name: str, price: int, link: str) -> str:
+    return _email_shell(f"""
+      <p>Hi {name},</p>
+      <p>Your payment went through and your account is now on the <b style="color:#0e9488">{plan_name}</b> plan. Thank you! 🎉</p>
+      <table style="width:100%;border-collapse:collapse;margin:18px 0;font-size:14px">
+        <tr><td style="padding:8px 0;color:#5b6b66;border-bottom:1px solid #eef2f1">Plan</td>
+            <td style="padding:8px 0;text-align:right;font-weight:bold;border-bottom:1px solid #eef2f1">{plan_name}</td></tr>
+        <tr><td style="padding:8px 0;color:#5b6b66">Amount</td>
+            <td style="padding:8px 0;text-align:right;font-weight:bold">₦{price:,}</td></tr>
+      </table>
+      <p>Your higher limits and features are live right now — enjoy.</p>
+      {_btn(link, "Start creating")}
+      <p style="font-size:13px;color:#5b6b66">Need a VAT invoice or have a billing question? Just reply to this email.</p>""")
+
+
+def _password_changed_email_html(name: str) -> str:
+    return _email_shell(f"""
+      <p>Hi {name},</p>
+      <p>This is a confirmation that your Vertil password was just changed. If this was you, you're all set — no further action needed.</p>
+      <p style="font-size:13px;color:#5b6b66">If you did <b>not</b> change your password, reset it immediately and reply to this email so we can secure your account.</p>""")
+
+
+def _send_welcome(user) -> None:
+    """Fire-and-forget welcome email on first signup. Never breaks the request."""
+    try:
+        link = request.host_url.rstrip("/") + "/app"
+        send_email(user["email"], "Welcome to Vertil 🎉",
+                   _welcome_email_html(user.get("name") or "there", link))
+    except Exception:
+        pass
+
+
+def _apply_paid_plan(uid, plan: str, base_url: str) -> None:
+    """Set a user's plan and send a receipt — but only the first time we see this
+    upgrade, so the Paystack callback + webhook (which both fire) don't double-send."""
+    try:
+        uid = int(uid)
+    except (TypeError, ValueError):
+        return
+    if plan not in PLANS:
+        return
+    current = db.get_user(uid)
+    already = bool(current and current.get("plan") == plan)
+    user = db.set_user_plan(uid, plan)
+    if user and not already:
+        try:
+            link = (base_url or "").rstrip("/") + "/app"
+            send_email(user["email"], f"Your Vertil {PLANS[plan]['name']} plan is active",
+                       _receipt_email_html(user.get("name") or "there",
+                                           PLANS[plan]["name"], PLANS[plan]["price"], link))
+        except Exception:
+            pass
+
+
 @app.post("/api/signup")
 def signup():
     d = request.get_json(force=True) or {}
@@ -547,6 +627,7 @@ def signup():
         return jsonify({"error": "An account with that email already exists. Try logging in."}), 409
     user = db.create_user(email, name or email.split("@")[0], generate_password_hash(pw))
     session["uid"] = user["id"]
+    _send_welcome(user)
     return jsonify({"user": user_public(user), "usage": usage_payload(user)})
 
 
@@ -595,6 +676,7 @@ def auth_google():
     else:
         name = (info.get("name") or info.get("given_name") or email.split("@")[0]).strip()
         user = db.create_user(email, name, generate_password_hash(secrets.token_urlsafe(24)))
+        _send_welcome(user)
     session["uid"] = user["id"]
     return jsonify({"user": user_public(user), "usage": usage_payload(user)})
 
@@ -628,6 +710,13 @@ def auth_reset():
     if not uid:
         return jsonify({"error": "This reset link is invalid or has expired. Please request a new one."}), 400
     db.update_password(uid, generate_password_hash(pw))
+    try:
+        u = db.get_user(uid)
+        if u:
+            send_email(u["email"], "Your Vertil password was changed",
+                       _password_changed_email_html(u.get("name") or "there"))
+    except Exception:
+        pass
     return jsonify({"ok": True})
 
 
@@ -1390,7 +1479,7 @@ def billing_callback():
                 meta = data.get("metadata", {}) or {}
                 uid, plan = meta.get("user_id"), meta.get("plan")
                 if uid and plan in PLANS:
-                    db.set_user_plan(int(uid), plan)
+                    _apply_paid_plan(uid, plan, request.host_url)
                 return redirect("/?upgraded=1")
         except Exception:
             pass
@@ -1415,10 +1504,7 @@ def billing_webhook():
         meta = data.get("metadata", {}) or {}
         uid, plan = meta.get("user_id"), meta.get("plan")
         if uid and plan in PLANS and data.get("status") == "success":
-            try:
-                db.set_user_plan(int(uid), plan)
-            except (TypeError, ValueError):
-                pass
+            _apply_paid_plan(uid, plan, request.host_url)
     return ("", 200)
 
 
@@ -1433,7 +1519,11 @@ def billing_simulate(user):
         return jsonify({"error": "Unknown plan"}), 400
     if plan != "free" and PAYSTACK_SECRET and not is_admin(user):
         return jsonify({"error": "Payment required.", "paystack": True}), 402
-    updated = db.set_user_plan(user["id"], plan)
+    if plan == "free":
+        updated = db.set_user_plan(user["id"], plan)
+    else:
+        _apply_paid_plan(user["id"], plan, request.host_url)
+        updated = db.get_user(user["id"])
     return jsonify({"user": updated, "usage": usage_payload(updated), "simulated": True})
 
 
