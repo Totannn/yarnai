@@ -89,9 +89,9 @@ PLANS = {
     },
     "pro": {
         "name": "Pro", "price": 45000, "gen_limit": None, "brands": 10, "calendar": True,
-        "brand_learn": True,
+        "brand_learn": True, "bulk": True,
         "blurb": "Power user / team",
-        "features": ["Unlimited generations", "10 brand voices", "Learn My Brand (AI)", "Everything in Growth"],
+        "features": ["Unlimited generations", "10 brand voices", "Learn My Brand (AI)", "Bulk catalogue generator", "Everything in Growth"],
     },
 }
 PLAN_ORDER = ["free", "starter", "growth", "pro"]
@@ -205,6 +205,7 @@ def usage_payload(user) -> dict:
         "brands_limit": p["brands"],
         "calendar": p["calendar"],
         "brand_learn": bool(p.get("brand_learn")),
+        "bulk": bool(p.get("bulk")),
     }
 
 
@@ -1221,6 +1222,84 @@ def refine(user):
     return jsonify({"text": text.strip(), "used": db.monthly_generation_count(user["id"])})
 
 
+# ------------------------- bulk catalogue --------------------------------- #
+
+BULK_MAX_ROWS = 50
+
+
+@app.post("/api/bulk/generate")
+@auth
+def bulk_generate(user):
+    """Generate an on-brand product description for each row of a seller's
+    catalogue in one pass. Pro-gated; streams a result per row over SSE."""
+    if not plan_of(user).get("bulk"):
+        return jsonify({"error": "Bulk catalogue is a Pro feature. Upgrade to unlock it.",
+                        "upgrade": True}), 402
+    req = request.get_json(force=True) or {}
+    rows = [r for r in (req.get("rows") or []) if (r.get("name") or "").strip()][:BULK_MAX_ROWS]
+    if not rows:
+        return jsonify({"error": "Add at least one product with a name."}), 400
+    brand_id = req.get("brand_id")
+    tone = req.get("tone", "friendly")
+    uid = user["id"]
+    lengths = {
+        "short": (" Keep it very short and scannable — 1 to 2 punchy lines, about 30-45 words, "
+                  "no headings or bullet lists. Just a tight hook and a nudge to buy.", 350),
+        "standard": (" Keep it concise — a short hook line then 2-3 quick benefit points. "
+                     "About 60-90 words total.", 700),
+        "detailed": ("", 1000),
+    }
+    directive, maxtok = lengths.get(req.get("length", "short"), lengths["short"])
+
+    def stream():
+        profile = db.get_brand(uid, brand_id) if brand_id else None
+        liked = db.liked_examples(uid, brand_id)
+        system = voice.build_system_prompt(profile, tone, liked)
+        client = get_client()
+        yield _sse("start", {"total": len(rows)})
+        tin = tout = done = 0
+        for i, r in enumerate(rows):
+            name = (r.get("name") or "").strip()
+            price = (r.get("price") or "").strip()
+            feats = (r.get("features") or "").strip()
+            brief = f"Product name: {name}."
+            if price:
+                brief += f" Price: ₦{price}."
+            if feats:
+                brief += f" Key details: {feats}."
+            brief += directive
+            usr = voice.build_user_prompt("product_description", brief, 1)
+            try:
+                if client is None:
+                    text = (f"[DEMO] {name} — sharp, quality product wey go move fast. "
+                            f"Add your ANTHROPIC_API_KEY for real Naija copy.")
+                else:
+                    with client.messages.stream(
+                        model=MODEL, max_tokens=maxtok, thinking={"type": "adaptive"},
+                        output_config={"effort": "low"}, system=system,
+                        messages=[{"role": "user", "content": usr}],
+                    ) as s:
+                        raw = "".join(s.text_stream)
+                        u = s.get_final_message().usage
+                        tin += u.input_tokens
+                        tout += u.output_tokens
+                    variants = voice.split_variants(raw)
+                    text = (variants[0] if variants else raw).strip()
+                done += 1
+                yield _sse("row", {"index": i, "name": name, "text": text})
+            except Exception as exc:
+                yield _sse("row_error", {"index": i, "name": name, "message": str(exc)})
+        if client is not None and done:
+            db.save_generation(uid, brand_id, "bulk_catalog", tone, f"{done} products",
+                               [f"{done} product descriptions"], model=MODEL,
+                               input_tokens=tin, output_tokens=tout,
+                               cost=cost_naira(MODEL, tin, tout))
+        yield _sse("done", {"count": done})
+
+    return Response(stream_with_context(stream()), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 # ---------------------------- calendars ----------------------------------- #
 
 def _demo_calendar(cadence):
@@ -1533,7 +1612,8 @@ def billing_simulate(user):
 _TYPE_LABELS = {**{k: v["label"] for k, v in voice.CONTENT_TYPES.items()},
                 "content_calendar": "Content Calendar",
                 "rate_advisor": "Rate Advisor", "personal_brand": "Brand Advisor",
-                "script": "Script Writer", "brand_learn": "Learn My Brand"}
+                "script": "Script Writer", "brand_learn": "Learn My Brand",
+                "bulk_catalog": "Bulk Catalogue"}
 
 
 @app.get("/api/admin/overview")

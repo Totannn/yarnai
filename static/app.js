@@ -29,7 +29,11 @@ const state = {
   onboarding: null,
   learn: { files: [], text: "", note: "", url: "", loading: false, result: null, saving: false,
            pack: null, packLoading: false, checkText: "", checkResult: null, checkLoading: false },
+  // bulk catalogue
+  bulk: { rows: [{ name: "", price: "", features: "" }], length: "short", running: false, done: 0, total: 0, started: false },
 };
+const BULK_INIT = () => ({ rows: [{ name: "", price: "", features: "" }], length: "short", running: false, done: 0, total: 0, started: false });
+const BULK_MAX = 50;
 const LEARN_INIT = () => ({ files: [], text: "", note: "", url: "", loading: false, result: null, saving: false,
   pack: null, packLoading: false, checkText: "", checkResult: null, checkLoading: false });
 
@@ -73,6 +77,7 @@ const MONTH_ABBR = {January:"Jan",February:"Feb",March:"Mar",April:"Apr",May:"Ma
 const ICON = {
   home: '<path d="M3 10.5 12 3l9 7.5M5.5 9.5V20h13V9.5"/><path d="M9.5 20v-6h5v6"/>',
   learn: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="m10.5 12.5 .8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7-1.7-.8 1.7-.8z"/>',
+  bulk: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M3.5 14.5h17M9 4.5v15"/>',
   studio: '<path d="M4 5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v3M4 5v14a2 2 0 0 0 2 2h6M4 5H3m13 3 4 4m0 0-7 7-4 1 1-4 7-7m4 4-4-4"/>',
   calendar: '<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9h18M8 2.5v4M16 2.5v4M7.5 13h2m4.5 0h2m-8.5 4h2m4.5 0h2"/>',
   calendars: '<path d="M8 7h12M8 12h12M8 17h12M3.5 7h.01M3.5 12h.01M3.5 17h.01"/>',
@@ -586,6 +591,7 @@ function routeView() {
   switch (state.view) {
     case "home": return homeView();
     case "learn": return learnView();
+    case "bulk": return bulkView();
     case "studio": return studioView();
     case "calendar": return calendarView();
     case "calendars": return savedCalendarsView();
@@ -618,7 +624,7 @@ function sidebar() {
     </div>
     <nav class="space-y-1">
       ${item("home","Home")}${item("studio","Studio")}${item("script","Script Writer")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
-      ${item("brands","Brands")}${item("learn","Learn My Brand")}${item("favorites","Saved Copy")}${item("history","History")}
+      ${item("brands","Brands")}${item("learn","Learn My Brand")}${item("bulk","Bulk Catalogue")}${item("favorites","Saved Copy")}${item("history","History")}
       <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">Advisors</div>
       ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("gigs","Gig Diary")}
     </nav>
@@ -645,7 +651,7 @@ function sidebar() {
       </div>
       <nav class="space-y-1">
         ${item("home","Home")}${item("studio","Studio")}${item("script","Script Writer")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
-        ${item("brands","Brands")}${item("learn","Learn My Brand")}${item("favorites","Saved Copy")}${item("history","History")}
+        ${item("brands","Brands")}${item("learn","Learn My Brand")}${item("bulk","Bulk Catalogue")}${item("favorites","Saved Copy")}${item("history","History")}
         <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">Advisors</div>
         ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("gigs","Gig Diary")}
         ${item("pricing","Plans & Pricing")}
@@ -689,6 +695,7 @@ function topbar() {
     calendars:["Saved Plans","Your generated content calendars"],
     brands:["Brands","Your brand voices — injected into every generation"],
     learn:["Learn My Brand","Upload your material — Vertil learns your brand and breaks it down"],
+    bulk:["Bulk Catalogue","Turn a list of products into on-brand descriptions — all at once"],
     favorites:["Saved Copy","Your starred, ready-to-use copy"],
     history:["History","Everything you've generated"],
     pricing:["Plans & Pricing","Upgrade to unlock more"],
@@ -1239,6 +1246,229 @@ function wireLearnDynamic() {
 }
 function refreshLearnPack() { const w = $("#learnPackWrap"); if (w) { w.innerHTML = learnPackSection(); wireLearnDynamic(); } else render(); }
 function refreshLearnCheck() { const w = $("#learnCheckWrap"); if (w) { w.innerHTML = learnCheckSection(); wireLearnDynamic(); } else render(); }
+
+/* ============================ BULK CATALOGUE =========================== */
+/* Upload/enter a list of products → get an on-brand description for each in
+   one pass. Pro-gated. Streams a result per row over SSE. */
+const BULK_STYLE = `<style>
+@keyframes bkIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.bk-row{animation:bkIn .3s cubic-bezier(.2,.7,.2,1) both}
+.bk-bar{transition:width .4s cubic-bezier(.2,.7,.2,1)}
+</style>`;
+
+function bulkView() {
+  if (!state.usage?.bulk) return BULK_STYLE + bulkLocked();
+  const B = state.bulk;
+  return BULK_STYLE + `<div id="bulkWrap" class="fade-up max-w-4xl pb-24 md:pb-0">${B.started ? bulkRun(B) : bulkSetup(B)}</div>`;
+}
+
+function bulkLocked() {
+  return card(`<div class="text-center py-14"><div class="w-12 h-12 mx-auto rounded-xl2 bg-paper text-faint grid place-items-center mb-3">${ic("lock","w-6 h-6")}</div>
+    <p class="font-display font-bold text-lg">Bulk Catalogue is a Pro feature</p>
+    <p class="text-sm text-muted mt-1 max-w-md mx-auto">Got dozens of products to list on Jumia, Jiji or your WhatsApp catalogue? Upload your list and Vertil writes an on-brand description for every single one — in one pass. Upgrade to Pro to unlock it.</p>
+    <button data-nav="pricing" class="mt-4 text-sm font-semibold text-white bg-brand hover:bg-brand-dark px-5 py-2.5 rounded-xl">See plans</button></div>`);
+}
+
+function bulkBrandTone() {
+  const brands = state.brands.length
+    ? `<label class="block"><span class="text-xs font-semibold text-muted">Brand voice</span>
+        <select id="bulkBrand" class="mt-1.5 w-full bg-paper border border-line rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">
+          ${state.brands.map(b=>`<option value="${b.id}" ${b.id===state.activeBrandId?'selected':''}>${esc(b.name)}</option>`).join("")}</select></label>`
+    : `<div class="text-xs text-muted">No brand yet — <button data-nav="brands" class="text-brand font-semibold">create one</button> for sharper, on-brand copy (optional).</div>`;
+  const tones = (state.config?.tones || []).map(t=>`<option value="${t.key}" ${t.key===state.tone?'selected':''}>${esc(t.label)}</option>`).join("");
+  return `<div class="grid sm:grid-cols-2 gap-3">${brands}
+    <label class="block"><span class="text-xs font-semibold text-muted">Tone</span>
+      <select id="bulkTone" class="mt-1.5 w-full bg-paper border border-line rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand/30">${tones}</select></label></div>`;
+}
+
+function bulkSetup(B) {
+  const filled = B.rows.filter(r => (r.name||"").trim()).length;
+  const rowsHTML = B.rows.map((r,i)=>`
+    <tr class="bk-row border-t border-line align-top">
+      <td class="py-1.5 pr-2 text-faint text-xs font-mono text-right w-8">${i+1}</td>
+      <td class="py-1.5 pr-2"><input data-bk="name" data-i="${i}" value="${esc(r.name)}" placeholder="Ankara midi dress" class="w-full bg-paper border border-line rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand/25"/></td>
+      <td class="py-1.5 pr-2 w-28"><input data-bk="price" data-i="${i}" value="${esc(r.price)}" placeholder="15,000" class="w-full bg-paper border border-line rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand/25"/></td>
+      <td class="py-1.5 pr-2"><input data-bk="features" data-i="${i}" value="${esc(r.features)}" placeholder="cotton, sizes 8–18, made in Aba" class="w-full bg-paper border border-line rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand/25"/></td>
+      <td class="py-1.5 w-8">${B.rows.length>1?`<button data-bk-rm="${i}" class="text-faint hover:text-rose-500 w-7 h-7 grid place-items-center" title="Remove">✕</button>`:''}</td>
+    </tr>`).join("");
+  return `
+  <div class="space-y-4">
+    ${card(`
+      <div class="flex items-start gap-3">
+        <div class="w-11 h-11 rounded-xl2 bg-brand-tint text-brand grid place-items-center shrink-0">${ic("bulk","w-6 h-6")}</div>
+        <div><p class="font-display font-bold text-lg leading-tight">Your product list</p>
+          <p class="text-sm text-muted mt-0.5">Add up to ${BULK_MAX} products. Vertil writes an on-brand description for each — ready to paste into Jumia, Jiji or your WhatsApp catalogue.</p></div>
+      </div>
+      <label class="mt-4 flex items-center justify-between gap-3 border border-dashed border-line rounded-xl px-4 py-3 cursor-pointer hover:border-brand/40 transition">
+        <span class="text-sm"><span class="font-semibold text-brand-dark">Import a CSV</span> <span class="text-muted">— columns: name, price, details</span></span>
+        <input type="file" id="bulkCsv" accept=".csv,text/csv" class="hidden"/>
+        <span class="text-xs font-semibold text-brand shrink-0">${ic("download","w-4 h-4 inline -mt-0.5")} Choose file</span>
+      </label>
+      <div class="mt-4 overflow-x-auto">
+        <table class="w-full text-sm min-w-[560px]">
+          <thead><tr class="text-[10px] uppercase tracking-wide text-faint font-semibold text-left">
+            <th class="w-8"></th><th class="pb-1">Product name</th><th class="pb-1">Price (₦)</th><th class="pb-1">Key details</th><th class="w-8"></th></tr></thead>
+          <tbody>${rowsHTML}</tbody>
+        </table>
+      </div>
+      <div class="flex items-center justify-between mt-3 flex-wrap gap-2">
+        <button data-bk-add ${B.rows.length>=BULK_MAX?'disabled':''} class="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-dark hover:text-brand disabled:opacity-40">+ Add product</button>
+        <span class="text-xs text-faint">${filled}/${BULK_MAX} products ready</span>
+      </div>
+    `)}
+    ${card(bulkBrandTone() + `
+      <div class="mt-3"><span class="text-xs font-semibold text-muted">Description length</span>
+        <div class="grid grid-cols-3 gap-2 mt-1.5">
+          ${[["short","Short","1–2 lines"],["standard","Standard","short + points"],["detailed","Detailed","fuller copy"]].map(([k,lbl,sub])=>`
+            <button data-bk-len="${k}" class="text-left px-3 py-2 rounded-lg border transition ${B.length===k?'border-brand bg-brand-tint ring-1 ring-brand':'border-line bg-paper hover:border-brand/40'}">
+              <div class="text-sm font-semibold">${lbl}</div><div class="text-[11px] text-muted">${sub}</div></button>`).join("")}
+        </div></div>`)}
+    <button id="bulkBtn" ${filled?'':'disabled'} class="w-full inline-flex items-center justify-center gap-2 text-sm font-semibold text-white bg-brand hover:bg-brand-dark rounded-xl py-3.5 shadow-sm disabled:opacity-50 transition">${ic("spark","w-4 h-4")} Generate ${filled||''} description${filled===1?'':'s'}</button>
+  </div>`;
+}
+
+function bulkRun(B) {
+  const pct = B.total ? Math.round((B.done / B.total) * 100) : 0;
+  const done = B.done >= B.total && !B.running;
+  const cards = B.rows.map((r,i)=>{
+    const st = r.status || "pending";
+    const body = st==="done"
+      ? `<p class="text-sm whitespace-pre-wrap leading-relaxed text-ink/90">${esc(r.result||"")}</p>
+         <div class="flex items-center gap-3 mt-2">
+           <button data-bk-copy="${i}" class="text-xs font-semibold text-brand hover:text-brand-dark">${ic("copy","w-3.5 h-3.5 inline -mt-0.5")} Copy</button>
+           <button data-bk-save="${i}" ${r.saved?'disabled':''} class="text-xs font-semibold ${r.saved?'text-faint':'text-brand hover:text-brand-dark'}">${r.saved?ic("check","w-3.5 h-3.5 inline -mt-0.5")+" Saved":ic("save","w-3.5 h-3.5 inline -mt-0.5")+" Save"}</button>
+         </div>`
+      : st==="error"
+      ? `<p class="text-sm text-rose-500">⚠ ${esc(r.error||"Couldn't generate this one")}</p>`
+      : `<div class="flex items-center gap-2 text-sm text-muted"><span class="w-4 h-4 border-2 border-brand/30 border-t-brand rounded-full spin"></span> Writing…</div>`;
+    return `<div class="bk-row bg-paper border border-line rounded-xl2 p-4" data-bkcard="${i}">
+      <div class="flex items-center justify-between gap-2 mb-1.5">
+        <span class="font-semibold text-sm text-brand-dark truncate">${esc(r.name)||("Product "+(i+1))}</span>
+        ${r.price?`<span class="text-xs font-mono text-muted shrink-0">₦${esc(r.price)}</span>`:''}
+      </div>${body}</div>`;
+  }).join("");
+  return `
+  <div class="space-y-4">
+    ${card(`
+      <div class="flex items-center justify-between gap-3 flex-wrap">
+        <div><p class="font-display font-bold text-lg leading-tight">${done?'Your catalogue is ready 🎉':'Writing your catalogue…'}</p>
+          <p class="text-sm text-muted mt-0.5">${B.done} of ${B.total} descriptions ${done?'generated':'done'}</p></div>
+        <div class="flex items-center gap-2">
+          ${done?`<button data-bk-saveall class="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-dark bg-brand-tint hover:bg-brand hover:text-white px-4 py-2 rounded-xl transition">${ic("save","w-4 h-4")} Save all</button>
+          <button data-bk-download class="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-brand hover:bg-brand-dark px-4 py-2 rounded-xl">${ic("download","w-4 h-4")} Download CSV</button>`:''}
+          <button data-bk-restart class="text-sm font-semibold text-muted hover:text-ink px-3 py-2 rounded-xl border border-line">${done?'New batch':'Cancel'}</button>
+        </div>
+      </div>
+      <div class="h-2 rounded-full bg-line overflow-hidden mt-3"><div class="bk-bar h-full bg-brand rounded-full" style="width:${pct}%"></div></div>
+    `)}
+    <div class="grid sm:grid-cols-2 gap-3">${cards}</div>
+  </div>`;
+}
+
+async function runBulk() {
+  const B = state.bulk;
+  const rows = B.rows.filter(r => (r.name||"").trim()).map(r => ({ name:r.name.trim(), price:(r.price||"").trim(), features:(r.features||"").trim(), status:"pending", result:"", error:"" }));
+  if (!rows.length) return;
+  B.rows = rows; B.started = true; B.running = true; B.done = 0; B.total = rows.length;
+  render();
+  try {
+    const res = await fetch("/api/bulk/generate", { method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ brand_id: state.activeBrandId, tone: state.tone, length: B.length, rows: rows.map(r=>({name:r.name,price:r.price,features:r.features})) }) });
+    if (res.status === 402) { const d=await res.json(); B.running=false; B.started=false; openUpgrade(d.error); return; }
+    if (res.status === 401) return logout();
+    const reader = res.body.getReader(), dec = new TextDecoder(); let buf="";
+    while (true) {
+      const { done, value } = await reader.read(); if (done) break;
+      buf += dec.decode(value,{stream:true});
+      const chunks = buf.split("\n\n"); buf = chunks.pop();
+      for (const chunk of chunks) {
+        const ev = parseSSE(chunk); if (!ev) continue;
+        if (ev.event==="row") { const r=B.rows[ev.data.index]; if(r){ r.status="done"; r.result=ev.data.text; } B.done++; refreshBulkRun(); }
+        else if (ev.event==="row_error") { const r=B.rows[ev.data.index]; if(r){ r.status="error"; r.error=ev.data.message; } B.done++; refreshBulkRun(); }
+        else if (ev.event==="done") { B.running=false; render(); }
+        else if (ev.event==="error") { toast("⚠ "+(ev.data.message||"Something went wrong")); }
+      }
+    }
+  } catch (ex) { toast("⚠ "+ex.message); }
+  finally { if (B.running) { B.running=false; render(); } }
+}
+
+/* Update the run view in place so completed rows don't replay the whole page. */
+function refreshBulkRun() {
+  if (state.view !== "bulk" || !state.bulk.started) return;
+  const wrap = $("#bulkWrap");
+  if (wrap) { wrap.innerHTML = bulkRun(state.bulk); wireBulkRun(); }
+  else render();
+}
+function wireBulkRun() {
+  const dl = $("[data-bk-download]"); if (dl) dl.onclick = downloadBulkCSV;
+  const rs = $("[data-bk-restart]"); if (rs) rs.onclick = () => { state.bulk = BULK_INIT(); render(); };
+  const sa = $("[data-bk-saveall]"); if (sa) sa.onclick = saveBulkAll;
+  $$("[data-bk-copy]").forEach(b=>b.onclick=()=>{ const r=state.bulk.rows[+b.dataset.bkCopy]; if(r){ navigator.clipboard.writeText(r.result||""); b.innerHTML=ic("check","w-3.5 h-3.5 inline -mt-0.5")+" Copied"; setTimeout(()=>b.innerHTML=ic("copy","w-3.5 h-3.5 inline -mt-0.5")+" Copy",1400); } });
+  $$("[data-bk-save]").forEach(b=>b.onclick=()=>saveBulkItem(+b.dataset.bkSave));
+}
+
+async function saveBulkItem(i) {
+  const r = state.bulk.rows[i];
+  if (!r || r.status !== "done" || r.saved) return;
+  try {
+    await api("/api/favorites", { method:"POST", body: JSON.stringify({ text:r.result, brand_id:state.activeBrandId, content_type:"product_description", tone:state.tone }) });
+    r.saved = true; refreshBulkRun();
+  } catch (ex) { toast("⚠ "+ex.message); }
+}
+
+async function saveBulkAll() {
+  const todo = state.bulk.rows.filter(r => r.status === "done" && !r.saved);
+  if (!todo.length) { toast("Everything's already saved"); return; }
+  for (const r of todo) {
+    try { await api("/api/favorites", { method:"POST", body: JSON.stringify({ text:r.result, brand_id:state.activeBrandId, content_type:"product_description", tone:state.tone }) }); r.saved = true; }
+    catch (ex) { /* keep going */ }
+  }
+  refreshBulkRun();
+  toast(`Saved ${todo.length} to Saved Copy`);
+}
+
+function downloadBulkCSV() {
+  const esc = s => `"${String(s||"").replace(/"/g,'""')}"`;
+  const lines = [["Product","Price","Description"].map(esc).join(",")];
+  state.bulk.rows.forEach(r => { if (r.status==="done") lines.push([r.name, r.price, r.result].map(esc).join(",")); });
+  const blob = new Blob(["﻿"+lines.join("\r\n")], { type:"text/csv;charset=utf-8" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+  a.download = "vertil-catalogue.csv"; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  toast("Catalogue CSV downloaded");
+}
+
+/* Minimal CSV parser — handles quoted fields and commas inside quotes. */
+function parseCSV(text) {
+  const rows = []; let row = [], field = "", q = false;
+  for (let i=0; i<text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') { if (text[i+1] === '"') { field+='"'; i++; } else q=false; }
+      else field += c;
+    } else {
+      if (c === '"') q = true;
+      else if (c === ",") { row.push(field); field=""; }
+      else if (c === "\n" || c === "\r") { if (field!=="" || row.length) { row.push(field); rows.push(row); row=[]; field=""; } if (c==="\r"&&text[i+1]==="\n") i++; }
+      else field += c;
+    }
+  }
+  if (field!=="" || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+function importBulkCSV(text) {
+  let rows = parseCSV(text).filter(r => r.some(c => (c||"").trim()));
+  if (!rows.length) { toast("That CSV looks empty"); return; }
+  // drop a header row if the first cell isn't clearly a product ("name"/"product"/"item")
+  const head = (rows[0][0]||"").toLowerCase().trim();
+  if (/^(name|product|item|title|sku)$/.test(head) || (rows[0][1]||"").toLowerCase().includes("price")) rows = rows.slice(1);
+  const mapped = rows.slice(0, BULK_MAX).map(r => ({ name:(r[0]||"").trim(), price:(r[1]||"").trim(), features:(r[2]||"").trim() }));
+  if (!mapped.some(r=>r.name)) { toast("Couldn't find product names in that CSV"); return; }
+  state.bulk.rows = mapped.length ? mapped : state.bulk.rows;
+  render();
+  toast(`Imported ${mapped.filter(r=>r.name).length} products`);
+}
 
 async function runStarter() {
   const L = state.learn;
@@ -1972,6 +2202,20 @@ function wire() {
     wireLearnDynamic();
   }
 
+  if (state.view === "bulk") {
+    if (state.bulk.started) { wireBulkRun(); }
+    else {
+      $$("[data-bk]").forEach(inp => inp.oninput = () => { const r = state.bulk.rows[+inp.dataset.i]; if (r) { r[inp.dataset.bk] = inp.value; const btn=$("#bulkBtn"); if(btn) btn.disabled = !state.bulk.rows.some(x=>(x.name||"").trim()); } });
+      $$("[data-bk-rm]").forEach(b => b.onclick = () => { state.bulk.rows.splice(+b.dataset.bkRm, 1); render(); });
+      const add = $("[data-bk-add]"); if (add) add.onclick = () => { if (state.bulk.rows.length < BULK_MAX) { state.bulk.rows.push({ name:"", price:"", features:"" }); render(); } };
+      const csv = $("#bulkCsv"); if (csv) csv.onchange = e => { const f = e.target.files[0]; if (!f) return; const fr = new FileReader(); fr.onload = () => importBulkCSV(String(fr.result||"")); fr.readAsText(f); };
+      const bb = $("#bulkBrand"); if (bb) bb.onchange = e => state.activeBrandId = +e.target.value;
+      const bt = $("#bulkTone"); if (bt) bt.onchange = e => state.tone = e.target.value;
+      $$("[data-bk-len]").forEach(b => b.onclick = () => { state.bulk.length = b.dataset.bkLen; render(); });
+      const go = $("#bulkBtn"); if (go) go.onclick = runBulk;
+    }
+  }
+
   if (state.view === "studio") {
     const bs = $("#brandSelect"); if (bs) bs.onchange = e => state.activeBrandId = +e.target.value;
     $$("[data-tone]").forEach(b => b.onclick = () => { state.tone = b.dataset.tone; render(); });
@@ -2296,7 +2540,7 @@ function renderCards() {
     <div class="fade-up bg-paper border border-line rounded-xl2 p-4" style="animation-delay:${i*40}ms" data-cardwrap="${i}">
       <div class="flex items-center justify-between mb-2">
         <span class="text-xs font-semibold text-brand-dark">Option ${i+1}</span>
-        <div class="flex items-center gap-1">
+        <div class="flex flex-wrap items-center justify-end gap-1">
           <button data-fb="up" data-i="${i}" title="On-brand — learn from this" class="w-7 h-7 grid place-items-center rounded-lg border border-line bg-white text-muted hover:border-brand/40 hover:text-brand">${ic("thumb_up","w-3.5 h-3.5")}</button>
           <button data-fb="down" data-i="${i}" title="Off-brand" class="w-7 h-7 grid place-items-center rounded-lg border border-line bg-white text-muted hover:border-rose-300 hover:text-rose-500">${ic("thumb_down","w-3.5 h-3.5")}</button>
           <div class="inline-flex items-center rounded-lg border border-line bg-white p-0.5 mr-0.5">
@@ -2317,6 +2561,10 @@ function renderCards() {
         ${presets.map(p=>`<button data-refine="${i}" data-instr="${p.key}" class="text-[11px] px-2 py-1 rounded-md border border-line bg-white hover:border-brand/40 hover:text-brand-dark">${esc(p.label)}</button>`).join("")}
         <button data-refine="${i}" data-instr="__regen" class="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md border border-line bg-white hover:border-brand/40">${ic("refresh","w-3 h-3")} Fresh version</button>
         ${c.busy?'<span class="w-3.5 h-3.5 border-2 border-brand/30 border-t-brand rounded-full spin"></span>':''}
+      </div>
+      <div class="flex items-center gap-1.5 mt-2">
+        <input data-refine-input="${i}" ${c.busy?'disabled':''} placeholder="Tell Vertil what to change… e.g. make it shorter, add urgency, now a TikTok version" class="flex-1 bg-paper border border-line rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand/25 placeholder:text-faint disabled:opacity-50"/>
+        <button data-refine-send="${i}" ${c.busy?'disabled':''} title="Ask Vertil to tweak this" class="shrink-0 w-8 h-8 grid place-items-center rounded-lg bg-brand text-white hover:bg-brand-dark disabled:opacity-40"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M6 12h13M13 6l6 6-6 6"/></svg></button>
       </div></div>`).join("");
 
   $$("[data-copy]",out).forEach(b=>b.onclick=()=>{ navigator.clipboard.writeText(state.cards[+b.dataset.copy].text); b.innerHTML=ic("check","w-3.5 h-3.5")+" Copied"; setTimeout(()=>b.innerHTML=ic("copy","w-3.5 h-3.5")+" Copy",1400); });
@@ -2325,6 +2573,8 @@ function renderCards() {
   $$("[data-star]",out).forEach(b=>b.onclick=()=>saveFavorite(+b.dataset.star));
   $$("[data-fb]",out).forEach(b=>b.onclick=()=>sendFeedback(+b.dataset.i, b.dataset.fb, b));
   $$("[data-refine]",out).forEach(b=>b.onclick=()=>refineCard(+b.dataset.refine, b.dataset.instr));
+  $$("[data-refine-send]",out).forEach(b=>b.onclick=()=>{ const i=+b.dataset.refineSend, inp=$(`[data-refine-input="${i}"]`,out), v=(inp&&inp.value||"").trim(); if(v) refineCard(i, v); });
+  $$("[data-refine-input]",out).forEach(inp=>inp.onkeydown=e=>{ if(e.key==="Enter"){ e.preventDefault(); const v=inp.value.trim(); if(v) refineCard(+inp.dataset.refineInput, v); } });
   $$("[data-pvset]",out).forEach(b=>b.onclick=()=>{ const i=+b.dataset.pvset, c=state.cards[i], on=b.dataset.pvon==="1"; if(c.preview===on)return; c.preview=on; if(on&&!c.previewType)c.previewType=PV_BY_CT[state.contentType]||"ig"; renderCards(); });
   $$("[data-pvt]",out).forEach(b=>b.onclick=()=>{ state.cards[+b.dataset.pvt].previewType=b.dataset.pvtk; renderCards(); });
 }
