@@ -200,6 +200,7 @@ def init_db() -> None:
         _add_col(c, "users", "is_admin", "INTEGER NOT NULL DEFAULT 0")
         _add_col(c, "users", "suspended", "INTEGER NOT NULL DEFAULT 0")
         _add_col(c, "users", "notes", "TEXT DEFAULT ''")
+        _add_col(c, "users", "phone", "TEXT DEFAULT ''")
         _add_col(c, "generations", "input_tokens", "INTEGER DEFAULT 0")
         _add_col(c, "generations", "output_tokens", "INTEGER DEFAULT 0")
         _add_col(c, "generations", "cost", f"{_REAL} DEFAULT 0")
@@ -208,17 +209,17 @@ def init_db() -> None:
 
 # ------------------------------- users ------------------------------------ #
 
-def create_user(email: str, name: str, password_hash: str) -> dict:
+def create_user(email: str, name: str, password_hash: str, phone: str = "") -> dict:
     with _conn() as c:
         uid = _insert(
-            c, "INSERT INTO users (email, name, password_hash, plan, created_at) VALUES (?,?,?,?,?)",
-            (email.lower().strip(), name.strip(), password_hash, "free", time.time()))
+            c, "INSERT INTO users (email, name, password_hash, plan, phone, created_at) VALUES (?,?,?,?,?,?)",
+            (email.lower().strip(), name.strip(), password_hash, "free", (phone or "").strip(), time.time()))
     return get_user(uid)
 
 
 def get_user(user_id: int) -> dict | None:
     with _conn() as c:
-        r = c.execute("SELECT id, email, name, plan, onboarded, created_at FROM users WHERE id=?", (user_id,)).fetchone()
+        r = c.execute("SELECT id, email, name, plan, onboarded, phone, created_at FROM users WHERE id=?", (user_id,)).fetchone()
     return dict(r) if r else None
 
 
@@ -230,6 +231,12 @@ def set_onboarded(user_id: int) -> None:
 def update_user_name(user_id: int, name: str) -> dict | None:
     with _conn() as c:
         c.execute("UPDATE users SET name=? WHERE id=?", (name.strip(), user_id))
+    return get_user(user_id)
+
+
+def update_user_phone(user_id: int, phone: str) -> dict | None:
+    with _conn() as c:
+        c.execute("UPDATE users SET phone=? WHERE id=?", ((phone or "").strip(), user_id))
     return get_user(user_id)
 
 
@@ -677,12 +684,12 @@ def admin_overview() -> dict:
 def admin_users() -> list[dict]:
     with _conn() as c:
         rows = c.execute(
-            "SELECT u.id, u.email, u.name, u.plan, u.created_at, u.onboarded, u.suspended, "
+            "SELECT u.id, u.email, u.name, u.phone, u.plan, u.created_at, u.onboarded, u.suspended, "
             "COUNT(g.id) AS gens, COALESCE(SUM(g.input_tokens),0) AS it, "
             "COALESCE(SUM(g.output_tokens),0) AS ot, COALESCE(SUM(g.cost),0) AS cost, "
             "MAX(g.created_at) AS last_active "
             "FROM users u LEFT JOIN generations g ON g.user_id=u.id "
-            "GROUP BY u.id, u.email, u.name, u.plan, u.created_at, u.onboarded, u.suspended "
+            "GROUP BY u.id, u.email, u.name, u.phone, u.plan, u.created_at, u.onboarded, u.suspended "
             "ORDER BY u.created_at DESC"
         ).fetchall()
     return [dict(r) for r in rows]
@@ -690,7 +697,7 @@ def admin_users() -> list[dict]:
 
 def admin_user_detail(uid: int) -> dict | None:
     with _conn() as c:
-        u = c.execute("SELECT id,email,name,plan,onboarded,created_at,suspended,notes FROM users WHERE id=?", (uid,)).fetchone()
+        u = c.execute("SELECT id,email,name,phone,plan,onboarded,created_at,suspended,notes FROM users WHERE id=?", (uid,)).fetchone()
         if not u:
             return None
         daily = [dict(r) for r in c.execute(

@@ -230,7 +230,9 @@ function renderAuth() {
         <p class="text-sm text-muted mt-1">${login ? "Log in to keep creating." : "Create on-brand content in seconds."}</p>
         <form id="authForm" class="mt-6 space-y-3">
           ${login ? "" : `<div><label class="text-xs font-semibold text-muted">Name</label>
-            <input name="name" placeholder="Your name" class="auth-input"/></div>`}
+            <input name="name" placeholder="Your name" class="auth-input"/></div>
+          <div><label class="text-xs font-semibold text-muted">Phone number (WhatsApp)</label>
+            <input name="phone" type="tel" required placeholder="e.g. 0803 123 4567" class="auth-input"/></div>`}
           <div><label class="text-xs font-semibold text-muted">Email</label>
             <input name="email" type="email" required placeholder="you@brand.com" class="auth-input"/></div>
           <div><div class="flex items-center justify-between">
@@ -409,13 +411,17 @@ function maybeStartOnboarding() {
 }
 function startOnboarding() {
   const name = (state.user?.name || "").trim();
-  state.onboarding = { step: 0, busy: false, businessName: name && !name.includes("@") ? name : "", industry: null, tone: null, platforms: [], goal: null };
+  state.onboarding = { step: 0, busy: false, businessName: name && !name.includes("@") ? name : "", phone: (state.user?.phone || ""), industry: null, tone: null, platforms: [], goal: null };
   renderOnboarding();
+}
+
+function obPhoneOk(p) {
+  return /^\+?\d{10,15}$/.test((p || "").replace(/[\s\-().]/g, ""));
 }
 
 function obCanAdvance() {
   const o = state.onboarding;
-  if (o.step === 1) return o.businessName.trim().length > 0 && !!o.industry;
+  if (o.step === 1) return o.businessName.trim().length > 0 && obPhoneOk(o.phone) && !!o.industry;
   if (o.step === 2) return !!o.tone;
   if (o.step === 3) return o.platforms.length > 0;
   if (o.step === 4) return !!o.goal;
@@ -469,7 +475,7 @@ function renderOnboarding() {
         <p class="text-sm text-muted mb-7 max-w-[420px]">Vertil will write in this voice — you can change it anytime in Brands.</p>
         <div class="w-full text-left bg-white border border-line rounded-xl2 shadow-card p-5">
           <div class="flex flex-col gap-3.5">
-            ${row("Business", name)}${row("Industry", industryLabel)}${row("Voice", toneLabel)}${row("Where you show up", platformsLabel)}${row("Goal", goalLabel)}
+            ${row("Business", name)}${row("Phone", o.phone.trim() || "—")}${row("Industry", industryLabel)}${row("Voice", toneLabel)}${row("Where you show up", platformsLabel)}${row("Goal", goalLabel)}
           </div>
         </div>
         <button data-ob-enter ${o.busy ? "disabled" : ""} class="w-full mt-7 inline-flex items-center justify-center gap-2 text-sm font-semibold text-white bg-brand hover:bg-brand-dark rounded-xl py-3 shadow-sm disabled:opacity-60 transition">${o.busy ? '<span class="w-4 h-4 border-2 border-white/40 border-t-white rounded-full spin"></span> Setting up…' : "Enter your studio"}</button>
@@ -485,6 +491,8 @@ function renderOnboarding() {
         <p class="text-[13px] text-muted mb-5">So Vertil knows who it's writing for.</p>
         <label class="block"><span class="text-xs font-semibold text-muted">Business name</span>
           <input data-ob-name value="${esc(o.businessName)}" placeholder="e.g. Ola's Kitchen" class="mt-1.5 w-full bg-paper border border-line rounded-lg px-3.5 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand"/></label>
+        <label class="block mt-3"><span class="text-xs font-semibold text-muted">Phone number (WhatsApp)</span>
+          <input data-ob-phone value="${esc(o.phone)}" type="tel" placeholder="e.g. 0803 123 4567" class="mt-1.5 w-full bg-paper border border-line rounded-lg px-3.5 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand"/></label>
         <div class="mt-5 text-xs font-semibold text-muted mb-2">What do you sell or offer?</div>
         <div class="flex flex-col gap-2">${OB_INDUSTRIES.map(it => obChip(it, o.industry === it.id)).join("")}</div>`;
     } else if (o.step === 2) {
@@ -534,6 +542,11 @@ function wireOnboarding() {
     o.businessName = name.value;
     const nx = $("[data-ob-next]"); if (nx) nx.disabled = !obCanAdvance();
   };
+  const phone = $("[data-ob-phone]");
+  if (phone) phone.oninput = () => {
+    o.phone = phone.value;
+    const nx = $("[data-ob-next]"); if (nx) nx.disabled = !obCanAdvance();
+  };
   $$("[data-ob-chip]").forEach(b => b.onclick = () => {
     const id = b.dataset.obChip;
     if (o.step === 1) o.industry = id;
@@ -564,8 +577,8 @@ async function finishOnboarding(skipped) {
       state.tone = toneKey;
     } catch (ex) { /* brand limit or error — proceed anyway */ }
   }
-  try { await api("/api/onboarded", { method: "POST" }); } catch {}
-  if (state.user) state.user.onboarded = 1;
+  try { await api("/api/onboarded", { method: "POST", body: JSON.stringify({ phone: (o.phone || "").trim() }) }); } catch {}
+  if (state.user) { state.user.onboarded = 1; if (obPhoneOk(o.phone)) state.user.phone = o.phone.trim(); }
   state.onboarding = null;
   await loadData();
   state.view = "home";
@@ -1825,6 +1838,8 @@ function profileView() {
       <form id="profileForm" class="space-y-3">
         <label class="block"><span class="text-xs font-semibold text-muted">Name</span>
           <input name="name" value="${esc(u.name||"")}" class="pfi"/></label>
+        <label class="block"><span class="text-xs font-semibold text-muted">Phone number (WhatsApp)</span>
+          <input name="phone" type="tel" value="${esc(u.phone||"")}" placeholder="e.g. 0803 123 4567" class="pfi"/></label>
         <label class="block"><span class="text-xs font-semibold text-muted">Email</span>
           <input value="${esc(u.email||"")}" disabled class="pfi opacity-60 cursor-not-allowed"/>
           <span class="text-[11px] text-faint">Email can't be changed.</span></label>
@@ -1855,10 +1870,13 @@ function profileView() {
 
 async function saveProfile(e) {
   e.preventDefault();
-  const name = (new FormData(e.target).get("name") || "").trim();
+  const fd = new FormData(e.target);
+  const name = (fd.get("name") || "").trim();
+  const phone = (fd.get("phone") || "").trim();
   if (!name) return toast("Name can't be empty");
+  if (phone && !obPhoneOk(phone)) return toast("Enter a valid phone number (e.g. 0803 123 4567)");
   try {
-    const d = await api("/api/me", { method: "PUT", body: JSON.stringify({ name }) });
+    const d = await api("/api/me", { method: "PUT", body: JSON.stringify({ name, phone }) });
     state.user = d.user; state.usage = d.usage;
     toast("Profile updated"); render();
   } catch (ex) { handleErr(ex); }

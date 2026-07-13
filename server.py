@@ -189,6 +189,18 @@ def user_public(user) -> dict:
     return {**user, "is_admin": is_admin(user)}
 
 
+_PHONE_RE = re.compile(r"^\+?\d{10,15}$")
+
+
+def clean_phone(raw) -> str | None:
+    """Normalize a phone number ('0803 123-4567' → '08031234567').
+    Returns '' when blank, None when present but not a plausible number."""
+    s = re.sub(r"[\s\-().]", "", str(raw or ""))
+    if not s:
+        return ""
+    return s if _PHONE_RE.match(s) else None
+
+
 def plan_of(user) -> dict:
     return PLANS.get(user.get("plan", "free"), PLANS["free"])
 
@@ -622,11 +634,14 @@ def signup():
     email = (d.get("email") or "").strip().lower()
     name = (d.get("name") or "").strip()
     pw = d.get("password") or ""
+    phone = clean_phone(d.get("phone"))
     if "@" not in email or len(pw) < 6:
         return jsonify({"error": "Enter a valid email and a password of at least 6 characters."}), 400
+    if not phone:
+        return jsonify({"error": "Enter a valid phone number (e.g. 0803 123 4567)."}), 400
     if db.get_user_by_email(email):
         return jsonify({"error": "An account with that email already exists. Try logging in."}), 409
-    user = db.create_user(email, name or email.split("@")[0], generate_password_hash(pw))
+    user = db.create_user(email, name or email.split("@")[0], generate_password_hash(pw), phone)
     session["uid"] = user["id"]
     _send_welcome(user)
     return jsonify({"user": user_public(user), "usage": usage_payload(user)})
@@ -740,6 +755,11 @@ def update_me(user):
     name = (d.get("name") or "").strip()
     if not name:
         return jsonify({"error": "Name can't be empty."}), 400
+    if "phone" in d:
+        phone = clean_phone(d.get("phone"))
+        if phone is None:
+            return jsonify({"error": "Enter a valid phone number (e.g. 0803 123 4567)."}), 400
+        db.update_user_phone(user["id"], phone)
     updated = db.update_user_name(user["id"], name)
     return jsonify({"user": user_public(updated), "usage": usage_payload(updated)})
 
@@ -761,6 +781,9 @@ def change_password(user):
 @app.post("/api/onboarded")
 @auth
 def mark_onboarded(user):
+    phone = clean_phone((request.get_json(silent=True) or {}).get("phone"))
+    if phone:  # optional here — Google sign-ins supply it during onboarding
+        db.update_user_phone(user["id"], phone)
     db.set_onboarded(user["id"])
     return jsonify({"ok": True})
 
