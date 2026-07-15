@@ -11,7 +11,7 @@ function vmark(px = 36) {
     <span class="vi" style="font-size:${Math.round(px * 0.5)}px"><span class="vi-tip" style="border-bottom-color:#fff"></span><span class="vi-stem" style="background:#fff"></span></span></span>`;
 }
 
-const state = { user: null, overview: null, users: null, detail: null, section: "overview", q: "" };
+const state = { user: null, overview: null, users: null, applications: null, detail: null, section: "overview", q: "" };
 
 async function api(path, opts = {}) {
   const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
@@ -41,8 +41,8 @@ async function boot() {
 }
 
 async function load() {
-  const [ov, us] = await Promise.all([api("/api/admin/overview"), api("/api/admin/users")]);
-  state.overview = ov; state.users = us;
+  const [ov, us, apps] = await Promise.all([api("/api/admin/overview"), api("/api/admin/users"), api("/api/admin/applications")]);
+  state.overview = ov; state.users = us; state.applications = apps;
 }
 
 /* ------------------------------ login ----------------------------- */
@@ -166,6 +166,7 @@ function svgDonut(segs) {
 const NAV = [
   { key: "overview", label: "Overview", icon: '<path d="M4 13h7V4H4v9Zm9 7h7v-9h-7v9ZM4 20h7v-5H4v5ZM13 9h7V4h-7v5Z"/>' },
   { key: "customers", label: "Customers", icon: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>' },
+  { key: "applications", label: "Applications", icon: '<path d="M4 5h16v14H4z"/><path d="M4 10h4l2 3h4l2-3h4"/>' },
 ];
 
 function adminSidebar() {
@@ -198,7 +199,7 @@ function renderDash() {
     ${adminSidebar()}
     <div class="flex-1 min-w-0 flex flex-col">
       ${adminTopbar()}
-      <main class="flex-1 px-5 sm:px-7 py-6 w-full max-w-[1180px]">${state.section === "customers" ? customersSection() : overviewSection()}</main>
+      <main class="flex-1 px-5 sm:px-7 py-6 w-full max-w-[1180px]">${state.section === "customers" ? customersSection() : state.section === "applications" ? applicationsSection() : overviewSection()}</main>
     </div></div>`;
   wireDash();
 }
@@ -261,8 +262,42 @@ function customersSection() {
         <tbody id="custBody">${list.map(userRow).join("") || `<tr><td colspan="7" class="py-4 text-muted">No users yet.</td></tr>`}</tbody></table></div>`)}`;
 }
 
+function applicationsSection() {
+  const list = state.applications || [];
+  const newCount = list.filter(a => (a.status || "new") === "new").length;
+  return card(`<div class="flex items-center justify-between gap-3 mb-3 flex-wrap">
+      <div class="text-[13px] font-semibold text-white">Creator Initiative applications
+        <span class="text-faint">(${list.length})</span>${newCount ? ` <span class="text-[10px] bg-brand text-ink px-1.5 py-0.5 rounded-full font-bold ml-1">${newCount} new</span>` : ""}</div></div>
+    <div class="overflow-x-auto scroll-thin"><table class="w-full text-xs">
+      <thead><tr class="text-faint text-left border-b border-edge">
+        <th class="py-2 pr-3 font-semibold">Applicant</th><th class="py-2 px-2 font-semibold">Phone / WhatsApp</th>
+        <th class="py-2 px-2 font-semibold">Niche</th><th class="py-2 px-2 font-semibold">About</th>
+        <th class="py-2 px-2 font-semibold">Applied</th><th class="py-2 px-2 font-semibold">Status</th></tr></thead>
+      <tbody>${list.map(appRow).join("") || `<tr><td colspan="6" class="py-4 text-muted">No applications yet.</td></tr>`}</tbody></table></div>`);
+}
+
+function appRow(a) {
+  const wa = (a.phone || "").replace(/[^\d]/g, "").replace(/^0/, "234");
+  const statuses = ["new", "contacted", "accepted", "rejected"];
+  return `<tr class="border-b border-edge/60 hover:bg-edge/40 align-top">
+    <td class="py-2 pr-3"><div class="font-semibold text-slate-100">${esc(a.name)}</div>
+      <div class="text-faint">${esc(a.email || "")}${a.handle ? " · " + esc(a.handle) : ""}</div></td>
+    <td class="py-2 px-2 whitespace-nowrap"><a href="https://wa.me/${wa}" target="_blank" rel="noopener" class="text-brand-bright hover:underline">${esc(a.phone)}</a></td>
+    <td class="py-2 px-2 text-slate-300 whitespace-nowrap">${esc(a.niche || "—")}</td>
+    <td class="py-2 px-2 text-muted"><div class="max-w-[260px] truncate" title="${esc(a.note || "")}">${esc(a.note || "—")}</div></td>
+    <td class="py-2 px-2 text-muted whitespace-nowrap">${fmtDate(a.created_at)}</td>
+    <td class="py-2 px-2"><select data-appstatus="${a.id}" class="bg-paper border border-edge rounded-lg px-2 py-1 text-xs text-slate-100 outline-none focus:border-brand/60 capitalize">
+      ${statuses.map(s => `<option value="${s}" ${(a.status || "new") === s ? "selected" : ""}>${s}</option>`).join("")}</select></td></tr>`;
+}
+
 function wireDash() {
   $$("[data-section]").forEach(b => b.onclick = () => { state.section = b.dataset.section; state.detail = null; renderDash(); });
+  $$("[data-appstatus]").forEach(sel => sel.onchange = async () => {
+    try {
+      await api(`/api/admin/applications/${sel.dataset.appstatus}/status`, { method: "POST", body: JSON.stringify({ status: sel.value }) });
+      const a = (state.applications || []).find(x => String(x.id) === sel.dataset.appstatus); if (a) a.status = sel.value;
+    } catch (e) { /* ignore */ }
+  });
   const lo = $("#logout"); if (lo) lo.onclick = logout;
   const lo2 = $("#logout2"); if (lo2) lo2.onclick = logout;
   const rf = $("#refresh"); if (rf) rf.onclick = async () => { await load(); renderDash(); };

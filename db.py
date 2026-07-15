@@ -193,6 +193,18 @@ def init_db() -> None:
                 idea       TEXT, voice TEXT, type TEXT,
                 created_at {_REAL} NOT NULL
             )""")
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS applications (
+                id         {_PK},
+                name       TEXT NOT NULL,
+                phone      TEXT NOT NULL,
+                email      TEXT,
+                handle     TEXT,
+                niche      TEXT,
+                note       TEXT,
+                status     TEXT DEFAULT 'new',
+                created_at {_REAL} NOT NULL
+            )""")
         # migrations (idempotent on both backends)
         for tbl in ("brands", "generations", "calendars"):
             _add_col(c, tbl, "user_id", "INTEGER")
@@ -405,6 +417,37 @@ def list_favorites(user_id: int) -> list[dict]:
 def delete_favorite(user_id: int, fav_id: int) -> None:
     with _conn() as c:
         c.execute("DELETE FROM favorites WHERE id=? AND user_id=?", (fav_id, user_id))
+
+
+# ------------------- Creator Initiative applications ---------------------- #
+
+def add_application(name: str, phone: str, email: str, handle: str,
+                    niche: str, note: str) -> dict:
+    with _conn() as c:
+        aid = _insert(
+            c, "INSERT INTO applications (name, phone, email, handle, niche, note, status, created_at) "
+               "VALUES (?,?,?,?,?,?,?,?)",
+            (name, phone, email, handle, niche, note, "new", time.time()))
+    return {"id": aid}
+
+
+def list_applications(limit: int = 500) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM applications ORDER BY created_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def application_count() -> int:
+    with _conn() as c:
+        r = c.execute("SELECT COUNT(*) AS n FROM applications").fetchone()
+    return int(r["n"]) if r else 0
+
+
+def set_application_status(app_id: int, status: str) -> None:
+    with _conn() as c:
+        c.execute("UPDATE applications SET status=? WHERE id=?", (status, app_id))
 
 
 # ---------------------------- feedback ------------------------------------ #

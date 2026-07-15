@@ -228,6 +228,55 @@ def landing():
     return render_template("landing.html")
 
 
+@app.get("/community")
+def community():
+    return render_template("community.html")
+
+
+def _esc_html(s) -> str:
+    return str(s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _application_email_html(name, phone, email, handle, niche, note) -> str:
+    rows = [("Name", name), ("Phone / WhatsApp", phone), ("Email", email or "—"),
+            ("Handle", handle or "—"), ("Niche", niche or "—"), ("Note", note or "—")]
+    trs = "".join(
+        f'<tr><td style="padding:7px 10px;color:#5b6b66;border-bottom:1px solid #eef2f1;'
+        f'white-space:nowrap;vertical-align:top">{k}</td>'
+        f'<td style="padding:7px 10px;border-bottom:1px solid #eef2f1"><b>{_esc_html(v)}</b></td></tr>'
+        for k, v in rows)
+    return _email_shell(
+        f'<p>New <b>Creator Initiative</b> application:</p>'
+        f'<table style="width:100%;border-collapse:collapse;font-size:14px;margin-top:8px">{trs}</table>'
+        f'<p style="font-size:13px;color:#5b6b66;margin-top:16px">See all applications in the admin dashboard.</p>')
+
+
+@app.post("/api/community/apply")
+def community_apply():
+    """Public — a Creator Initiative application from the Community page."""
+    d = request.get_json(force=True) or {}
+    name = (d.get("name") or "").strip()
+    phone = (d.get("phone") or "").strip()
+    email = (d.get("email") or "").strip().lower()
+    handle = (d.get("handle") or "").strip()
+    niche = (d.get("niche") or "").strip()
+    note = (d.get("note") or "").strip()
+    if len(name) < 2:
+        return jsonify({"error": "Please enter your name."}), 400
+    if not _PHONE_RE.match(phone.replace(" ", "").replace("-", "")):
+        return jsonify({"error": "Enter a valid phone number, e.g. 08012345678."}), 400
+    if len(name) > 120 or len(note) > 2000 or len(handle) > 120:
+        return jsonify({"error": "One of your answers is too long."}), 400
+    db.add_application(name, phone, email, handle, niche, note)
+    try:
+        body = _application_email_html(name, phone, email, handle, niche, note)
+        for adm in ADMIN_EMAILS:
+            send_email(adm, f"New Creator Initiative application — {name}", body)
+    except Exception:
+        pass
+    return jsonify({"ok": True})
+
+
 @app.get("/app")
 def index():
     return render_template("index.html", live=LIVE, model=MODEL)
@@ -1675,6 +1724,22 @@ def admin_users(_user):
         r["is_admin"] = r["email"].lower() in ADMIN_EMAILS
         r["plan_name"] = PLANS.get(r["plan"], {}).get("name", r["plan"])
     return jsonify(rows)
+
+
+@app.get("/api/admin/applications")
+@admin
+def admin_applications(_user):
+    return jsonify(db.list_applications())
+
+
+@app.post("/api/admin/applications/<int:app_id>/status")
+@admin
+def admin_application_status(_user, app_id):
+    status = (request.get_json(force=True) or {}).get("status", "new")
+    if status not in ("new", "contacted", "accepted", "rejected"):
+        return jsonify({"error": "bad status"}), 400
+    db.set_application_status(app_id, status)
+    return jsonify({"ok": True})
 
 
 @app.get("/api/admin/users/<int:uid>")
