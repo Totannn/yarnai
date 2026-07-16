@@ -1412,14 +1412,19 @@ function boardEditor(it) {
   return `<div class="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
     <div class="absolute inset-0 bg-ink/45 backdrop-blur-sm" data-bclose></div>
     <div class="relative bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl shadow-2xl p-5 sm:p-6 max-h-[92vh] overflow-y-auto scroll-thin fade-up">
-      <div class="flex items-center justify-between mb-5">
+      <div class="sm:hidden w-10 h-1 rounded-full bg-line mx-auto mb-3"></div>
+      <div class="flex items-center justify-between mb-4">
         <span class="text-xs font-bold uppercase tracking-wide" style="color:${accent}">${(BOARD_META[st]||{}).emoji||""} ${(BOARD_META[st]||{}).label||""}</span>
-        <button data-bclose class="w-8 h-8 grid place-items-center rounded-lg text-faint hover:text-ink hover:bg-paper">✕</button>
+        <button data-bclose class="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-xs font-semibold text-muted hover:text-ink hover:bg-paper">Done ✕</button>
       </div>
 
+      <div class="flex items-center justify-between mb-2 px-0.5">
+        <span class="text-[10px] font-bold uppercase tracking-wide text-faint">Stage</span>
+        <span class="text-[10px] text-faint">Tap a stage to move it</span>
+      </div>
       <div class="flex items-center gap-1 mb-6">
-        ${BOARD_COLS.map((c, i) => `<button data-bstatus="${c.k}" title="${c.label}" class="flex-1 flex flex-col items-center gap-1.5 group">
-          <span class="w-full h-1.5 rounded-full transition" style="background:${i <= idx ? accent : '#e2e8e6'}"></span>
+        ${BOARD_COLS.map((c, i) => `<button data-bstatus="${c.k}" title="${c.label}" class="flex-1 flex flex-col items-center gap-1.5 group py-1.5 -my-1.5">
+          <span class="w-full h-2 rounded-full transition" style="background:${i <= idx ? accent : '#e2e8e6'}"></span>
           <span class="text-[9px] font-semibold ${c.k === st ? 'text-ink' : 'text-faint'} group-hover:text-brand-dark">${c.label}</span>
         </button>`).join("")}
       </div>
