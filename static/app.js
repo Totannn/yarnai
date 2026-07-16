@@ -23,6 +23,8 @@ const state = {
   scriptResult: null, scriptLoading: false,
   // gig diary
   gigs: [], gigSummary: null, gigEditing: null,
+  // content board (idea → posted)
+  board: { items: null, adding: "", editing: null, generating: false, genTone: "", genFormat: "", genMode: "copy", justLoaded: false },
   // misc
   history: [], favorites: [], editing: null, brandMode: "form", extracting: false,
   tour: null, mobileNav: false, acctMenu: false,
@@ -78,6 +80,8 @@ const ICON = {
   home: '<path d="M3 10.5 12 3l9 7.5M5.5 9.5V20h13V9.5"/><path d="M9.5 20v-6h5v6"/>',
   learn: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="m10.5 12.5 .8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7-1.7-.8 1.7-.8z"/>',
   bulk: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M3.5 14.5h17M9 4.5v15"/>',
+  board: '<rect x="3" y="4" width="5.5" height="16" rx="1.5"/><rect x="9.75" y="4" width="5.5" height="11" rx="1.5"/><rect x="16.5" y="4" width="5.5" height="7" rx="1.5"/>',
+  trash: '<path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6"/>',
   studio: '<path d="M4 5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v3M4 5v14a2 2 0 0 0 2 2h6M4 5H3m13 3 4 4m0 0-7 7-4 1 1-4 7-7m4 4-4-4"/>',
   calendar: '<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9h18M8 2.5v4M16 2.5v4M7.5 13h2m4.5 0h2m-8.5 4h2m4.5 0h2"/>',
   calendars: '<path d="M8 7h12M8 12h12M8 17h12M3.5 7h.01M3.5 12h.01M3.5 17h.01"/>',
@@ -604,6 +608,7 @@ function routeView() {
   switch (state.view) {
     case "home": return homeView();
     case "learn": return learnView();
+    case "board": return boardView();
     case "bulk": return bulkView();
     case "studio": return studioView();
     case "calendar": return calendarView();
@@ -636,7 +641,7 @@ function sidebar() {
         <div class="text-[10px] font-mono uppercase tracking-wider text-faint leading-none mt-1">Voice engine</div></div>
     </div>
     <nav class="space-y-1">
-      ${item("home","Home")}${item("studio","Studio")}${item("script","Script Writer")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
+      ${item("home","Home")}${item("board","Content Board")}${item("studio","Studio")}${item("script","Script Writer")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
       ${item("brands","Brands")}${item("learn","Learn My Brand")}${item("bulk","Bulk Catalogue")}${item("favorites","Saved Copy")}${item("history","History")}
       <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">Advisors</div>
       ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("gigs","Gig Diary")}
@@ -663,7 +668,7 @@ function sidebar() {
         <button data-mclose class="text-faint hover:text-ink p-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" class="w-5 h-5"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       </div>
       <nav class="space-y-1">
-        ${item("home","Home")}${item("studio","Studio")}${item("script","Script Writer")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
+        ${item("home","Home")}${item("board","Content Board")}${item("studio","Studio")}${item("script","Script Writer")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
         ${item("brands","Brands")}${item("learn","Learn My Brand")}${item("bulk","Bulk Catalogue")}${item("favorites","Saved Copy")}${item("history","History")}
         <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">Advisors</div>
         ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("gigs","Gig Diary")}
@@ -708,6 +713,7 @@ function topbar() {
     calendars:["Saved Plans","Your generated content calendars"],
     brands:["Brands","Your brand voices — injected into every generation"],
     learn:["Learn My Brand","Upload your material — Vertil learns your brand and breaks it down"],
+    board:["Content Board","Capture ideas and move them from spark to posted"],
     bulk:["Bulk Catalogue","Turn a list of products into on-brand descriptions — all at once"],
     favorites:["Saved Copy","Your starred, ready-to-use copy"],
     history:["History","Everything you've generated"],
@@ -1259,6 +1265,395 @@ function wireLearnDynamic() {
 }
 function refreshLearnPack() { const w = $("#learnPackWrap"); if (w) { w.innerHTML = learnPackSection(); wireLearnDynamic(); } else render(); }
 function refreshLearnCheck() { const w = $("#learnCheckWrap"); if (w) { w.innerHTML = learnCheckSection(); wireLearnDynamic(); } else render(); }
+
+/* ============================ CONTENT BOARD =========================== */
+/* Idea Vault + pipeline: capture an idea, then move it Idea → Writing →
+   To shoot → To post → Posted so nothing gets lost. Tap a card to edit it
+   (title, notes, platform, stage). "Write" hands it to the Studio pre-filled.
+   Drag-and-drop between columns on desktop; the stage stepper works anywhere. */
+const BOARD_COLS = [
+  { k: "idea", label: "Ideas", hint: "Capture the spark", accent: "#8b5cf6", emoji: "💡" },
+  { k: "create", label: "Create", hint: "Write the content here", accent: "#0e9488", emoji: "✍️" },
+  { k: "to_post", label: "To post", hint: "Ready to publish", accent: "#3b82f6", emoji: "📤" },
+  { k: "posted", label: "Posted", hint: "Done — nice one!", accent: "#22c55e", emoji: "✅" },
+];
+const BOARD_META = Object.fromEntries(BOARD_COLS.map(c => [c.k, c]));
+// map any legacy statuses onto the current stages
+const BOARD_REMAP = { scripting: "create", to_shoot: "create" };
+const boardStatus = it => BOARD_REMAP[it.status] || it.status;
+const BOARD_PLATFORMS = ["Instagram", "TikTok", "WhatsApp", "X", "Facebook", "Other"];
+const BOARD_PLAT_FMT = { Instagram: "instagram_caption", TikTok: "tiktok_caption", WhatsApp: "whatsapp_broadcast", X: "tweet", Facebook: "instagram_caption", Other: "instagram_caption" };
+const platformToFormat = p => BOARD_PLAT_FMT[p] || "instagram_caption";
+let boardDragId = null;
+
+const BOARD_STYLE = `<style>
+@keyframes flowDot { 0%{left:-2%;opacity:0} 12%{opacity:1} 88%{opacity:1} 100%{left:102%;opacity:0} }
+@keyframes flowGlow { 0%,100%{box-shadow:0 2px 6px rgba(10,35,31,.08)} 50%{box-shadow:0 2px 14px var(--c)} }
+@keyframes boardIn { from{opacity:0;transform:translateY(9px) scale(.985)} to{opacity:1;transform:none} }
+.flow-rail{display:flex;align-items:flex-start;gap:0}
+.flow-line{position:relative;flex:1;min-width:14px;height:2px;margin-top:16px;border-radius:2px;background:linear-gradient(90deg,var(--a),var(--b));opacity:.55}
+.flow-dot{position:absolute;top:50%;width:7px;height:7px;border-radius:50%;background:var(--b);box-shadow:0 0 8px var(--b);transform:translate(-50%,-50%);animation:flowDot 2.4s ease-in-out infinite}
+.flow-node{display:flex;flex-direction:column;align-items:center;gap:3px;flex-shrink:0;cursor:pointer;background:none;border:0;width:60px}
+.flow-node-dot{width:34px;height:34px;border-radius:50%;background:#fff;border:2px solid var(--c);display:grid;place-items:center;font-size:15px;box-shadow:0 2px 6px rgba(10,35,31,.08);transition:transform .2s}
+.flow-node:hover .flow-node-dot{transform:scale(1.1)}
+.flow-node-live .flow-node-dot{animation:flowGlow 2.2s ease-in-out infinite}
+.board-in{animation:boardIn .34s cubic-bezier(.2,.7,.2,1) both}
+.board-drop-hot{background:rgba(14,148,136,.08)!important;box-shadow:inset 0 0 0 2px rgba(14,148,136,.35);border-radius:12px}
+.board-drag-ghost{border-radius:12px}
+.board-ph{border:2px dashed rgba(14,148,136,.55);background:rgba(14,148,136,.07);border-radius:12px;display:flex;align-items:center;justify-content:center;color:#0c7a70;font-size:11px;font-weight:600}
+@keyframes phIn{from{opacity:0;transform:scaleY(.6)}to{opacity:1;transform:none}}
+#boardPop{animation:boardIn .16s ease both}
+</style>`;
+
+function boardFlowRail(byStatus) {
+  return `<div class="flow-rail overflow-x-auto scroll-thin mb-4 px-1">
+    ${BOARD_COLS.map((col, i) => {
+      const line = i > 0 ? `<div class="flow-line" style="--a:${BOARD_COLS[i - 1].accent};--b:${col.accent}"><span class="flow-dot" style="animation-delay:${i * 0.45}s"></span></div>` : "";
+      const live = byStatus[col.k].length > 0;
+      return `${line}<button data-bnode="${col.k}" class="flow-node ${live ? 'flow-node-live' : ''}" style="--c:${col.accent}">
+        <span class="flow-node-dot">${col.emoji}</span>
+        <span class="text-[10px] font-bold uppercase tracking-wide text-ink whitespace-nowrap">${col.label}</span>
+        <span class="text-[10px] text-faint font-mono">${byStatus[col.k].length}</span>
+      </button>`;
+    }).join("")}
+  </div>`;
+}
+
+function boardView() {
+  const items = state.board.items;
+  if (items === null) return `<div class="fade-up">${card(`<div class="text-center py-16"><div class="w-8 h-8 mx-auto border-[3px] border-brand/25 border-t-brand rounded-full spin"></div><p class="text-sm text-muted mt-3">Loading your board…</p></div>`)}</div>`;
+  const byStatus = {}; BOARD_COLS.forEach(c => byStatus[c.k] = []);
+  [...items].sort((a, b) => (a.created_at || 0) - (b.created_at || 0)).forEach(it => (byStatus[boardStatus(it)] || byStatus.idea).push(it));
+  const total = items.length, posted = byStatus.posted.length;
+  const active = total - posted;
+  const editing = state.board.editing != null ? items.find(x => x.id === state.board.editing) : null;
+  return BOARD_STYLE + `<div class="fade-up pb-24 md:pb-0">
+    <div class="rounded-xl2 p-4 sm:p-5 mb-4 text-white" style="background:linear-gradient(135deg,#0c2724,#0c7a70 80%,#0e9488)">
+      <div class="flex items-center gap-3 flex-wrap">
+        <div class="flex-1 min-w-[180px]">
+          <div class="text-[11px] font-mono uppercase tracking-wide text-brand-bright mb-1">Your content board</div>
+          <div class="font-display font-bold text-lg leading-tight">Every idea, from spark to posted.</div>
+        </div>
+        <div class="flex items-center gap-4 text-center">
+          <div><div class="font-display font-bold text-2xl">${active}</div><div class="text-[10px] text-white/60 uppercase tracking-wide">In flight</div></div>
+          <div><div class="font-display font-bold text-2xl">${posted}</div><div class="text-[10px] text-white/60 uppercase tracking-wide">Posted</div></div>
+        </div>
+      </div>
+      <form id="boardAdd" class="flex items-center gap-2 mt-4">
+        <input id="boardInput" value="${esc(state.board.adding)}" maxlength="300" placeholder="Drop a content idea…  e.g. POV: customer tries our jollof for the first time" class="flex-1 bg-white/10 border border-white/15 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder:text-white/45 focus:outline-none focus:ring-2 focus:ring-brand-bright/50"/>
+        <button type="submit" class="shrink-0 inline-flex items-center gap-1.5 text-sm font-semibold text-forest bg-brand-bright hover:brightness-105 rounded-lg px-4 py-2.5 transition">${ic("spark","w-4 h-4")} Add</button>
+      </form>
+    </div>
+    ${total === 0 ? boardEmpty() : `
+    ${boardFlowRail(byStatus)}
+    <div class="flex flex-col md:flex-row gap-3 md:gap-2.5 md:overflow-x-auto scroll-thin md:pb-2">
+      ${BOARD_COLS.map(col => boardColumn(col, byStatus[col.k])).join("")}
+    </div>`}
+    ${editing ? boardEditor(editing) : ""}
+  </div>`;
+}
+
+function boardEmpty() {
+  return `<div class="bg-white border border-line rounded-xl2 shadow-card text-center py-14 px-5">
+    <div class="w-14 h-14 mx-auto rounded-2xl bg-brand-tint text-brand grid place-items-center mb-4 text-2xl">💡</div>
+    <p class="font-display font-bold text-lg">Your content board is empty</p>
+    <p class="text-sm text-muted mt-1.5 max-w-md mx-auto leading-relaxed">Every great post starts as an idea. Drop your first one in the box above — then move it across <b>Ideas → Writing → To shoot → To post → Posted</b> so nothing ever slips through the cracks again.</p>
+  </div>`;
+}
+
+function boardColumn(col, items) {
+  return `<div id="boardcol-${col.k}" class="w-full md:w-[270px] md:shrink-0 scroll-mt-4 flex flex-col" data-col="${col.k}">
+    <div class="flex items-center gap-2 mb-2 px-0.5">
+      <span class="w-2.5 h-2.5 rounded-full" style="background:${col.accent}"></span>
+      <span class="text-xs font-bold uppercase tracking-wide text-ink">${col.label}</span>
+      <span class="text-[11px] text-faint font-mono ml-auto">${items.length}</span>
+    </div>
+    <div data-drop="${col.k}" class="board-drop space-y-2 rounded-xl transition flex-1 min-h-[120px] p-1.5 bg-paper/50">
+      ${items.map((it, i) => boardCard(it, i)).join("")}
+      ${items.length ? "" : `<div class="text-[11px] text-faint text-center py-5 border border-dashed border-line rounded-xl">${esc(col.hint)}</div>`}
+    </div>
+  </div>`;
+}
+
+function boardCard(it, i = 0) {
+  const posted = boardStatus(it) === "posted";
+  const accent = (BOARD_META[boardStatus(it)] || BOARD_COLS[0]).accent;
+  const hasContent = (it.content || "").trim().length > 0;
+  const anim = state.board.justLoaded ? ` board-in` : "";
+  const delay = state.board.justLoaded ? `animation-delay:${Math.min(i, 8) * 45}ms;` : "";
+  return `<div data-drag="${it.id}"
+    class="board-card${anim} group select-none bg-white border border-line rounded-xl p-3 shadow-sm hover:shadow-md hover:border-brand/40 transition cursor-grab active:cursor-grabbing ${posted ? 'opacity-75' : ''}"
+    style="${delay}border-left:3px solid ${accent};touch-action:pan-y">
+    <div class="text-sm font-medium leading-snug ${posted ? 'line-through text-muted' : 'text-ink'}">${esc(it.title)}</div>
+    ${hasContent ? `<div class="text-xs text-muted mt-1 leading-relaxed line-clamp-2 bg-paper border border-line rounded-md px-2 py-1">${esc(it.content)}</div>`
+      : it.notes ? `<div class="text-xs text-muted mt-1 leading-relaxed line-clamp-2">${esc(it.notes)}</div>` : ''}
+    <div class="flex items-center gap-1.5 mt-2.5">
+      ${it.platform ? `<span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-brand-tint text-brand-dark">${esc(it.platform)}</span>` : ''}
+      ${hasContent ? `<span class="inline-flex items-center gap-1 text-[10px] font-semibold text-brand">${ic("check","w-3 h-3")} Content</span>` : `<span class="text-[10px] text-faint">Tap to open</span>`}
+      <span class="flex-1"></span>
+      <span class="text-faint opacity-0 group-hover:opacity-100 transition">${ic("pencil","w-3.5 h-3.5")}</span>
+    </div>
+  </div>`;
+}
+
+function boardEditor(it) {
+  const st = boardStatus(it);
+  const idx = BOARD_COLS.findIndex(c => c.k === st);
+  const accent = (BOARD_META[st] || BOARD_COLS[0]).accent;
+  const gen = state.board.generating;
+  const cfg = state.config || {};
+  const mode = state.board.genMode || "copy";
+  const fmtList = mode === "script" ? ((cfg.script_options || {}).formats || []) : (cfg.content_types || []);
+  const fmtSel = state.board.genFormat || (mode === "script" ? "ai_pick" : platformToFormat(it.platform));
+  const toneSel = state.board.genTone || state.tone || "friendly";
+  const formats = fmtList.map(t => `<option value="${t.key}" ${t.key === fmtSel ? "selected" : ""}>${esc(t.label)}</option>`).join("");
+  const tones = (cfg.tones || []).map(t => `<option value="${t.key}" ${t.key === toneSel ? "selected" : ""}>${esc(t.label)}</option>`).join("");
+  const hasContent = (it.content || "").trim().length > 0;
+  return `<div class="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+    <div class="absolute inset-0 bg-ink/45 backdrop-blur-sm" data-bclose></div>
+    <div class="relative bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl shadow-2xl p-5 sm:p-6 max-h-[92vh] overflow-y-auto scroll-thin fade-up">
+      <div class="flex items-center justify-between mb-5">
+        <span class="text-xs font-bold uppercase tracking-wide" style="color:${accent}">${(BOARD_META[st]||{}).emoji||""} ${(BOARD_META[st]||{}).label||""}</span>
+        <button data-bclose class="w-8 h-8 grid place-items-center rounded-lg text-faint hover:text-ink hover:bg-paper">✕</button>
+      </div>
+
+      <div class="flex items-center gap-1 mb-6">
+        ${BOARD_COLS.map((c, i) => `<button data-bstatus="${c.k}" title="${c.label}" class="flex-1 flex flex-col items-center gap-1.5 group">
+          <span class="w-full h-1.5 rounded-full transition" style="background:${i <= idx ? accent : '#e2e8e6'}"></span>
+          <span class="text-[9px] font-semibold ${c.k === st ? 'text-ink' : 'text-faint'} group-hover:text-brand-dark">${c.label}</span>
+        </button>`).join("")}
+      </div>
+
+      <label class="block mb-3"><span class="text-xs font-semibold text-muted">Idea / title</span>
+        <input id="beTitle" value="${esc(it.title)}" maxlength="300" class="mt-1.5 w-full bg-paper border border-line rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand/30"/></label>
+
+      <label class="block mb-3"><span class="text-xs font-semibold text-muted">Notes <span class="text-faint font-normal">(hook, angle, reminders…)</span></span>
+        <textarea id="beNotes" rows="2" maxlength="2000" placeholder="Add a hook, the angle, or anything to remember." class="mt-1.5 w-full bg-paper border border-line rounded-lg px-3.5 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-brand/30">${esc(it.notes || "")}</textarea></label>
+
+      <div class="mb-4"><span class="text-xs font-semibold text-muted">Platform</span>
+        <div class="flex flex-wrap gap-1.5 mt-1.5">
+          ${BOARD_PLATFORMS.map(p => `<button data-bplat="${p}" class="text-xs px-2.5 py-1 rounded-full border transition ${it.platform === p ? 'border-brand bg-brand-tint text-brand-dark font-semibold' : 'border-line text-muted hover:border-brand/40'}">${p}</button>`).join("")}
+        </div></div>
+
+      <!-- mini studio: generate & attach the actual content or a full script -->
+      <div class="rounded-xl2 border border-line bg-paper p-3.5 mb-4">
+        <div class="flex items-center justify-between mb-2.5">
+          <div class="inline-flex items-center rounded-lg border border-line bg-white p-0.5">
+            <button data-bmode="copy" class="text-xs px-3 py-1 rounded-md transition ${mode === 'copy' ? 'bg-brand-tint text-brand-dark font-semibold' : 'text-muted hover:text-brand-dark'}">Post / Caption</button>
+            <button data-bmode="script" class="text-xs px-3 py-1 rounded-md transition ${mode === 'script' ? 'bg-brand-tint text-brand-dark font-semibold' : 'text-muted hover:text-brand-dark'}">🎬 Script</button>
+          </div>
+          ${hasContent ? `<button data-bcopy2 class="text-xs font-semibold text-brand hover:text-brand-dark">Copy</button>` : ""}
+        </div>
+        <textarea id="beContent" rows="${mode === 'script' ? 7 : 5}" placeholder="${mode === 'script' ? 'Generate a scene-by-scene script below — or write your own.' : 'Generate on-brand copy below, or write / paste your caption here.'}" class="w-full bg-white border border-line rounded-lg px-3 py-2.5 text-sm leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-brand/30 ${gen ? 'opacity-60' : ''}">${esc(it.content || "")}</textarea>
+        <div class="flex items-center gap-1.5 mt-2">
+          <select id="beFormat" title="${mode === 'script' ? 'Video format' : 'Content format'}" class="bg-white border border-line rounded-lg px-2 py-1.5 text-xs text-ink outline-none focus:ring-2 focus:ring-brand/25 min-w-0 flex-1">${formats}</select>
+          <select id="beTone" class="bg-white border border-line rounded-lg px-2 py-1.5 text-xs text-ink outline-none focus:ring-2 focus:ring-brand/25 min-w-0 flex-1">${tones}</select>
+          <button data-bgen="${it.id}" ${gen ? "disabled" : ""} class="shrink-0 inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-brand hover:bg-brand-dark rounded-lg px-3 py-2 disabled:opacity-60">
+            ${gen ? '<span class="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full spin"></span> Writing…' : ic("spark","w-3.5 h-3.5") + (hasContent ? " Regenerate" : (mode === 'script' ? " Write script" : " Generate"))}
+          </button>
+        </div>
+        <div class="text-[10px] text-faint mt-1.5">${mode === 'script' ? 'Scene-by-scene: hook, on-screen text, voiceover & caption — in your brand voice.' : 'Uses your active brand voice. Edit freely after.'}</div>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <button data-bstudio="${it.id}" class="flex-1 inline-flex items-center justify-center gap-2 text-sm font-semibold text-brand-dark bg-brand-tint hover:bg-brand hover:text-white rounded-xl py-3 transition">Open in full Studio ↗</button>
+        <button data-bdel2="${it.id}" title="Delete" class="w-11 h-11 grid place-items-center rounded-xl border border-line text-faint hover:text-rose-500 hover:border-rose-300">${ic("trash","w-4 h-4")}</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function curBoardItem() {
+  return (state.board.items || []).find(x => x.id === state.board.editing);
+}
+function persistBoardItem(it) {
+  if (!it) return;
+  api(`/api/content/${it.id}`, { method: "POST", body: JSON.stringify({ title: it.title, notes: it.notes || "", status: boardStatus(it), platform: it.platform || "", content: it.content || "" }) }).catch(() => {});
+}
+
+async function generateForBoard(id) {
+  if (state.board.generating) return;
+  const it = (state.board.items || []).find(x => x.id === id); if (!it) return;
+  const tone = state.board.genTone || state.tone || "friendly";
+  const idea = it.title + (it.notes ? "\n\n" + it.notes : "");
+  state.board.generating = true; render();
+  try {
+    if ((state.board.genMode || "copy") === "script") {
+      const fmt = state.board.genFormat || "ai_pick";
+      const r = await api("/api/script/generate", { method: "POST", body: JSON.stringify({
+        idea, platform: it.platform || "TikTok", length: "30 seconds",
+        goal: "Go viral / awareness", format: fmt, tone, brand_id: state.activeBrandId }) });
+      if (r.used != null && state.usage) state.usage.used = r.used;
+      it.content = scriptToText(r);
+    } else {
+      const fmt = state.board.genFormat || platformToFormat(it.platform);
+      let full = "";
+      const res = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ brand_id: state.activeBrandId, content_type: fmt, tone, brief: idea, variants: 1 }) });
+      if (res.status === 402) { const d = await res.json(); state.board.generating = false; render(); return openUpgrade(d.error); }
+      if (res.status === 401) return logout();
+      const reader = res.body.getReader(), dec = new TextDecoder(); let buf = "";
+      while (true) {
+        const { done, value } = await reader.read(); if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const chunks = buf.split("\n\n"); buf = chunks.pop();
+        for (const ch of chunks) {
+          const ev = parseSSE(ch); if (!ev) continue;
+          if (ev.event === "delta") { full += ev.data.text; const live = $("#beContent"); if (live) { live.value = full; live.scrollTop = live.scrollHeight; } }
+          else if (ev.event === "done") { full = (ev.data.variants && ev.data.variants[0]) || full; if (ev.data.used != null && state.usage) { state.usage.used = ev.data.used; } }
+        }
+      }
+      it.content = full.trim();
+    }
+    if (boardStatus(it) === "idea") it.status = "create";
+    persistBoardItem(it);
+  } catch (ex) { if (ex.data && ex.data.upgrade) openUpgrade(ex.message); else toast("⚠ " + ex.message); }
+  finally { state.board.generating = false; render(); }
+}
+
+async function addBoardIdea(e) {
+  if (e) e.preventDefault();
+  const title = (state.board.adding || "").trim();
+  if (title.length < 2) return;
+  try {
+    const item = await api("/api/content", { method: "POST", body: JSON.stringify({ title, brand_id: state.activeBrandId }) });
+    state.board.items = [item, ...(state.board.items || [])];
+    state.board.adding = "";
+    render();
+  } catch (ex) { toast("⚠ " + ex.message); }
+}
+
+function setBoardStatus(id, status) {
+  const it = (state.board.items || []).find(x => x.id === id); if (!it || it.status === status) return;
+  it.status = status; render();
+  api(`/api/content/${id}`, { method: "POST", body: JSON.stringify({ status }) }).catch(() => {});
+}
+
+function setBoardPlatform(id, p) {
+  const it = (state.board.items || []).find(x => x.id === id); if (!it) return;
+  it.platform = it.platform === p ? "" : p; render();
+  api(`/api/content/${id}`, { method: "POST", body: JSON.stringify({ platform: it.platform }) }).catch(() => {});
+}
+
+async function deleteBoardItem(id) {
+  state.board.items = (state.board.items || []).filter(x => x.id !== id);
+  if (state.board.editing === id) state.board.editing = null;
+  render();
+  try { await api(`/api/content/${id}`, { method: "DELETE" }); } catch (ex) { /* ignore */ }
+}
+
+function writeFromBoard(id) {
+  const it = (state.board.items || []).find(x => x.id === id); if (!it) return;
+  state.brief = it.title + (it.notes ? "\n\n" + it.notes : "");
+  if (boardStatus(it) === "idea") { it.status = "create"; api(`/api/content/${id}`, { method: "POST", body: JSON.stringify({ status: "create" }) }).catch(() => {}); }
+  state.board.editing = null;
+  toast("Idea sent to Studio — pick a voice & format");
+  goto("studio");
+}
+
+function wireBoard() {
+  hideBoardPreview();
+  const form = $("#boardAdd"); if (form) form.onsubmit = addBoardIdea;
+  const inp = $("#boardInput"); if (inp) inp.oninput = () => state.board.adding = inp.value;
+  $$("[data-bnode]").forEach(b => b.onclick = () => { const c = $("#boardcol-" + b.dataset.bnode); if (c) c.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" }); });
+  $$("[data-drag]").forEach(el => {
+    el.onclick = () => { if (boardSuppressClick) return; state.board.editing = +el.dataset.drag; state.board.genTone = ""; state.board.genFormat = ""; render(); };
+    el.onpointerdown = e => beginBoardDrag(e, el);
+    el.onmouseenter = () => showBoardPreview(el);
+    el.onmouseleave = hideBoardPreview;
+  });
+  // editor
+  $$("[data-bclose]").forEach(b => b.onclick = () => { persistBoardItem(curBoardItem()); state.board.editing = null; render(); });
+  $$("[data-bstatus]").forEach(b => b.onclick = () => setBoardStatus(state.board.editing, b.dataset.bstatus));
+  $$("[data-bplat]").forEach(b => b.onclick = () => setBoardPlatform(state.board.editing, b.dataset.bplat));
+  const bt = $("#beTitle"); if (bt) { bt.oninput = () => { const it = curBoardItem(); if (it) it.title = bt.value; }; bt.onblur = () => persistBoardItem(curBoardItem()); }
+  const bn = $("#beNotes"); if (bn) { bn.oninput = () => { const it = curBoardItem(); if (it) it.notes = bn.value; }; bn.onblur = () => persistBoardItem(curBoardItem()); }
+  const bc = $("#beContent"); if (bc) { bc.oninput = () => { const it = curBoardItem(); if (it) it.content = bc.value; }; bc.onblur = () => persistBoardItem(curBoardItem()); }
+  $$("[data-bmode]").forEach(b => b.onclick = () => { if (state.board.genMode !== b.dataset.bmode) { state.board.genMode = b.dataset.bmode; state.board.genFormat = ""; render(); } });
+  const bf = $("#beFormat"); if (bf) bf.onchange = () => state.board.genFormat = bf.value;
+  const btn = $("#beTone"); if (btn) btn.onchange = () => state.board.genTone = btn.value;
+  const bg = $("[data-bgen]"); if (bg) bg.onclick = () => generateForBoard(+bg.dataset.bgen);
+  const cp = $("[data-bcopy2]"); if (cp) cp.onclick = () => { const it = curBoardItem(); if (it) { navigator.clipboard.writeText(it.content || ""); cp.textContent = "Copied ✓"; setTimeout(() => cp.textContent = "Copy", 1400); } };
+  const bs = $("[data-bstudio]"); if (bs) bs.onclick = () => writeFromBoard(+bs.dataset.bstudio);
+  const bd2 = $("[data-bdel2]"); if (bd2) bd2.onclick = () => { if (confirm("Delete this idea?")) deleteBoardItem(+bd2.dataset.bdel2); };
+  state.board.justLoaded = false;  // entrance animation plays once, not on every re-render
+}
+
+// Rich hover preview of a card's generated content
+function showBoardPreview(el) {
+  const it = (state.board.items || []).find(x => x.id === +el.dataset.drag);
+  if (!it || !(it.content || "").trim()) return;
+  let pop = document.getElementById("boardPop");
+  if (!pop) { pop = document.createElement("div"); pop.id = "boardPop"; document.body.appendChild(pop); }
+  pop.className = "bg-white border border-line rounded-xl shadow-2xl p-3.5";
+  pop.innerHTML = `<div class="flex items-center gap-1.5 mb-1.5"><span class="w-2 h-2 rounded-full" style="background:${(BOARD_META[boardStatus(it)] || BOARD_COLS[0]).accent}"></span><span class="text-[10px] font-bold uppercase tracking-wide text-brand-dark">${esc(it.platform || "Content")} · preview</span></div><div class="text-xs leading-relaxed text-ink/90 whitespace-pre-wrap">${esc(it.content)}</div>`;
+  const r = el.getBoundingClientRect(), popW = 300, popMaxH = 260;
+  let left = r.right + 10; if (left + popW > window.innerWidth - 8) left = r.left - popW - 10;
+  if (left < 8) left = 8;
+  let top = r.top; if (top + popMaxH > window.innerHeight - 8) top = Math.max(8, window.innerHeight - popMaxH - 8);
+  pop.style.cssText = `position:fixed;z-index:70;left:${left}px;top:${top}px;width:${popW}px;max-height:${popMaxH}px;overflow:hidden;pointer-events:none`;
+  pop.style.display = "block";
+}
+function hideBoardPreview() { const pop = document.getElementById("boardPop"); if (pop) pop.style.display = "none"; }
+
+// Custom pointer drag (mouse): drag a card with faint lines fanning to every stage node
+let boardSuppressClick = false;
+function beginBoardDrag(e, el) {
+  if (e.pointerType === "touch" || e.button !== 0) return;  // touch/tap opens the editor instead
+  const rect = el.getBoundingClientRect();
+  const offX = e.clientX - rect.left, offY = e.clientY - rect.top, w = rect.width, h = rect.height;
+  const startX = e.clientX, startY = e.clientY;
+  let dragging = false, ghost = null, svg = null, lines = [], nodes = [], ph = null;
+  const begin = () => {
+    dragging = true; boardSuppressClick = true; hideBoardPreview();
+    document.body.style.userSelect = "none"; document.body.style.webkitUserSelect = "none";
+    if (window.getSelection) { const s = window.getSelection(); if (s) s.removeAllRanges(); }
+    el.style.visibility = "hidden";
+    ph = document.createElement("div");
+    ph.className = "board-ph";
+    ph.style.cssText = `height:${h}px;animation:phIn .14s ease both`;
+    ph.textContent = "Drop here";
+    ghost = el.cloneNode(true);
+    ghost.classList.add("board-drag-ghost");
+    ghost.style.cssText = `position:fixed;left:0;top:0;width:${w}px;margin:0;z-index:80;pointer-events:none;box-shadow:0 18px 44px rgba(10,35,31,.30);transform:rotate(-1.5deg) scale(1.03);opacity:.98`;
+    document.body.appendChild(ghost);
+    nodes = $$(".flow-node").map(n => { const r = n.getBoundingClientRect(); return { k: n.dataset.bnode, x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+    svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("style", "position:fixed;inset:0;width:100vw;height:100vh;z-index:79;pointer-events:none");
+    nodes.forEach(() => { const ln = document.createElementNS("http://www.w3.org/2000/svg", "line"); ln.setAttribute("stroke-linecap", "round"); svg.appendChild(ln); lines.push(ln); });
+    document.body.appendChild(svg);
+  };
+  const zoneAt = (x, y) => { const t = document.elementFromPoint(x, y); return t && t.closest ? t.closest("[data-drop]") : null; };
+  const move = ev => {
+    if (!dragging) { if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 6) begin(); else return; }
+    ghost.style.left = (ev.clientX - offX) + "px"; ghost.style.top = (ev.clientY - offY) + "px";
+    const zone = zoneAt(ev.clientX, ev.clientY), zoneK = zone ? zone.dataset.drop : null;
+    $$("[data-drop]").forEach(z => z.classList.toggle("board-drop-hot", z.dataset.drop === zoneK));
+    if (zone) { if (ph.parentElement !== zone) zone.appendChild(ph); }
+    else if (ph.parentElement) ph.remove();
+    lines.forEach((ln, i) => {
+      const n = nodes[i], hot = n.k === zoneK;
+      ln.setAttribute("x1", n.x); ln.setAttribute("y1", n.y); ln.setAttribute("x2", ev.clientX); ln.setAttribute("y2", ev.clientY);
+      ln.setAttribute("stroke", hot ? (BOARD_META[n.k] || {}).accent || "#0e9488" : "#5c726e");
+      ln.setAttribute("stroke-width", hot ? "2.5" : "1.5");
+      ln.setAttribute("opacity", hot ? "0.9" : "0.16");
+      ln.setAttribute("stroke-dasharray", hot ? "" : "4 5");
+    });
+    ev.preventDefault();
+  };
+  const up = ev => {
+    document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", up);
+    document.body.style.userSelect = ""; document.body.style.webkitUserSelect = "";
+    el.style.visibility = "";
+    if (!dragging) return;
+    if (ghost) ghost.remove(); if (svg) svg.remove(); if (ph && ph.parentElement) ph.remove();
+    $$("[data-drop]").forEach(z => z.classList.remove("board-drop-hot"));
+    const zone = zoneAt(ev.clientX, ev.clientY);
+    if (zone) setBoardStatus(+el.dataset.drag, zone.dataset.drop);
+    setTimeout(() => { boardSuppressClick = false; }, 250);
+  };
+  document.addEventListener("pointermove", move); document.addEventListener("pointerup", up);
+}
 
 /* ============================ BULK CATALOGUE =========================== */
 /* Upload/enter a list of products → get an on-brand description for each in
@@ -2220,6 +2615,8 @@ function wire() {
     wireLearnDynamic();
   }
 
+  if (state.view === "board") wireBoard();
+
   if (state.view === "bulk") {
     if (state.bulk.started) { wireBulkRun(); }
     else {
@@ -2315,6 +2712,7 @@ async function goto(view, fromPop) {
     if (view === "favorites") state.favorites = await api("/api/favorites");
     if (view === "calendars") state.savedCalendars = await api("/api/calendars");
     if (view === "gigs") { state.gigEditing = null; await loadGigs(); }
+    if (view === "board") { state.board.items = await api("/api/content"); state.board.justLoaded = true; }
   } catch {}
   render();
   // Add a browser history entry so the phone's Back gesture returns to the

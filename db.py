@@ -205,6 +205,20 @@ def init_db() -> None:
                 status     TEXT DEFAULT 'new',
                 created_at {_REAL} NOT NULL
             )""")
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS content_items (
+                id         {_PK},
+                user_id    INTEGER NOT NULL,
+                brand_id   INTEGER,
+                title      TEXT NOT NULL,
+                notes      TEXT,
+                content    TEXT,
+                status     TEXT NOT NULL DEFAULT 'idea',
+                platform   TEXT,
+                created_at {_REAL} NOT NULL,
+                updated_at {_REAL} NOT NULL
+            )""")
+        _add_col(c, "content_items", "content", "TEXT DEFAULT ''")
         # migrations (idempotent on both backends)
         for tbl in ("brands", "generations", "calendars"):
             _add_col(c, tbl, "user_id", "INTEGER")
@@ -448,6 +462,54 @@ def application_count() -> int:
 def set_application_status(app_id: int, status: str) -> None:
     with _conn() as c:
         c.execute("UPDATE applications SET status=? WHERE id=?", (status, app_id))
+
+
+# --------------------- content board (idea → posted) ---------------------- #
+
+def add_content_item(user_id: int, title: str, notes: str = "",
+                     brand_id=None, platform: str = "") -> dict:
+    now = time.time()
+    with _conn() as c:
+        iid = _insert(
+            c, "INSERT INTO content_items (user_id, brand_id, title, notes, status, platform, created_at, updated_at) "
+               "VALUES (?,?,?,?,?,?,?,?)",
+            (user_id, brand_id, title, notes, "idea", platform, now, now))
+        r = c.execute("SELECT * FROM content_items WHERE id=?", (iid,)).fetchone()
+    return dict(r)
+
+
+def list_content_items(user_id: int) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM content_items WHERE user_id=? ORDER BY updated_at DESC", (user_id,)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_content_item(user_id: int, item_id: int, status=None,
+                        title=None, notes=None, platform=None, content=None) -> None:
+    sets, vals = [], []
+    if status is not None:
+        sets.append("status=?"); vals.append(status)
+    if title is not None:
+        sets.append("title=?"); vals.append(title)
+    if notes is not None:
+        sets.append("notes=?"); vals.append(notes)
+    if platform is not None:
+        sets.append("platform=?"); vals.append(platform)
+    if content is not None:
+        sets.append("content=?"); vals.append(content)
+    if not sets:
+        return
+    sets.append("updated_at=?"); vals.append(time.time())
+    vals += [item_id, user_id]
+    with _conn() as c:
+        c.execute(f"UPDATE content_items SET {', '.join(sets)} WHERE id=? AND user_id=?", tuple(vals))
+
+
+def delete_content_item(user_id: int, item_id: int) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM content_items WHERE id=? AND user_id=?", (item_id, user_id))
 
 
 # ---------------------------- feedback ------------------------------------ #

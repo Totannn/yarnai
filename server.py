@@ -1181,6 +1181,60 @@ def feedback(user):
     return jsonify({"ok": True})
 
 
+# ------------------------- content board ---------------------------------- #
+
+CONTENT_STATUSES = ("idea", "create", "to_post", "posted")
+
+
+@app.get("/api/content")
+@auth
+def content_list(user):
+    return jsonify(db.list_content_items(user["id"]))
+
+
+@app.post("/api/content")
+@auth
+def content_add(user):
+    d = request.get_json(force=True) or {}
+    title = (d.get("title") or "").strip()
+    if len(title) < 2:
+        return jsonify({"error": "Add an idea first."}), 400
+    if len(title) > 300:
+        return jsonify({"error": "Keep the idea to a short line."}), 400
+    item = db.add_content_item(user["id"], title, (d.get("notes") or "").strip(),
+                               d.get("brand_id"), (d.get("platform") or "").strip())
+    return jsonify(item)
+
+
+@app.post("/api/content/<int:item_id>")
+@auth
+def content_update(user, item_id):
+    d = request.get_json(force=True) or {}
+    status = d.get("status")
+    if status is not None and status not in CONTENT_STATUSES:
+        return jsonify({"error": "bad status"}), 400
+    title = d.get("title")
+    if title is not None:
+        title = title.strip()[:300]
+    platform = d.get("platform")
+    if platform is not None:
+        platform = platform.strip()[:40]
+    content = d.get("content")
+    if content is not None:
+        content = content[:8000]
+    db.update_content_item(user["id"], item_id, status=status, title=title,
+                           notes=(d.get("notes").strip()[:2000] if d.get("notes") is not None else None),
+                           platform=platform, content=content)
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/content/<int:item_id>")
+@auth
+def content_delete(user, item_id):
+    db.delete_content_item(user["id"], item_id)
+    return jsonify({"ok": True})
+
+
 # ---------------------------- generation ---------------------------------- #
 
 def _sse(event, data):
