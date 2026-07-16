@@ -27,6 +27,8 @@ function fmtDate(epoch) {
   try { return new Date(epoch * 1000).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" }); }
   catch { return "—"; }
 }
+const waHref = p => "https://wa.me/" + String(p || "").replace(/[^\d]/g, "").replace(/^0/, "234");
+const phoneLink = p => p ? `<a href="${waHref(p)}" target="_blank" rel="noopener" class="text-brand-bright hover:underline">${esc(p)}</a>` : '<span class="text-faint">—</span>';
 
 /* ------------------------------ boot ------------------------------ */
 
@@ -244,7 +246,8 @@ function filteredUsers() {
   const q = (state.q || "").toLowerCase().trim();
   if (!q) return state.users;
   return state.users.filter(u => (u.name || "").toLowerCase().includes(q)
-    || (u.email || "").toLowerCase().includes(q) || (u.plan_name || "").toLowerCase().includes(q));
+    || (u.email || "").toLowerCase().includes(q) || (u.plan_name || "").toLowerCase().includes(q)
+    || (u.phone || "").toLowerCase().includes(q));
 }
 
 function customersSection() {
@@ -256,10 +259,10 @@ function customersSection() {
         <input id="userSearch" value="${esc(state.q || "")}" placeholder="Search name, email, plan…" class="bg-paper border border-edge rounded-lg px-3 py-1.5 text-xs text-slate-100 w-60 outline-none focus:border-brand/60"/></div>
       <div class="overflow-x-auto scroll-thin"><table class="w-full text-xs">
         <thead><tr class="text-faint text-left border-b border-edge">
-          <th class="py-2 pr-3 font-semibold">User</th><th class="py-2 px-2 font-semibold">Plan</th>
+          <th class="py-2 pr-3 font-semibold">User</th><th class="py-2 px-2 font-semibold">Phone</th><th class="py-2 px-2 font-semibold">Plan</th>
           <th class="py-2 px-2 font-semibold text-right">Gens</th><th class="py-2 px-2 font-semibold text-right">Tokens</th>
           <th class="py-2 px-2 font-semibold text-right">AI spend</th><th class="py-2 px-2 font-semibold">Joined</th><th></th></tr></thead>
-        <tbody id="custBody">${list.map(userRow).join("") || `<tr><td colspan="7" class="py-4 text-muted">No users yet.</td></tr>`}</tbody></table></div>`)}`;
+        <tbody id="custBody">${list.map(userRow).join("") || `<tr><td colspan="8" class="py-4 text-muted">No users yet.</td></tr>`}</tbody></table></div>`)}`;
 }
 
 function applicationsSection() {
@@ -305,7 +308,7 @@ function wireDash() {
   if (se) se.oninput = () => {
     state.q = se.value;
     const list = filteredUsers();
-    const tb = $("#custBody"); if (tb) tb.innerHTML = list.map(userRow).join("") || `<tr><td colspan="7" class="py-4 text-muted">No matching users.</td></tr>`;
+    const tb = $("#custBody"); if (tb) tb.innerHTML = list.map(userRow).join("") || `<tr><td colspan="8" class="py-4 text-muted">No matching users.</td></tr>`;
     const cnt = $("#custCount"); if (cnt) cnt.textContent = `(${list.length}${list.length !== state.users.length ? " of " + state.users.length : ""})`;
     wireRows();
   };
@@ -317,6 +320,7 @@ function userRow(u) {
   const planColor = u.plan === "free" ? "bg-edge text-muted" : "bg-brand/20 text-brand";
   return `<tr class="border-b border-edge/60 hover:bg-edge/40 ${u.suspended ? "opacity-60" : ""}">
     <td class="py-2 pr-3"><div class="font-semibold flex items-center gap-1.5 text-slate-100">${esc(u.name || "—")}${u.is_admin ? ' <span class="text-[8.5px] bg-brand text-ink px-1 py-0.5 rounded">ADMIN</span>' : ""}${u.suspended ? ' <span class="text-[8.5px] bg-rose-500/80 text-white px-1 py-0.5 rounded">SUSPENDED</span>' : ""}</div><div class="text-faint">${esc(u.email)}</div></td>
+    <td class="py-2 px-2 whitespace-nowrap">${phoneLink(u.phone)}</td>
     <td class="py-2 px-2"><span class="px-2 py-0.5 rounded-full ${planColor}">${esc(u.plan_name)}</span></td>
     <td class="py-2 px-2 text-right tabular-nums text-slate-300">${u.gens}</td>
     <td class="py-2 px-2 text-right tabular-nums text-slate-300">${tok.toLocaleString()}</td>
@@ -331,7 +335,7 @@ function userDetail(d) {
   return `<div class="bg-panel border border-brand/40 rounded-xl2 p-5 fade-up">
     <div class="flex items-start justify-between mb-3">
       <div><div class="font-display font-extrabold text-lg">${esc(u.name || "—")} ${u.is_admin ? '<span class="text-[8.5px] bg-brand text-ink px-1 py-0.5 rounded align-middle">ADMIN</span>' : ""}</div>
-        <div class="text-xs text-muted">${esc(u.email)} · ${esc(u.plan_name)} plan · joined ${fmtDate(u.created_at)}</div></div>
+        <div class="text-xs text-muted">${esc(u.email)}${u.phone ? " · " + phoneLink(u.phone) : ""} · ${esc(u.plan_name)} plan · joined ${fmtDate(u.created_at)}</div></div>
       <button id="closeDetail" class="text-sm text-muted hover:text-white">✕ close</button></div>
     ${u.suspended ? '<div class="mb-3 text-xs font-semibold text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded-lg px-3 py-2">This account is suspended — the user cannot log in.</div>' : ""}
     ${adminControls(u)}
