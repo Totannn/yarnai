@@ -219,6 +219,9 @@ def init_db() -> None:
                 updated_at {_REAL} NOT NULL
             )""")
         _add_col(c, "content_items", "content", "TEXT DEFAULT ''")
+        _add_col(c, "content_items", "reminder_at", f"{_REAL}")
+        _add_col(c, "content_items", "reminded", "INTEGER NOT NULL DEFAULT 0")
+        _add_col(c, "users", "notify_stage", "INTEGER NOT NULL DEFAULT 1")
         # migrations (idempotent on both backends)
         for tbl in ("brands", "generations", "calendars"):
             _add_col(c, tbl, "user_id", "INTEGER")
@@ -245,7 +248,7 @@ def create_user(email: str, name: str, password_hash: str, phone: str = "") -> d
 
 def get_user(user_id: int) -> dict | None:
     with _conn() as c:
-        r = c.execute("SELECT id, email, name, plan, onboarded, phone, created_at FROM users WHERE id=?", (user_id,)).fetchone()
+        r = c.execute("SELECT id, email, name, plan, onboarded, phone, notify_stage, created_at FROM users WHERE id=?", (user_id,)).fetchone()
     return dict(r) if r else None
 
 
@@ -486,8 +489,19 @@ def list_content_items(user_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def get_content_item(user_id: int, item_id: int) -> dict | None:
+    with _conn() as c:
+        r = c.execute("SELECT * FROM content_items WHERE id=? AND user_id=?", (item_id, user_id)).fetchone()
+    return dict(r) if r else None
+
+
+# _UNSET lets callers distinguish "leave as-is" (default) from "clear to NULL" (None)
+_UNSET = object()
+
+
 def update_content_item(user_id: int, item_id: int, status=None,
-                        title=None, notes=None, platform=None, content=None) -> None:
+                        title=None, notes=None, platform=None, content=None,
+                        reminder_at=_UNSET) -> None:
     sets, vals = [], []
     if status is not None:
         sets.append("status=?"); vals.append(status)
@@ -499,6 +513,9 @@ def update_content_item(user_id: int, item_id: int, status=None,
         sets.append("platform=?"); vals.append(platform)
     if content is not None:
         sets.append("content=?"); vals.append(content)
+    if reminder_at is not _UNSET:
+        sets.append("reminder_at=?"); vals.append(reminder_at)
+        sets.append("reminded=?"); vals.append(0)  # a fresh reminder time re-arms it
     if not sets:
         return
     sets.append("updated_at=?"); vals.append(time.time())
@@ -510,6 +527,26 @@ def update_content_item(user_id: int, item_id: int, status=None,
 def delete_content_item(user_id: int, item_id: int) -> None:
     with _conn() as c:
         c.execute("DELETE FROM content_items WHERE id=? AND user_id=?", (item_id, user_id))
+
+
+def due_reminders(now: float) -> list[dict]:
+    """Content items whose reminder time has arrived and not yet sent."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM content_items WHERE reminder_at IS NOT NULL "
+            "AND reminder_at<=? AND reminded=0 ORDER BY reminder_at", (now,)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def mark_reminded(item_id: int) -> None:
+    with _conn() as c:
+        c.execute("UPDATE content_items SET reminded=1 WHERE id=?", (item_id,))
+
+
+def set_notify_stage(user_id: int, on: bool) -> None:
+    with _conn() as c:
+        c.execute("UPDATE users SET notify_stage=? WHERE id=?", (1 if on else 0, user_id))
 
 
 # ---------------------------- feedback ------------------------------------ #

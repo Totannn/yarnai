@@ -40,6 +40,7 @@ PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY", "").strip()
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
 MAIL_FROM = os.getenv("MAIL_FROM", "Vertil <onboarding@resend.dev>").strip()
+APP_BASE_URL = os.getenv("APP_BASE_URL", "https://vertil.ng").rstrip("/")
 
 # --------------------------------------------------------------------------- #
 # Two-tier models. Standard is the fast, cost-efficient default; Premium is the
@@ -321,7 +322,7 @@ _MANIFEST = {
 # Network-first service worker. Never touches /api or non-GET requests, so SSE
 # streaming, auth and POSTs are unaffected; just enables install + offline shell.
 _SERVICE_WORKER = """
-const CACHE = 'vertil-v2';
+const CACHE = 'vertil-v3';
 const SHELL = ['/app', '/static/app.js', '/manifest.webmanifest', '/static/icon-192.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).catch(()=>{})); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k))))); self.clients.claim(); });
@@ -1184,6 +1185,49 @@ def feedback(user):
 # ------------------------- content board ---------------------------------- #
 
 CONTENT_STATUSES = ("idea", "create", "to_post", "posted")
+CONTENT_STAGE_LABELS = {"idea": "Ideas", "create": "Create", "to_post": "To post", "posted": "Posted"}
+
+
+def _stage_email_html(title, stage_label, content, link):
+    body = (f'<p style="font-size:14px;color:#333;background:#f6faf9;border:1px solid #e2e8e6;'
+            f'border-radius:10px;padding:12px;white-space:pre-wrap;margin-top:6px">{_esc_html(content)[:600]}</p>'
+            if (content or "").strip() else "")
+    return _email_shell(
+        f'<p>Your content just moved to <b style="color:#0e9488">{_esc_html(stage_label)}</b>:</p>'
+        f'<p style="font-size:16px;font-weight:700;margin-top:6px">{_esc_html(title)}</p>{body}'
+        f'{_btn(link, "Open your board")}')
+
+
+def _reminder_email_html(title, content, link):
+    body = (f'<p style="font-size:14px;color:#333;background:#f6faf9;border:1px solid #e2e8e6;'
+            f'border-radius:10px;padding:12px;white-space:pre-wrap;margin-top:6px">{_esc_html(content)[:900]}</p>'
+            if (content or "").strip() else "")
+    return _email_shell(
+        f'<p>⏰ Reminder — time to post this:</p>'
+        f'<p style="font-size:16px;font-weight:700;margin-top:6px">{_esc_html(title)}</p>{body}'
+        f'{_btn(link, "Open your board")}')
+
+
+def _run_due_reminders() -> int:
+    """Email users whose content-post reminders are due. Run from cron."""
+    sent = 0
+    for r in db.due_reminders(time.time()):
+        db.mark_reminded(r["id"])  # mark first so a mail failure never re-sends in a loop
+        u = db.get_user(r["user_id"])
+        if not u:
+            continue
+        try:
+            send_email(u["email"], f"⏰ Time to post: {r['title']}",
+                       _reminder_email_html(r["title"], r.get("content"), APP_BASE_URL + "/app"))
+            sent += 1
+        except Exception:
+            pass
+    return sent
+
+
+@app.cli.command("send-reminders")
+def _send_reminders_cli():
+    print(f"[Vertil] sent {_run_due_reminders()} reminder(s)")
 
 
 @app.get("/api/content")
@@ -1222,10 +1266,42 @@ def content_update(user, item_id):
     content = d.get("content")
     if content is not None:
         content = content[:8000]
+
+    before = db.get_content_item(user["id"], item_id)
+    if not before:
+        return jsonify({"error": "Not found"}), 404
+
+    reminder_kw = {}
+    if "reminder_at" in d:
+        ra = d.get("reminder_at")
+        try:
+            reminder_kw["reminder_at"] = float(ra) if ra else None
+        except (TypeError, ValueError):
+            reminder_kw["reminder_at"] = None
+
     db.update_content_item(user["id"], item_id, status=status, title=title,
                            notes=(d.get("notes").strip()[:2000] if d.get("notes") is not None else None),
-                           platform=platform, content=content)
+                           platform=platform, content=content, **reminder_kw)
+
+    # notify on a real stage change, if the user has it on
+    if status and status != before.get("status") and user.get("notify_stage"):
+        try:
+            after = db.get_content_item(user["id"], item_id) or before
+            send_email(user["email"],
+                       f"{CONTENT_STAGE_LABELS.get(status, status)}: {after.get('title', '')}",
+                       _stage_email_html(after.get("title", ""), CONTENT_STAGE_LABELS.get(status, status),
+                                         after.get("content"), APP_BASE_URL + "/app"))
+        except Exception:
+            pass
     return jsonify({"ok": True})
+
+
+@app.post("/api/content/notify")
+@auth
+def content_notify(user):
+    on = bool((request.get_json(force=True) or {}).get("on"))
+    db.set_notify_stage(user["id"], on)
+    return jsonify({"ok": True, "notify_stage": 1 if on else 0})
 
 
 @app.delete("/api/content/<int:item_id>")

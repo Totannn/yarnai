@@ -1285,6 +1285,17 @@ const BOARD_PLATFORMS = ["Instagram", "TikTok", "WhatsApp", "X", "Facebook", "Ot
 const BOARD_PLAT_FMT = { Instagram: "instagram_caption", TikTok: "tiktok_caption", WhatsApp: "whatsapp_broadcast", X: "tweet", Facebook: "instagram_caption", Other: "instagram_caption" };
 const platformToFormat = p => BOARD_PLAT_FMT[p] || "instagram_caption";
 let boardDragId = null;
+// datetime-local <-> epoch-seconds helpers (local time)
+function toLocalInput(ts) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000), p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function fmtReminder(ts) {
+  if (!ts) return "";
+  try { return new Date(ts * 1000).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); }
+  catch (e) { return ""; }
+}
 
 const BOARD_STYLE = `<style>
 @keyframes flowDot { 0%{left:-2%;opacity:0} 12%{opacity:1} 88%{opacity:1} 100%{left:102%;opacity:0} }
@@ -1327,6 +1338,7 @@ function boardView() {
   const total = items.length, posted = byStatus.posted.length;
   const active = total - posted;
   const editing = state.board.editing != null ? items.find(x => x.id === state.board.editing) : null;
+  const notifyOn = !!(state.user && state.user.notify_stage);
   return BOARD_STYLE + `<div class="fade-up pb-24 md:pb-0">
     <div class="rounded-xl2 p-4 sm:p-5 mb-4 text-white" style="background:linear-gradient(135deg,#0c2724,#0c7a70 80%,#0e9488)">
       <div class="flex items-center gap-3 flex-wrap">
@@ -1343,6 +1355,10 @@ function boardView() {
         <input id="boardInput" value="${esc(state.board.adding)}" maxlength="300" placeholder="Drop a content idea…  e.g. POV: customer tries our jollof for the first time" class="flex-1 bg-white/10 border border-white/15 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder:text-white/45 focus:outline-none focus:ring-2 focus:ring-brand-bright/50"/>
         <button type="submit" class="shrink-0 inline-flex items-center gap-1.5 text-sm font-semibold text-forest bg-brand-bright hover:brightness-105 rounded-lg px-4 py-2.5 transition">${ic("spark","w-4 h-4")} Add</button>
       </form>
+      <button data-bnotify class="mt-3 inline-flex items-center gap-2 text-[11px] text-white/65 hover:text-white transition">
+        <span class="relative w-8 h-4 rounded-full ${notifyOn ? 'bg-brand-bright' : 'bg-white/25'} transition shrink-0"><span class="absolute top-0.5 ${notifyOn ? 'left-4' : 'left-0.5'} w-3 h-3 bg-white rounded-full transition"></span></span>
+        Email me when a card changes stage
+      </button>
     </div>
     ${total === 0 ? boardEmpty() : `
     ${boardFlowRail(byStatus)}
@@ -1439,6 +1455,17 @@ function boardEditor(it) {
         <div class="flex flex-wrap gap-1.5 mt-1.5">
           ${BOARD_PLATFORMS.map(p => `<button data-bplat="${p}" class="text-xs px-2.5 py-1 rounded-full border transition ${it.platform === p ? 'border-brand bg-brand-tint text-brand-dark font-semibold' : 'border-line text-muted hover:border-brand/40'}">${p}</button>`).join("")}
         </div></div>
+
+      <div class="mb-4">
+        <span class="text-xs font-semibold text-muted">${ic("calendar_plus","w-3.5 h-3.5 inline -mt-0.5")} Remind me to post</span>
+        <div class="flex items-center gap-2 mt-1.5">
+          <input id="beRemind" type="datetime-local" value="${toLocalInput(it.reminder_at)}" class="flex-1 bg-paper border border-line rounded-lg px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-brand/30"/>
+          ${it.reminder_at ? `<button data-brclear class="text-xs font-semibold text-rose-500 hover:text-rose-600 shrink-0">Clear</button>` : ""}
+        </div>
+        ${it.reminder_at
+          ? `<div class="text-[11px] text-brand-dark font-semibold mt-1.5">⏰ We'll email you ${esc(fmtReminder(it.reminder_at))}</div>`
+          : `<div class="text-[10px] text-faint mt-1">Pick a date & time — Vertil emails you then so you don't forget to post.</div>`}
+      </div>
 
       <!-- mini studio: generate & attach the actual content or a full script -->
       <div class="rounded-xl2 border border-line bg-paper p-3.5 mb-4">
@@ -1547,6 +1574,14 @@ async function deleteBoardItem(id) {
   try { await api(`/api/content/${id}`, { method: "DELETE" }); } catch (ex) { /* ignore */ }
 }
 
+function setBoardReminder(id, epoch) {
+  const it = (state.board.items || []).find(x => x.id === id); if (!it) return;
+  it.reminder_at = epoch || null; it.reminded = 0;
+  render();
+  api(`/api/content/${id}`, { method: "POST", body: JSON.stringify({ reminder_at: epoch || "" }) }).catch(() => {});
+  toast(epoch ? "Reminder set — we'll email you" : "Reminder cleared");
+}
+
 function writeFromBoard(id) {
   const it = (state.board.items || []).find(x => x.id === id); if (!it) return;
   state.brief = it.title + (it.notes ? "\n\n" + it.notes : "");
@@ -1561,6 +1596,12 @@ function wireBoard() {
   const form = $("#boardAdd"); if (form) form.onsubmit = addBoardIdea;
   const inp = $("#boardInput"); if (inp) inp.oninput = () => state.board.adding = inp.value;
   $$("[data-bnode]").forEach(b => b.onclick = () => { const c = $("#boardcol-" + b.dataset.bnode); if (c) c.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" }); });
+  const nb = $("[data-bnotify]"); if (nb) nb.onclick = async () => {
+    const on = !(state.user && state.user.notify_stage);
+    if (state.user) state.user.notify_stage = on ? 1 : 0; render();
+    try { await api("/api/content/notify", { method: "POST", body: JSON.stringify({ on }) }); }
+    catch (e) { toast("⚠ Couldn't update that setting"); }
+  };
   $$("[data-drag]").forEach(el => {
     el.onclick = () => { if (boardSuppressClick) return; state.board.editing = +el.dataset.drag; state.board.genTone = ""; state.board.genFormat = ""; render(); };
     el.onpointerdown = e => beginBoardDrag(e, el);
@@ -1579,6 +1620,8 @@ function wireBoard() {
   const btn = $("#beTone"); if (btn) btn.onchange = () => state.board.genTone = btn.value;
   const bg = $("[data-bgen]"); if (bg) bg.onclick = () => generateForBoard(+bg.dataset.bgen);
   const cp = $("[data-bcopy2]"); if (cp) cp.onclick = () => { const it = curBoardItem(); if (it) { navigator.clipboard.writeText(it.content || ""); cp.textContent = "Copied ✓"; setTimeout(() => cp.textContent = "Copy", 1400); } };
+  const rem = $("#beRemind"); if (rem) rem.onchange = () => { const v = rem.value ? Math.round(new Date(rem.value).getTime() / 1000) : null; setBoardReminder(state.board.editing, v); };
+  const rc = $("[data-brclear]"); if (rc) rc.onclick = () => setBoardReminder(state.board.editing, null);
   const bs = $("[data-bstudio]"); if (bs) bs.onclick = () => writeFromBoard(+bs.dataset.bstudio);
   const bd2 = $("[data-bdel2]"); if (bd2) bd2.onclick = () => { if (confirm("Delete this idea?")) deleteBoardItem(+bd2.dataset.bdel2); };
   state.board.justLoaded = false;  // entrance animation plays once, not on every re-render
