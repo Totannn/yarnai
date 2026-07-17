@@ -1185,17 +1185,6 @@ def feedback(user):
 # ------------------------- content board ---------------------------------- #
 
 CONTENT_STATUSES = ("idea", "create", "to_post", "posted")
-CONTENT_STAGE_LABELS = {"idea": "Ideas", "create": "Create", "to_post": "To post", "posted": "Posted"}
-
-
-def _stage_email_html(title, stage_label, content, link):
-    body = (f'<p style="font-size:14px;color:#333;background:#f6faf9;border:1px solid #e2e8e6;'
-            f'border-radius:10px;padding:12px;white-space:pre-wrap;margin-top:6px">{_esc_html(content)[:600]}</p>'
-            if (content or "").strip() else "")
-    return _email_shell(
-        f'<p>Your content just moved to <b style="color:#0e9488">{_esc_html(stage_label)}</b>:</p>'
-        f'<p style="font-size:16px;font-weight:700;margin-top:6px">{_esc_html(title)}</p>{body}'
-        f'{_btn(link, "Open your board")}')
 
 
 def _reminder_email_html(title, content, link):
@@ -1267,10 +1256,6 @@ def content_update(user, item_id):
     if content is not None:
         content = content[:8000]
 
-    before = db.get_content_item(user["id"], item_id)
-    if not before:
-        return jsonify({"error": "Not found"}), 404
-
     reminder_kw = {}
     if "reminder_at" in d:
         ra = d.get("reminder_at")
@@ -1282,26 +1267,7 @@ def content_update(user, item_id):
     db.update_content_item(user["id"], item_id, status=status, title=title,
                            notes=(d.get("notes").strip()[:2000] if d.get("notes") is not None else None),
                            platform=platform, content=content, **reminder_kw)
-
-    # notify on a real stage change, if the user has it on
-    if status and status != before.get("status") and user.get("notify_stage"):
-        try:
-            after = db.get_content_item(user["id"], item_id) or before
-            send_email(user["email"],
-                       f"{CONTENT_STAGE_LABELS.get(status, status)}: {after.get('title', '')}",
-                       _stage_email_html(after.get("title", ""), CONTENT_STAGE_LABELS.get(status, status),
-                                         after.get("content"), APP_BASE_URL + "/app"))
-        except Exception:
-            pass
     return jsonify({"ok": True})
-
-
-@app.post("/api/content/notify")
-@auth
-def content_notify(user):
-    on = bool((request.get_json(force=True) or {}).get("on"))
-    db.set_notify_stage(user["id"], on)
-    return jsonify({"ok": True, "notify_stage": 1 if on else 0})
 
 
 @app.delete("/api/content/<int:item_id>")

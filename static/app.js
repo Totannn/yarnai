@@ -1338,7 +1338,6 @@ function boardView() {
   const total = items.length, posted = byStatus.posted.length;
   const active = total - posted;
   const editing = state.board.editing != null ? items.find(x => x.id === state.board.editing) : null;
-  const notifyOn = !!(state.user && state.user.notify_stage);
   return BOARD_STYLE + `<div class="fade-up pb-24 md:pb-0">
     <div class="rounded-xl2 p-4 sm:p-5 mb-4 text-white" style="background:linear-gradient(135deg,#0c2724,#0c7a70 80%,#0e9488)">
       <div class="flex items-center gap-3 flex-wrap">
@@ -1355,10 +1354,6 @@ function boardView() {
         <input id="boardInput" value="${esc(state.board.adding)}" maxlength="300" placeholder="Drop a content idea…  e.g. POV: customer tries our jollof for the first time" class="flex-1 bg-white/10 border border-white/15 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder:text-white/45 focus:outline-none focus:ring-2 focus:ring-brand-bright/50"/>
         <button type="submit" class="shrink-0 inline-flex items-center gap-1.5 text-sm font-semibold text-forest bg-brand-bright hover:brightness-105 rounded-lg px-4 py-2.5 transition">${ic("spark","w-4 h-4")} Add</button>
       </form>
-      <button data-bnotify class="mt-3 inline-flex items-center gap-2 text-[11px] text-white/65 hover:text-white transition">
-        <span class="relative w-8 h-4 rounded-full ${notifyOn ? 'bg-brand-bright' : 'bg-white/25'} transition shrink-0"><span class="absolute top-0.5 ${notifyOn ? 'left-4' : 'left-0.5'} w-3 h-3 bg-white rounded-full transition"></span></span>
-        Email me when a card changes stage
-      </button>
     </div>
     ${total === 0 ? boardEmpty() : `
     ${boardFlowRail(byStatus)}
@@ -1596,12 +1591,6 @@ function wireBoard() {
   const form = $("#boardAdd"); if (form) form.onsubmit = addBoardIdea;
   const inp = $("#boardInput"); if (inp) inp.oninput = () => state.board.adding = inp.value;
   $$("[data-bnode]").forEach(b => b.onclick = () => { const c = $("#boardcol-" + b.dataset.bnode); if (c) c.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" }); });
-  const nb = $("[data-bnotify]"); if (nb) nb.onclick = async () => {
-    const on = !(state.user && state.user.notify_stage);
-    if (state.user) state.user.notify_stage = on ? 1 : 0; render();
-    try { await api("/api/content/notify", { method: "POST", body: JSON.stringify({ on }) }); }
-    catch (e) { toast("⚠ Couldn't update that setting"); }
-  };
   $$("[data-drag]").forEach(el => {
     el.onclick = () => { if (boardSuppressClick) return; state.board.editing = +el.dataset.drag; state.board.genTone = ""; state.board.genFormat = ""; render(); };
     el.onpointerdown = e => beginBoardDrag(e, el);
