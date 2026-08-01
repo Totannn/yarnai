@@ -113,7 +113,7 @@ def cost_naira(model_id: str, in_tok: int, out_tok: int) -> float:
 
 
 def is_admin(user) -> bool:
-    return bool(user) and (user.get("email", "").lower() in ADMIN_EMAILS)
+    return bool(user) and ((user.get("email", "").lower() in ADMIN_EMAILS) or bool(user.get("is_admin")))
 
 
 app = Flask(__name__)
@@ -381,6 +381,7 @@ def config():
         "google_client_id": GOOGLE_CLIENT_ID,
         "advisor_options": voice.advisor_options(),
         "script_options": voice.script_options(),
+        "writer_modes": voice.writer_modes(),
     })
 
 
@@ -1135,6 +1136,50 @@ def brand_check(user):
     return jsonify({"result": result})
 
 
+# ----------------------------- Writers Hub -------------------------------- #
+
+def _demo_writer(text):
+    return {"improved": text.strip(),
+            "notes": ["Demo mode — add your ANTHROPIC_API_KEY in .env to edit for real."]}
+
+
+@app.post("/api/writer/polish")
+@auth
+def writer_polish(user):
+    if _over_limit(user):
+        return jsonify({"error": "Monthly limit reached. Upgrade to keep polishing.", "upgrade": True}), 402
+    d = request.get_json(force=True) or {}
+    text = (d.get("text") or "").strip()
+    if len(text) < 3:
+        return jsonify({"error": "Paste a draft to work on."}), 400
+    if len(text) > 16000:
+        return jsonify({"error": "That draft is long — keep it under about 16,000 characters."}), 400
+    mode = d.get("mode") if d.get("mode") in voice.WRITER_MODES else "polish"
+    tone = d.get("tone") or None
+    instruction = (d.get("instruction") or "").strip()[:200]
+    profile = db.get_brand(user["id"], d.get("brand_id")) if d.get("brand_id") else None
+    client = get_client()
+    if client is None:
+        return jsonify({"result": _demo_writer(text), "demo": True})
+    try:
+        with client.messages.stream(
+            model=MODEL, max_tokens=8000, thinking={"type": "adaptive"}, output_config={"effort": "low"},
+            system=voice.build_writer_system(mode, tone, profile, instruction),
+            messages=[{"role": "user", "content": voice.build_writer_user(text)}],
+        ) as s:
+            raw = "".join(s.text_stream)
+            u = s.get_final_message().usage
+        result = voice.parse_writer_json(raw)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    if not result:
+        return jsonify({"error": "Couldn't process that draft — try again."}), 502
+    db.save_generation(user["id"], d.get("brand_id"), "writer", tone or "", f"[{mode}] writer polish",
+                       [result["improved"]], model=MODEL, input_tokens=u.input_tokens,
+                       output_tokens=u.output_tokens, cost=cost_naira(MODEL, u.input_tokens, u.output_tokens))
+    return jsonify({"result": result, "used": db.monthly_generation_count(user["id"])})
+
+
 # ------------------------------ history ----------------------------------- #
 
 @app.get("/api/history")
@@ -1781,7 +1826,7 @@ _TYPE_LABELS = {**{k: v["label"] for k, v in voice.CONTENT_TYPES.items()},
                 "content_calendar": "Content Calendar",
                 "rate_advisor": "Rate Advisor", "personal_brand": "Brand Advisor",
                 "script": "Script Writer", "brand_learn": "Learn My Brand",
-                "bulk_catalog": "Bulk Catalogue"}
+                "bulk_catalog": "Bulk Catalogue", "writer": "Writers Hub"}
 
 
 @app.get("/api/admin/overview")
@@ -1817,7 +1862,8 @@ def admin_overview(_user):
 def admin_users(_user):
     rows = db.admin_users()
     for r in rows:
-        r["is_admin"] = r["email"].lower() in ADMIN_EMAILS
+        r["is_owner"] = r["email"].lower() in ADMIN_EMAILS
+        r["is_admin"] = r["is_owner"] or bool(r.get("is_admin"))
         r["plan_name"] = PLANS.get(r["plan"], {}).get("name", r["plan"])
     return jsonify(rows)
 
@@ -1845,12 +1891,30 @@ def admin_user(_user, uid):
     if not detail:
         return jsonify({"error": "Not found"}), 404
     detail["user"]["plan_name"] = PLANS.get(detail["user"]["plan"], {}).get("name", detail["user"]["plan"])
-    detail["user"]["is_admin"] = detail["user"]["email"].lower() in ADMIN_EMAILS
+    detail["user"]["is_owner"] = detail["user"]["email"].lower() in ADMIN_EMAILS
+    detail["user"]["is_admin"] = detail["user"]["is_owner"] or bool(detail["user"].get("is_admin"))
     for t in detail["by_type"]:
         t["label"] = _TYPE_LABELS.get(t["content_type"], t["content_type"])
     for g in detail["recent"]:
         g["label"] = _TYPE_LABELS.get(g["content_type"], g["content_type"])
     return jsonify(detail)
+
+
+@app.post("/api/admin/users/<int:uid>/admin")
+@admin
+def admin_set_admin(actor, uid):
+    """Grant or revoke admin access for another user (owner admins in ADMIN_EMAILS
+    are permanent and can't be changed here)."""
+    target = db.get_user(uid)
+    if not target:
+        return jsonify({"error": "User not found."}), 404
+    on = bool((request.get_json(force=True) or {}).get("on"))
+    if target["email"].lower() in ADMIN_EMAILS:
+        return jsonify({"error": "This is an owner admin (set in ADMIN_EMAILS) — can't change it here."}), 400
+    if uid == actor["id"] and not on:
+        return jsonify({"error": "You can't remove your own admin access."}), 400
+    db.set_admin(uid, on)
+    return jsonify({"ok": True, "is_admin": on})
 
 
 @app.post("/api/admin/users/<int:uid>/update")

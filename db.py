@@ -248,7 +248,7 @@ def create_user(email: str, name: str, password_hash: str, phone: str = "") -> d
 
 def get_user(user_id: int) -> dict | None:
     with _conn() as c:
-        r = c.execute("SELECT id, email, name, plan, onboarded, phone, notify_stage, created_at FROM users WHERE id=?", (user_id,)).fetchone()
+        r = c.execute("SELECT id, email, name, plan, onboarded, phone, notify_stage, is_admin, created_at FROM users WHERE id=?", (user_id,)).fetchone()
     return dict(r) if r else None
 
 
@@ -549,6 +549,11 @@ def set_notify_stage(user_id: int, on: bool) -> None:
         c.execute("UPDATE users SET notify_stage=? WHERE id=?", (1 if on else 0, user_id))
 
 
+def set_admin(user_id: int, on: bool) -> None:
+    with _conn() as c:
+        c.execute("UPDATE users SET is_admin=? WHERE id=?", (1 if on else 0, user_id))
+
+
 # ---------------------------- feedback ------------------------------------ #
 
 def add_feedback(user_id: int, brand_id, rating: str, text: str) -> None:
@@ -723,7 +728,7 @@ def home_overview(user_id: int) -> dict:
     win30 = now - 30 * 86400          # current quota window
     prev30 = win30 - 30 * 86400        # the 30 days before that
     win14 = now - 14 * 86400
-    REAL = "g.content_type NOT IN ('content_calendar','brand_learn','bulk_catalog')"   # exclude non-copy rows
+    REAL = "g.content_type NOT IN ('content_calendar','brand_learn','bulk_catalog','writer')"   # exclude non-copy rows
     with _conn() as c:
         total = c.execute(
             f"SELECT COUNT(*) AS n FROM generations g WHERE g.user_id=? AND {REAL}",
@@ -826,12 +831,12 @@ def admin_overview() -> dict:
 def admin_users() -> list[dict]:
     with _conn() as c:
         rows = c.execute(
-            "SELECT u.id, u.email, u.name, u.phone, u.plan, u.created_at, u.onboarded, u.suspended, "
+            "SELECT u.id, u.email, u.name, u.phone, u.plan, u.created_at, u.onboarded, u.suspended, u.is_admin, "
             "COUNT(g.id) AS gens, COALESCE(SUM(g.input_tokens),0) AS it, "
             "COALESCE(SUM(g.output_tokens),0) AS ot, COALESCE(SUM(g.cost),0) AS cost, "
             "MAX(g.created_at) AS last_active "
             "FROM users u LEFT JOIN generations g ON g.user_id=u.id "
-            "GROUP BY u.id, u.email, u.name, u.phone, u.plan, u.created_at, u.onboarded, u.suspended "
+            "GROUP BY u.id, u.email, u.name, u.phone, u.plan, u.created_at, u.onboarded, u.suspended, u.is_admin "
             "ORDER BY u.created_at DESC"
         ).fetchall()
     return [dict(r) for r in rows]
@@ -839,7 +844,7 @@ def admin_users() -> list[dict]:
 
 def admin_user_detail(uid: int) -> dict | None:
     with _conn() as c:
-        u = c.execute("SELECT id,email,name,phone,plan,onboarded,created_at,suspended,notes FROM users WHERE id=?", (uid,)).fetchone()
+        u = c.execute("SELECT id,email,name,phone,plan,onboarded,created_at,suspended,notes,is_admin FROM users WHERE id=?", (uid,)).fetchone()
         if not u:
             return None
         daily = [dict(r) for r in c.execute(

@@ -25,6 +25,8 @@ const state = {
   gigs: [], gigSummary: null, gigEditing: null,
   // content board (idea → posted)
   board: { items: null, adding: "", editing: null, generating: false, genTone: "", genFormat: "", genMode: "copy", justLoaded: false },
+  // writers hub
+  writers: { input: "", mode: "polish", tweak: "", brandOn: false, loading: false, result: null, original: "", diffView: false },
   // misc
   history: [], favorites: [], editing: null, brandMode: "form", extracting: false,
   tour: null, mobileNav: false, acctMenu: false,
@@ -81,6 +83,7 @@ const ICON = {
   learn: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="m10.5 12.5 .8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7-1.7-.8 1.7-.8z"/>',
   bulk: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M3.5 14.5h17M9 4.5v15"/>',
   board: '<rect x="3" y="4" width="5.5" height="16" rx="1.5"/><rect x="9.75" y="4" width="5.5" height="11" rx="1.5"/><rect x="16.5" y="4" width="5.5" height="7" rx="1.5"/>',
+  writers: '<path d="M5 3h9l5 5v13H5z"/><path d="M14 3v5h5"/><path d="m8.5 16 4.6-4.6 1.5 1.5L10 17.5l-2 .5z"/>',
   trash: '<path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6"/>',
   studio: '<path d="M4 5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v3M4 5v14a2 2 0 0 0 2 2h6M4 5H3m13 3 4 4m0 0-7 7-4 1 1-4 7-7m4 4-4-4"/>',
   calendar: '<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9h18M8 2.5v4M16 2.5v4M7.5 13h2m4.5 0h2m-8.5 4h2m4.5 0h2"/>',
@@ -604,13 +607,28 @@ function render() {
   wire();
 }
 
+// Studio workspace: Generate + the create-tools live here as sub-tabs
+const WORKSPACE_VIEWS = ["studio", "writers", "script", "bulk"];
+function studioTabs(active) {
+  const tabs = [
+    { k: "studio", label: "Generate", icon: "spark" },
+    { k: "writers", label: "Writers Hub", icon: "writers" },
+    { k: "script", label: "Scripts", icon: "film" },
+    { k: "bulk", label: "Bulk", icon: "bulk" },
+  ];
+  return `<div class="flex items-center gap-1 mb-4 bg-white border border-line rounded-xl p-1 overflow-x-auto scroll-thin">
+    ${tabs.map(t => `<button data-nav="${t.k}" class="shrink-0 inline-flex items-center gap-1.5 text-sm font-semibold px-3.5 py-2 rounded-lg transition ${active === t.k ? 'bg-brand-tint text-brand-dark' : 'text-muted hover:text-ink hover:bg-paper'}">${ic(t.icon, "w-4 h-4")} ${t.label}</button>`).join("")}
+  </div>`;
+}
+
 function routeView() {
   switch (state.view) {
     case "home": return homeView();
     case "learn": return learnView();
     case "board": return boardView();
-    case "bulk": return bulkView();
-    case "studio": return studioView();
+    case "writers": return studioTabs("writers") + writersView();
+    case "bulk": return studioTabs("bulk") + bulkView();
+    case "studio": return studioTabs("studio") + studioView();
     case "calendar": return calendarView();
     case "calendars": return savedCalendarsView();
     case "brands": return state.editing !== null ? brandForm() : brandsView();
@@ -619,7 +637,7 @@ function routeView() {
     case "pricing": return pricingView();
     case "rate": return rateView();
     case "advisor": return brandAdvisorView();
-    case "script": return scriptView();
+    case "script": return studioTabs("script") + scriptView();
     case "gigs": return gigsView();
     case "profile": return profileView();
     default: return studioView();
@@ -628,7 +646,7 @@ function routeView() {
 
 function sidebar() {
   const item = (key, label) => {
-    const on = state.view === key;
+    const on = state.view === key || (key === "studio" && WORKSPACE_VIEWS.includes(state.view));
     return `<button data-nav="${key}" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition
       ${on ? "bg-brand-tint text-brand-dark" : "text-muted hover:bg-paper hover:text-ink"}">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px]">${ICON[key]}</svg>${label}</button>`;
@@ -641,8 +659,8 @@ function sidebar() {
         <div class="text-[10px] font-mono uppercase tracking-wider text-faint leading-none mt-1">Voice engine</div></div>
     </div>
     <nav class="space-y-1">
-      ${item("home","Home")}${item("board","Content Board")}${item("studio","Studio")}${item("script","Script Writer")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
-      ${item("brands","Brands")}${item("learn","Learn My Brand")}${item("bulk","Bulk Catalogue")}${item("favorites","Saved Copy")}${item("history","History")}
+      ${item("home","Home")}${item("board","Content Board")}${item("studio","Studio")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
+      ${item("brands","Brands")}${item("learn","Learn My Brand")}${item("favorites","Saved Copy")}${item("history","History")}
       <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">Advisors</div>
       ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("gigs","Gig Diary")}
     </nav>
@@ -668,8 +686,8 @@ function sidebar() {
         <button data-mclose class="text-faint hover:text-ink p-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" class="w-5 h-5"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       </div>
       <nav class="space-y-1">
-        ${item("home","Home")}${item("board","Content Board")}${item("studio","Studio")}${item("script","Script Writer")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
-        ${item("brands","Brands")}${item("learn","Learn My Brand")}${item("bulk","Bulk Catalogue")}${item("favorites","Saved Copy")}${item("history","History")}
+        ${item("home","Home")}${item("board","Content Board")}${item("studio","Studio")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
+        ${item("brands","Brands")}${item("learn","Learn My Brand")}${item("favorites","Saved Copy")}${item("history","History")}
         <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">Advisors</div>
         ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("gigs","Gig Diary")}
         ${item("pricing","Plans & Pricing")}
@@ -714,6 +732,7 @@ function topbar() {
     brands:["Brands","Your brand voices — injected into every generation"],
     learn:["Learn My Brand","Upload your material — Vertil learns your brand and breaks it down"],
     board:["Content Board","Capture ideas and move them from spark to posted"],
+    writers:["Writers Hub","Fix grammar & punctuation and make any draft read smoothly"],
     bulk:["Bulk Catalogue","Turn a list of products into on-brand descriptions — all at once"],
     favorites:["Saved Copy","Your starred, ready-to-use copy"],
     history:["History","Everything you've generated"],
@@ -1265,6 +1284,192 @@ function wireLearnDynamic() {
 }
 function refreshLearnPack() { const w = $("#learnPackWrap"); if (w) { w.innerHTML = learnPackSection(); wireLearnDynamic(); } else render(); }
 function refreshLearnCheck() { const w = $("#learnCheckWrap"); if (w) { w.innerHTML = learnCheckSection(); wireLearnDynamic(); } else render(); }
+
+/* ============================ WRITERS HUB =========================== */
+/* Paste a draft → fix grammar/punctuation + improve fluency, keeping the
+   writer's meaning and voice. Optional brand-aware polish. */
+const WRITER_TWEAKS = [
+  { k: "concise", label: "More concise", instr: "Make it more concise without losing meaning." },
+  { k: "professional", label: "More professional", instr: "Make the tone more professional." },
+  { k: "warmer", label: "Warmer", instr: "Make it warmer and friendlier." },
+  { k: "persuasive", label: "More persuasive", instr: "Make it more persuasive and compelling." },
+  { k: "simpler", label: "Simpler", instr: "Make it simpler and easier to read." },
+];
+const WRITER_STYLE = `<style>
+.wd-del{background:#fde8e8;color:#c0392b;text-decoration:line-through;border-radius:3px;padding:0 1px}
+.wd-ins{background:#dff2ef;color:#0b6f66;text-decoration:none;border-radius:3px;padding:0 1px}
+</style>`;
+
+// word-level diff (LCS) → inline <del>/<ins> markup; null if too long to diff
+function writerDiff(a, b) {
+  const A = a.match(/\s+|[^\s]+/g) || [], B = b.match(/\s+|[^\s]+/g) || [];
+  const n = A.length, m = B.length;
+  if (n > 2200 || m > 2200) return null;
+  const dp = []; for (let i = 0; i <= n; i++) dp.push(new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  let i = 0, j = 0, out = "";
+  while (i < n && j < m) {
+    if (A[i] === B[j]) { out += esc(A[i]); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out += `<del class="wd-del">${esc(A[i])}</del>`; i++; }
+    else { out += `<ins class="wd-ins">${esc(B[j])}</ins>`; j++; }
+  }
+  while (i < n) { out += `<del class="wd-del">${esc(A[i])}</del>`; i++; }
+  while (j < m) { out += `<ins class="wd-ins">${esc(B[j])}</ins>`; j++; }
+  return out;
+}
+
+const _WR_STOP = new Set("the a an and or but so to of in on at for with is are was were be been being it its this that these those you your yours we our us i my me they them their he she his her as if then than have has had do does did will would can could just".split(" "));
+function writerStats(original, improved) {
+  const wc = t => (t.trim().match(/\S+/g) || []).length;
+  const wo = wc(original), wi = wc(improved);
+  const sentences = (improved.match(/[^.!?]+[.!?]+/g) || (improved.trim() ? [improved] : [])).filter(s => s.trim());
+  const longS = sentences.filter(s => (s.trim().match(/\S+/g) || []).length > 25).length;
+  const read = Math.max(1, Math.round(wi / 200));
+  const freq = {}; (improved.toLowerCase().match(/[a-z']+/g) || []).forEach(w => { if (w.length > 3 && !_WR_STOP.has(w)) freq[w] = (freq[w] || 0) + 1; });
+  let top = null, topN = 0; for (const w in freq) if (freq[w] > topN) { topN = freq[w]; top = w; }
+  return { wo, wi, longS, read, top: topN >= 4 ? top : null, topN };
+}
+
+function writersView() {
+  const W = state.writers;
+  const modes = (state.config && state.config.writer_modes) || [];
+  const brands = state.brands || [];
+  const activeBrand = brands.find(b => b.id === state.activeBrandId) || brands[0];
+  const canGo = (W.input || "").trim().length >= 3 && !W.loading;
+  return WRITER_STYLE + `<div class="fade-up max-w-3xl pb-24 md:pb-0 space-y-4">
+    ${card(`
+      <div class="flex items-start gap-3 mb-4">
+        <div class="w-11 h-11 rounded-xl2 bg-brand-tint text-brand grid place-items-center shrink-0">${ic("writers","w-6 h-6")}</div>
+        <div><p class="font-display font-bold text-lg leading-tight">Writers Hub</p>
+          <p class="text-sm text-muted mt-0.5">Paste a draft — Vertil fixes grammar & punctuation and makes it read smoothly, without losing your voice.</p></div>
+      </div>
+      <textarea id="writerInput" rows="7" maxlength="16000" placeholder="Paste or write your draft here — an email, a caption, a WhatsApp message, an article… anything." class="w-full bg-paper border border-line rounded-xl px-3.5 py-3 text-sm leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-brand/30">${esc(W.input)}</textarea>
+      <div id="writerCount" class="text-[11px] text-faint mt-1 text-right">${(W.input || "").length}/16000</div>
+
+      <div class="mt-3"><span class="text-xs font-semibold text-muted">How much should Vertil change?</span>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-1.5">
+          ${modes.map(m => `<button data-wmode="${m.key}" class="text-left px-3 py-2 rounded-lg border transition ${W.mode === m.key ? 'border-brand bg-brand-tint ring-1 ring-brand' : 'border-line bg-paper hover:border-brand/40'}">
+            <div class="text-sm font-semibold">${esc(m.label)}</div><div class="text-[10px] text-muted leading-tight mt-0.5">${esc(m.blurb)}</div></button>`).join("")}
+        </div></div>
+
+      <div class="mt-3"><span class="text-xs font-semibold text-muted">Optional touch-up</span>
+        <div class="flex flex-wrap gap-1.5 mt-1.5">
+          ${WRITER_TWEAKS.map(t => `<button data-wtweak="${t.k}" class="text-xs px-2.5 py-1 rounded-full border transition ${W.tweak === t.k ? 'border-brand bg-brand-tint text-brand-dark font-semibold' : 'border-line text-muted hover:border-brand/40'}">${t.label}</button>`).join("")}
+        </div></div>
+
+      ${activeBrand ? `<label class="mt-3 flex items-center gap-2 text-xs text-muted cursor-pointer select-none">
+        <input type="checkbox" id="writerBrand" ${W.brandOn ? 'checked' : ''} class="accent-brand w-4 h-4"/> Keep it on-brand for <b class="text-ink">${esc(activeBrand.name)}</b></label>` : ''}
+
+      <button id="writerBtn" ${canGo ? '' : 'disabled'} class="w-full mt-4 inline-flex items-center justify-center gap-2 text-sm font-semibold text-white bg-brand hover:bg-brand-dark rounded-xl py-3 shadow-sm disabled:opacity-50 transition">
+        ${W.loading ? '<span class="w-4 h-4 border-2 border-white/40 border-t-white rounded-full spin"></span> Working on it…' : ic("spark", "w-4 h-4") + ' Improve my draft'}
+      </button>
+    `)}
+    ${W.result ? writerResult(W.result) : ''}
+  </div>`;
+}
+
+function writerResult(r) {
+  const W = state.writers;
+  const st = writerStats(W.original || "", r.improved || "");
+  const changesView = W.diffView;
+  const diff = changesView ? writerDiff(W.original || "", r.improved || "") : null;
+  const voiceKept = (W.mode === "fix" || W.mode === "polish");
+  const body = changesView
+    ? (diff != null
+        ? `<div class="text-sm whitespace-pre-wrap leading-relaxed bg-paper border border-line rounded-lg p-3.5 max-h-[440px] overflow-y-auto scroll-thin">${diff}</div>
+           <div class="flex items-center gap-3 mt-1.5 text-[10px] text-faint"><span><span class="wd-ins">added</span></span><span><span class="wd-del">removed</span></span></div>`
+        : `<div class="text-xs text-faint bg-paper border border-line rounded-lg p-3.5">This draft is too long to show inline changes — switch to Clean to read the result.</div>`)
+    : `<div class="text-sm whitespace-pre-wrap leading-relaxed bg-paper border border-line rounded-lg p-3.5 max-h-[440px] overflow-y-auto scroll-thin">${esc(r.improved)}</div>`;
+  const pill = (t, warn) => `<span class="${warn ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-paper border-line text-muted'} border rounded-full px-2 py-0.5">${t}</span>`;
+  return `<div class="fade-up">${card(`
+    <div class="flex items-center justify-between gap-2 mb-2 flex-wrap">
+      <span class="text-xs font-bold uppercase tracking-wide text-brand-dark">${ic("check","w-3.5 h-3.5 inline -mt-0.5")} Improved draft ${voiceKept ? '<span class="ml-1 text-[10px] font-semibold text-brand normal-case">· your voice, kept ✓</span>' : ''}</span>
+      <div class="inline-flex items-center rounded-lg border border-line bg-white p-0.5">
+        <button data-writer-view="clean" class="text-[11px] px-2.5 py-1 rounded-md transition ${!changesView ? 'bg-brand-tint text-brand-dark font-semibold' : 'text-muted hover:text-brand-dark'}">Clean</button>
+        <button data-writer-view="changes" class="text-[11px] px-2.5 py-1 rounded-md transition ${changesView ? 'bg-brand-tint text-brand-dark font-semibold' : 'text-muted hover:text-brand-dark'}">Changes</button>
+      </div>
+    </div>
+    ${body}
+    <div class="flex flex-wrap gap-1.5 mt-3 text-[11px]">
+      ${pill(`${st.wo} → ${st.wi} words`)}
+      ${pill(`${st.read} min read`)}
+      ${st.longS ? pill(`${st.longS} long sentence${st.longS > 1 ? 's' : ''}`, true) : ''}
+      ${st.top ? pill(`"${esc(st.top)}" used ${st.topN}×`, true) : ''}
+    </div>
+    <div class="flex flex-wrap gap-2 mt-3">
+      <button data-writer-copy class="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-brand hover:bg-brand-dark rounded-lg px-3.5 py-2">${ic("copy","w-3.5 h-3.5")} Copy</button>
+      <button data-writer-save class="inline-flex items-center gap-1.5 text-xs font-semibold text-brand-dark border border-line bg-white hover:border-brand/40 rounded-lg px-3.5 py-2">${ic("save","w-3.5 h-3.5")} Save</button>
+      <button data-writer-board class="inline-flex items-center gap-1.5 text-xs font-semibold text-brand-dark border border-line bg-white hover:border-brand/40 rounded-lg px-3.5 py-2">${ic("board","w-3.5 h-3.5")} Add to Board</button>
+      <button data-writer-studio class="inline-flex items-center gap-1.5 text-xs font-semibold text-brand-dark border border-line bg-white hover:border-brand/40 rounded-lg px-3.5 py-2">${ic("spark","w-3.5 h-3.5")} Send to Studio</button>
+    </div>
+    <div class="flex items-center gap-1.5 mt-3 pt-3 border-t border-line">
+      <input id="writerRefine" placeholder="Tell Vertil to adjust… e.g. shorter, more formal, now for LinkedIn" class="flex-1 bg-paper border border-line rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-brand/25 placeholder:text-faint"/>
+      <button data-writer-refine class="shrink-0 w-8 h-8 grid place-items-center rounded-lg bg-brand text-white hover:bg-brand-dark" title="Refine further"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M6 12h13M13 6l6 6-6 6"/></svg></button>
+    </div>
+    ${r.notes && r.notes.length ? `<div class="mt-4 pt-3 border-t border-line"><div class="text-[12px] font-semibold mb-1.5">What Vertil changed</div>
+      <ul class="space-y-1.5">${r.notes.map(n => `<li class="flex gap-2 text-xs text-ink/80 leading-relaxed"><span class="text-brand shrink-0 mt-0.5">${ic("check","w-3.5 h-3.5")}</span><span>${esc(n)}</span></li>`).join("")}</ul></div>` : ''}
+  `)}</div>`;
+}
+
+async function runWriter() {
+  const W = state.writers;
+  const text = (W.input || "").trim();
+  if (text.length < 3 || W.loading) return;
+  W.loading = true; render();
+  const tweak = WRITER_TWEAKS.find(t => t.k === W.tweak);
+  try {
+    const d = await api("/api/writer/polish", { method: "POST", body: JSON.stringify({
+      text, mode: W.mode, instruction: tweak ? tweak.instr : "",
+      brand_id: (W.brandOn && state.activeBrandId) ? state.activeBrandId : null,
+      tone: W.brandOn ? state.tone : null,
+    }) });
+    W.original = text; W.result = d.result;
+    if (d.used != null && state.usage) { state.usage.used = d.used; updateUsageMeter(); }
+  } catch (ex) { if (ex.data && ex.data.upgrade) openUpgrade(ex.message); else toast("⚠ " + ex.message); }
+  finally { W.loading = false; render(); }
+}
+
+async function refineWriter(instr) {
+  const W = state.writers;
+  if (!W.result || W.loading || !(instr || "").trim()) return;
+  W.loading = true; render();
+  try {
+    const d = await api("/api/writer/polish", { method: "POST", body: JSON.stringify({
+      text: W.result.improved, mode: "polish", instruction: instr.trim(),
+      brand_id: (W.brandOn && state.activeBrandId) ? state.activeBrandId : null,
+      tone: W.brandOn ? state.tone : null,
+    }) });
+    W.result = d.result;
+    if (d.used != null && state.usage) { state.usage.used = d.used; updateUsageMeter(); }
+  } catch (ex) { if (ex.data && ex.data.upgrade) openUpgrade(ex.message); else toast("⚠ " + ex.message); }
+  finally { W.loading = false; render(); }
+}
+
+async function saveWriterResult() {
+  const r = state.writers.result; if (!r) return;
+  try {
+    await api("/api/favorites", { method: "POST", body: JSON.stringify({ text: r.improved, brand_id: state.writers.brandOn ? state.activeBrandId : null, content_type: "writer", tone: "" }) });
+    toast("Saved to Saved Copy");
+  } catch (ex) { toast("⚠ " + ex.message); }
+}
+
+function writerToStudio() {
+  const r = state.writers.result; if (!r) return;
+  state.brief = r.improved;
+  toast("Sent to Studio — pick a voice & format");
+  goto("studio");
+}
+
+async function writerToBoard() {
+  const r = state.writers.result; if (!r) return;
+  const title = ((r.improved || "").split("\n")[0] || "Polished draft").trim().slice(0, 120) || "Polished draft";
+  try {
+    const item = await api("/api/content", { method: "POST", body: JSON.stringify({ title, brand_id: state.activeBrandId }) });
+    await api(`/api/content/${item.id}`, { method: "POST", body: JSON.stringify({ content: r.improved, status: "create" }) });
+    toast("Added to Content Board");
+  } catch (ex) { toast("⚠ " + ex.message); }
+}
 
 /* ============================ CONTENT BOARD =========================== */
 /* Idea Vault + pipeline: capture an idea, then move it Idea → Writing →
@@ -2650,6 +2855,22 @@ function wire() {
     const cp = $("[data-learn-copy]"); if (cp) cp.onclick = () => { navigator.clipboard.writeText(state.learn.result.sample_caption); cp.textContent = "Copied ✓"; setTimeout(() => cp.textContent = "Copy", 1400); };
     const pb = $("[data-learn-playbook]"); if (pb) pb.onclick = () => { const r = state.learn.result; downloadDoc(`Vertil ${r.brand_name || "brand"} Playbook.doc`, `${r.brand_name || "Brand"} Voice Playbook`, playbookDocHTML(r)); toast("Playbook downloaded"); };
     wireLearnDynamic();
+  }
+
+  if (state.view === "writers") {
+    const ta = $("#writerInput"); if (ta) ta.oninput = () => { state.writers.input = ta.value; const b = $("#writerBtn"); if (b) b.disabled = ta.value.trim().length < 3; const c = $("#writerCount"); if (c) c.textContent = ta.value.length + "/8000"; };
+    $$("[data-wmode]").forEach(b => b.onclick = () => { state.writers.mode = b.dataset.wmode; render(); });
+    $$("[data-wtweak]").forEach(b => b.onclick = () => { state.writers.tweak = state.writers.tweak === b.dataset.wtweak ? "" : b.dataset.wtweak; render(); });
+    const wb = $("#writerBrand"); if (wb) wb.onchange = () => state.writers.brandOn = wb.checked;
+    const go = $("#writerBtn"); if (go) go.onclick = runWriter;
+    const cp = $("[data-writer-copy]"); if (cp) cp.onclick = () => { navigator.clipboard.writeText(state.writers.result.improved); cp.innerHTML = ic("check", "w-3.5 h-3.5") + " Copied"; setTimeout(() => cp.innerHTML = ic("copy", "w-3.5 h-3.5") + " Copy", 1400); };
+    const sv = $("[data-writer-save]"); if (sv) sv.onclick = saveWriterResult;
+    $$("[data-writer-view]").forEach(b => b.onclick = () => { const c = b.dataset.writerView === "changes"; if (state.writers.diffView !== c) { state.writers.diffView = c; render(); } });
+    const wboard = $("[data-writer-board]"); if (wboard) wboard.onclick = writerToBoard;
+    const wstudio = $("[data-writer-studio]"); if (wstudio) wstudio.onclick = writerToStudio;
+    const rf = $("#writerRefine"); const doRefine = () => { const v = rf.value.trim(); if (v) refineWriter(v); };
+    if (rf) rf.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); doRefine(); } };
+    const rfb = $("[data-writer-refine]"); if (rfb) rfb.onclick = () => { const rf2 = $("#writerRefine"); if (rf2 && rf2.value.trim()) refineWriter(rf2.value.trim()); };
   }
 
   if (state.view === "board") wireBoard();

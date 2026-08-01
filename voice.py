@@ -1129,3 +1129,100 @@ def parse_check_json(text: str) -> dict | None:
     issues = d.get("issues")
     issues = [str(x).strip() for x in issues if str(x).strip()] if isinstance(issues, list) else []
     return {"score": score, "verdict": str(d.get("verdict", "")).strip(), "issues": issues, "rewrite": rewrite}
+
+
+# --------------------------------------------------------------------------- #
+# Writers Hub — clean up grammar/punctuation and improve fluency of a draft.
+# --------------------------------------------------------------------------- #
+
+WRITER_MODES = {
+    "fix": {
+        "label": "Fix errors",
+        "blurb": "Grammar, spelling & punctuation only — keeps your words.",
+        "rule": ("Correct ONLY spelling, grammar, punctuation and capitalization. Do NOT change the "
+                 "wording, sentence structure, tone or meaning beyond what is strictly required to be "
+                 "correct. Preserve the writer's exact voice, style and word choices."),
+    },
+    "polish": {
+        "label": "Polish",
+        "blurb": "Fix errors and make it read smoothly.",
+        "rule": ("Correct all spelling, grammar and punctuation errors AND improve fluency, flow and "
+                 "clarity so the writing reads smoothly and professionally. Keep the original meaning, "
+                 "intent and the writer's voice. Do not add new ideas, facts, or extra length."),
+    },
+    "rewrite": {
+        "label": "Rewrite",
+        "blurb": "Rework it for maximum clarity and impact.",
+        "rule": ("Rewrite the text so it is clear, fluent and compelling, keeping the same meaning and "
+                 "intent. You may restructure sentences and improve phrasing, but never invent new "
+                 "facts or drift from what the writer actually meant."),
+    },
+    "standard": {
+        "label": "Standard English",
+        "blurb": "Neutral international English — cleans local slang.",
+        "rule": ("Rewrite the text in clear, neutral, internationally-standard English suitable for a "
+                 "global or professional audience. Replace local slang, Pidgin and Nigerianisms with "
+                 "standard equivalents, and fix all errors — while keeping the exact meaning and intent. "
+                 "Keep it natural and human, never stiff."),
+    },
+}
+
+
+def writer_modes() -> list[dict]:
+    return [{"key": k, "label": v["label"], "blurb": v["blurb"]} for k, v in WRITER_MODES.items()]
+
+
+def build_writer_system(mode: str, tone_key: str | None = None,
+                        profile: dict | None = None, instruction: str = "") -> str:
+    m = WRITER_MODES.get(mode, WRITER_MODES["polish"])
+    brand = ""
+    if profile and mode != "fix":
+        bits = []
+        if profile.get("name"):
+            bits.append(f"Brand: {profile['name']}")
+        if profile.get("personality"):
+            bits.append(f"Personality: {profile['personality']}")
+        if profile.get("description"):
+            bits.append(str(profile["description"]).strip())
+        if bits:
+            brand = ("\n\n# KEEP IT ON-BRAND\nWhere it does not fight correctness, keep the writing "
+                     "consistent with this brand: " + " · ".join(bits))
+    tone = ""
+    if tone_key and mode != "fix":
+        t = TONES.get(tone_key)
+        if t:
+            tone = f"\n\n# REGISTER\nWhere natural, lean the writing toward this voice: {t['guidance']}"
+    extra = f"\n\n# EXTRA INSTRUCTION\nAlso apply this: {instruction.strip()}" if instruction.strip() else ""
+    return f"""You are Vertil's writing editor. Writers paste rough drafts and you return clean, \
+fluent, error-free writing they can send with confidence.
+
+# WHAT TO DO
+{m['rule']}{brand}{tone}{extra}
+
+# HARD RULES
+- Never change the writer's intended meaning.
+- Keep roughly the same length unless the instruction says otherwise.
+- Return natural, human writing — never stiff, robotic or padded.
+- Preserve any names, numbers, links and facts exactly.
+- Preserve the original structure: keep paragraph breaks, line breaks, and any bullet or numbered lists intact.
+
+# OUTPUT FORMAT
+Return ONLY valid JSON (no markdown), exactly:
+{{
+  "improved": "the full corrected/improved text, ready to copy (keep the original line/paragraph breaks)",
+  "notes": ["3-6 short, plain-language notes; name the fix and, where useful, the rule in plain words, e.g. 'Fixed a comma splice — two full sentences can't be joined by only a comma', 'Tightened the opening', \\"Corrected 'their' to 'there'\\""]
+}}"""
+
+
+def build_writer_user(text: str) -> str:
+    return f'Here is the draft to work on:\n"""\n{text.strip()}\n"""\nReturn ONLY the JSON object.'
+
+
+def parse_writer_json(text: str) -> dict | None:
+    d = _extract_json(text)
+    improved = str(d.get("improved", "")).strip()
+    if not improved:
+        return None
+    notes = d.get("notes")
+    notes = [str(x).strip() for x in notes if str(x).strip()][:6] if isinstance(notes, list) else []
+    return {"improved": improved, "notes": notes}

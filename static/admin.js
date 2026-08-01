@@ -369,6 +369,13 @@ function adminControls(u) {
       ${locked ? "" : `<button id="acSuspend" class="text-xs font-semibold rounded-lg px-3 py-2 border ${u.suspended ? "border-brand/50 text-brand hover:bg-brand/10" : "border-amber-500/50 text-amber-300 hover:bg-amber-500/10"}">${u.suspended ? "Unsuspend" : "Suspend"}</button>
       <button id="acDelete" class="text-xs font-semibold rounded-lg px-3 py-2 border border-rose-500/50 text-rose-300 hover:bg-rose-500/10 ml-auto">Delete user</button>`}
     </div>
+    <div class="mt-3 flex items-center gap-2.5 flex-wrap">
+      <div class="text-[10px] uppercase tracking-wide text-faint">Admin access</div>
+      ${u.is_owner
+        ? '<span class="text-[11px] font-semibold text-brand bg-brand/15 rounded-full px-2.5 py-1">Owner admin · permanent</span>'
+        : `<button id="acAdmin" data-on="${u.is_admin ? 0 : 1}" class="text-xs font-semibold rounded-lg px-3 py-1.5 border ${u.is_admin ? "border-rose-500/50 text-rose-300 hover:bg-rose-500/10" : "border-brand/50 text-brand hover:bg-brand/10"}">${u.is_admin ? "Remove admin" : "Make admin"}</button>
+          <span class="text-[10px] text-faint">${u.is_admin ? "This user can access the admin console." : "Grant this user access to the admin console."}</span>`}
+    </div>
     <div class="mt-3"><div class="text-[10px] uppercase tracking-wide text-faint mb-1">Admin notes (private)</div>
       <textarea id="acNotes" rows="2" class="w-full bg-panel border border-edge rounded-lg px-3 py-2 text-xs text-slate-200" placeholder="Internal notes about this customer…">${esc(u.notes || "")}</textarea>
       <button id="acNotesSave" class="mt-2 text-xs font-semibold border border-edge rounded-lg px-3 py-1.5 text-slate-200 hover:bg-edge/40">Save notes</button></div>
@@ -402,6 +409,14 @@ function wireRows() {
     const dl = $("#acDelete"); if (dl) dl.onclick = () => {
       const u = state.detail.user;
       if (confirm(`Permanently delete ${u.email} and ALL their data?\n\nThis cannot be undone.`)) adminAct(uid, {}, { del: true });
+    };
+    const aa = $("#acAdmin"); if (aa) aa.onclick = async () => {
+      const on = aa.dataset.on === "1";
+      if (!on && !confirm("Remove admin access from this user?")) return;
+      try {
+        await api(`/api/admin/users/${uid}/admin`, { method: "POST", body: JSON.stringify({ on }) });
+        await load(); state.detail = await api(`/api/admin/users/${uid}`); renderDash();
+      } catch (e) { alert(e.message); }
     };
   }
 }
