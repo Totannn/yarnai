@@ -17,10 +17,12 @@ const state = {
   // advisors
   rateInputs: { service: "", experience: "", location: "", client_type: "", scope: "" },
   rateResult: null, rateLoading: false,
-  brandInputs: { interests: "", formats: [], brand_types: [], platform: "", goal: "" },
-  brandResult: null, brandLoading: false,
+  brandInputs: { interests: "", formats: [], brand_types: [], platform: "", goal: "", brand_id: null },
+  brandResult: null, brandLoading: false, advisorBrandHistory: [],
   scriptInputs: { idea: "", platform: "TikTok", length: "30 seconds", goal: "Go viral / awareness", format: "ai_pick", tone: "pidgin" },
   scriptResult: null, scriptLoading: false,
+  // accountability plan (checklist from advisor "next steps")
+  plan: { items: [], progress: null, adding: false },
   // gig diary
   gigs: [], gigSummary: null, gigEditing: null,
   // content board (idea → posted)
@@ -95,11 +97,12 @@ const ICON = {
   rate: '<circle cx="12" cy="12" r="9"/><path d="M14.5 9a2.5 2 0 0 0-2.5-1.5c-1.4 0-2.5.8-2.5 1.8 0 2.4 5 1.3 5 3.8 0 1-1.1 1.9-2.5 1.9A2.5 2 0 0 1 9.5 13M12 6v1.5M12 16.5V18"/>',
   advisor: '<path d="M12 3v2M12 19v2M3 12h2M19 12h2M12 8a4 4 0 0 1 4 4c0 1.5-1 2.5-1.6 3.2-.4.5-.4 1.3-.4 1.8h-4c0-.5 0-1.3-.4-1.8C9 14.5 8 13.5 8 12a4 4 0 0 1 4-4ZM10 19h4"/>',
   gigs: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18"/>',
+  plan: '<path d="M9 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3"/><rect x="8.5" y="3" width="7" height="4" rx="1"/><path d="m8.5 13 2 2 4-4"/>',
   admin: '<path d="M12 3 4 6v5c0 4.5 3.2 8.5 8 10 4.8-1.5 8-5.5 8-10V6l-8-3Z"/><path d="m9 12 2 2 4-4"/>',
   script: '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/>',
 };
 
-const ADVISOR_LABELS = { rate_advisor: "Rate Advisor", personal_brand: "Brand Advisor", script: "Script Writer" };
+const ADVISOR_LABELS = { rate_advisor: "Rate Advisor", personal_brand: "Brand Advisor", script: "Script Writer", brand_learn: "Learn My Brand", content_calendar: "Content Calendar", bulk_catalog: "Bulk Catalogue", writer: "Writers Hub" };
 
 /* monochrome line-icon set (professional, no emoji) */
 const ICONP = {
@@ -637,6 +640,7 @@ function routeView() {
     case "pricing": return pricingView();
     case "rate": return rateView();
     case "advisor": return brandAdvisorView();
+    case "plan": return planView();
     case "script": return studioTabs("script") + scriptView();
     case "gigs": return gigsView();
     case "profile": return profileView();
@@ -662,7 +666,7 @@ function sidebar() {
       ${item("home","Home")}${item("board","Content Board")}${item("studio","Studio")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
       ${item("brands","Brands")}${item("learn","Learn My Brand")}${item("favorites","Saved Copy")}${item("history","History")}
       <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">Advisors</div>
-      ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("gigs","Gig Diary")}
+      ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("plan","My Plan")}${item("gigs","Gig Diary")}
     </nav>
     <div class="mt-auto space-y-2">
       ${usageCard()}
@@ -689,7 +693,7 @@ function sidebar() {
         ${item("home","Home")}${item("board","Content Board")}${item("studio","Studio")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
         ${item("brands","Brands")}${item("learn","Learn My Brand")}${item("favorites","Saved Copy")}${item("history","History")}
         <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">Advisors</div>
-        ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("gigs","Gig Diary")}
+        ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("plan","My Plan")}${item("gigs","Gig Diary")}
         ${item("pricing","Plans & Pricing")}
       </nav>
       <div class="mt-auto space-y-2 pt-5">
@@ -739,6 +743,7 @@ function topbar() {
     pricing:["Plans & Pricing","Upgrade to unlock more"],
     rate:["Rate Advisor","Wetin to charge — realistic Naira pricing for your gigs"],
     advisor:["Brand Advisor","Build your personal brand and win the right brand deals"],
+    plan:["My Plan","Your accountability checklist — turn strategy into steps you actually take"],
     gigs:["Gig Diary","Track every gig and what you made"],
     script:["Script Writer","Scene-by-scene short-video scripts built on trending formats"],
     profile:["Account","Manage your profile, plan and security"],
@@ -848,6 +853,7 @@ function homeView() {
     ["calendar", "Content Calendar", "Plan a month tuned to Naija", "gold"],
     ["rate", "Rate Advisor", "Know what to charge, in Naira", "brand"],
     ["advisor", "Brand Advisor", "Grow your personal brand", "brand"],
+    ["plan", "My Plan", "Track your steps and stay accountable", "gold"],
     ["gigs", "Gig Diary", "Track every gig & what you earn", "brand"],
   ];
   const toolkit = TOOLS.map(([k, t, d, c]) => `
@@ -903,6 +909,7 @@ function homeView() {
   <div class="space-y-8 pb-10">
     ${homeHero(name, greet, streak, summaryLine, { pct, off, left, unlimited, resets: hu.resets_in_days })}
     ${homeSuggestSection()}
+    ${homePlanWidget(h.plan_progress)}
     ${homeJumpBack(h.continue || [])}
     <section>
       <div class="flex items-center justify-between mb-3"><h3 class="font-display font-bold text-[17px]">Your toolkit</h3>
@@ -1091,6 +1098,24 @@ function homeJumpBack(cont) {
       <button data-nav="history" class="text-xs font-semibold text-brand hover:text-brand-dark">View history →</button></div>
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">${cont.map(card).join("")}</div>
   </section>`;
+}
+
+function homePlanWidget(p) {
+  if (!p || !p.total) return "";
+  const pct = Math.round((p.done / p.total) * 100);
+  return `
+  <button data-nav="plan" class="w-full text-left bg-white border border-line rounded-xl2 shadow-card p-4 flex items-center gap-4 hometile">
+    <span class="w-11 h-11 rounded-xl bg-gold-tint text-gold grid place-items-center shrink-0">${svgIcon(ICON.plan, "w-5 h-5")}</span>
+    <div class="min-w-0 flex-1">
+      <div class="flex items-center justify-between gap-2">
+        <div class="font-display font-bold text-[15px]">My Plan</div>
+        <div class="text-xs text-muted shrink-0">${p.done}/${p.total} steps</div>
+      </div>
+      <div class="h-1.5 rounded-full bg-line overflow-hidden mt-1.5"><div class="h-full bg-brand" style="width:${pct}%"></div></div>
+      ${p.overdue?`<div class="text-[11px] text-rose-500 font-semibold mt-1.5">${p.overdue} step${p.overdue===1?'':'s'} overdue</div>`:`<div class="text-[11px] text-muted mt-1.5">${p.week_done} done this week</div>`}
+    </div>
+    <span class="text-faint shrink-0">${svgIcon('<path d="M9 6l6 6-6 6"/>', "w-4 h-4")}</span>
+  </button>`;
 }
 
 async function fetchSuggestion(idx) {
@@ -2426,12 +2451,39 @@ function favoritesView() {
 function historyView() {
   const items = state.history.map(g=>`
     <div data-card class="bg-white border border-line rounded-xl2 shadow-card p-4 transition">
-      <div class="flex items-center gap-2 text-xs text-muted mb-2 flex-wrap">
-        <span class="px-2 py-0.5 rounded bg-brand-tint text-brand-dark font-medium">${esc(g.brand_name||"No brand")}</span>
-        <span>${esc(label("content_types",g.content_type))}</span><span>·</span><span>${esc(label("tones",g.tone))}</span></div>
+      <div class="flex items-center justify-between gap-2 mb-2 flex-wrap">
+        <div class="flex items-center gap-2 text-xs text-muted flex-wrap">
+          <span class="px-2 py-0.5 rounded bg-brand-tint text-brand-dark font-medium">${esc(g.brand_name||"No brand")}</span>
+          <span>${esc(label("content_types",g.content_type))}</span>${g.tone?`<span>·</span><span>${esc(label("tones",g.tone))}</span>`:''}</div>
+        <button data-history-open="${g.id}" class="shrink-0 text-xs font-semibold text-brand-dark bg-brand-tint hover:bg-brand hover:text-white rounded-lg px-3 py-1.5">Open →</button>
+      </div>
       ${g.brief?`<p class="text-xs text-muted mb-2 italic">“${esc(g.brief)}”</p>`:''}
       <div class="space-y-2">${(g.variants||[]).map(v=>`<div class="text-sm bg-paper border border-line rounded-lg p-3 whitespace-pre-wrap">${esc(v)}</div>`).join("")}</div></div>`).join("");
   return `<div class="max-w-3xl space-y-3 pb-24 md:pb-0">${items||`<p class="text-sm text-muted">Nothing yet — generate something in the Studio.</p>`}</div>`;
+}
+
+// Send a history row to wherever it was generated, with its inputs prefilled.
+function openHistoryItem(id) {
+  const g = (state.history || []).find(x => String(x.id) === String(id));
+  if (!g) return;
+  if (g.brand_id) state.activeBrandId = g.brand_id;
+  const ct = g.content_type;
+  if (ct === "rate_advisor") { state.rateInputs.service = g.brief || ""; return goto("rate"); }
+  if (ct === "personal_brand") { state.brandInputs.interests = g.brief || ""; return goto("advisor"); }
+  if (ct === "script") {
+    state.scriptInputs.idea = g.brief || "";
+    if (g.tone && (state.config.tones||[]).some(t=>t.key===g.tone)) state.scriptInputs.tone = g.tone;
+    return goto("script");
+  }
+  if (ct === "brand_learn") return goto("learn");
+  if (ct === "bulk_catalog") return goto("bulk");
+  if (ct === "writer") return goto("writers");
+  if (ct === "content_calendar") return goto("calendars");
+  // a normal Studio content type
+  state.brief = g.brief || "";
+  if (g.tone && (state.config.tones||[]).some(t=>t.key===g.tone)) state.tone = g.tone;
+  if (ct && (state.config.content_types||[]).some(c=>c.key===ct)) state.contentType = ct;
+  goto("studio");
 }
 
 /* ============================ PRICING ============================== */
@@ -2575,10 +2627,40 @@ function renderRateResult(r) {
   </div>`;
 }
 
+function trunc(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n).trimEnd() + '…' : s; }
+
+function advisorHistoryBar() {
+  const items = state.advisorBrandHistory || [];
+  if (!items.length) return '';
+  const chip = g => {
+    const lbl = (g.variants && g.variants[0]) ? String(g.variants[0]).replace(/^Personal brand:\s*/,'') : (g.brief || 'Strategy');
+    const r = g.full_result;
+    const preview = r
+      ? `${r.niche?`<span class="inline-block text-[10px] font-medium bg-brand-tint text-brand-dark rounded-full px-2 py-0.5 mb-1.5">${esc(trunc(r.niche,40))}</span><br>`:''}${esc(trunc(r.positioning || r.voice || '', 140))}${(r.content_pillars||[])[0]?`<div class="mt-1.5 text-faint">Pillar: <span class="text-muted">${esc(trunc(r.content_pillars[0].name,36))}</span></div>`:''}`
+      : `<span class="italic">${esc(trunc(g.brief || 'No preview saved for this one.', 140))}</span>`;
+    return `<button data-advisor-recall="${g.id}" class="adv-recall group shrink-0 w-60 text-left bg-white border border-line rounded-lg px-3 py-2
+        bg-[linear-gradient(120deg,#fff_0%,#fff_42%,#e4f3f1_50%,#fff_58%,#fff_100%)] bg-[length:250%_100%] bg-[position:110%_0%]
+        hover:bg-[position:0%_0%] hover:border-brand/40 hover:shadow-lift
+        transition-[background-position,border-color,box-shadow] duration-500 ease-out">
+      <div class="text-xs font-semibold truncate">${esc(lbl)}</div>
+      <div class="text-[10px] text-faint mt-0.5 truncate">${esc(g.brand_name||'No brand')} · ${esc(relTime(g.created_at))}</div>
+      <div class="grid grid-rows-[0fr] group-hover:grid-rows-[1fr] transition-[grid-template-rows] duration-300 ease-out">
+        <div class="overflow-hidden">
+          <div class="mt-2 pt-2 border-t border-line text-[10.5px] text-muted leading-snug">${preview}</div>
+        </div>
+      </div>
+    </button>`;
+  };
+  return `<div class="text-[11px] font-mono uppercase tracking-wide text-faint mb-1.5">Previous strategies</div>
+    <div class="flex gap-2 overflow-x-auto scroll-thin pb-1 items-start">${items.map(chip).join("")}</div>`;
+}
+
 function brandAdvisorView() {
   const o = state.config.advisor_options, bi = state.brandInputs;
   const chip = (group, val) => `<button data-chiptoggle="${esc(val)}" data-group="${group}" class="selectable text-xs px-3 py-1.5 rounded-full border ${bi[group].includes(val)?'border-brand bg-brand-tint text-brand-dark ring-1 ring-brand':'border-line bg-paper hover:border-brand/40'}">${esc(val)}</button>`;
+  const activeBrand = state.brands.find(b => b.id === bi.brand_id);
   return `<div class="max-w-3xl pb-24 md:pb-0 space-y-5">
+    ${advisorHistoryBar()}
     ${card(`<div class="space-y-3.5">
       <label class="block"><span class="text-xs font-semibold text-muted">Your interests / niche *</span>
         <textarea id="b_interests" rows="2" placeholder="e.g. personal finance for young Nigerians, skincare, gadget reviews, fitness…" class="advi">${esc(bi.interests)}</textarea></label>
@@ -2586,6 +2668,9 @@ function brandAdvisorView() {
         <div class="flex flex-wrap gap-2 mt-2">${o.content_formats.map(f=>chip('formats',f)).join("")}</div></div>
       <div><span class="text-xs font-semibold text-muted">Brands you want to work with</span>
         <div class="flex flex-wrap gap-2 mt-2">${o.brand_types.map(b=>chip('brand_types',b)).join("")}</div></div>
+      ${state.brands.length?`<label class="block"><span class="text-xs font-semibold text-muted">Use an existing brand for context? (optional)</span>
+        <select id="b_brand" class="advi"><option value="">No brand — just me</option>${state.brands.map(b=>`<option value="${b.id}" ${b.id===bi.brand_id?'selected':''}>${esc(b.name)}</option>`).join("")}</select></label>
+        ${activeBrand&&(activeBrand.industry||activeBrand.audience)?`<p class="text-[11px] text-faint -mt-2.5">${esc([activeBrand.industry,activeBrand.audience].filter(Boolean).join(" · "))}</p>`:''}`:''}
       <div class="grid sm:grid-cols-2 gap-3">
         <label class="block"><span class="text-xs font-semibold text-muted">Platform / audience (optional)</span>
           <input id="b_platform" value="${esc(bi.platform)}" placeholder="e.g. Instagram, 2k followers" class="advi"/></label>
@@ -2619,7 +2704,10 @@ function renderBrandResult(b) {
           ${t.pitch?`<p class="text-xs mt-2 bg-paper border border-line rounded-lg p-2.5"><span class="font-semibold">Pitch:</span> ${esc(t.pitch)}</p>`:''}
         </div>`).join("")}</div></div>`:''}
     ${b.bio_options.length?card(`<div class="text-[13px] font-semibold mb-2">Bio options</div><div class="space-y-2">${b.bio_options.map((x,i)=>`<div class="flex items-start gap-2 text-sm bg-paper border border-line rounded-lg p-2.5"><span class="flex-1">${esc(x)}</span><button data-copybio="${i}" class="text-xs text-brand shrink-0 font-semibold">Copy</button></div>`).join("")}</div>`):''}
-    ${b.next_steps.length?card(`<div class="text-[13px] font-semibold mb-2">Next 30 days</div><ul class="space-y-1.5">${b.next_steps.map(s=>`<li class="flex gap-2 text-sm"><span class="text-brand">✓</span><span class="text-ink/85">${esc(s)}</span></li>`).join("")}</ul>`):''}
+    ${b.next_steps.length?card(`<div class="flex items-center justify-between gap-3 mb-2">
+        <div class="text-[13px] font-semibold">Next 30 days</div>
+        <button data-add-plan class="shrink-0 text-xs font-semibold text-brand-dark bg-brand-tint hover:bg-brand hover:text-white rounded-lg px-3 py-1.5 transition">+ Add to My Plan</button></div>
+      <ul class="space-y-1.5">${b.next_steps.map(s=>`<li class="flex gap-2 text-sm"><span class="text-brand">✓</span><span class="text-ink/85">${esc(s)}</span></li>`).join("")}</ul>`):''}
   </div>`;
 }
 
@@ -2641,8 +2729,109 @@ async function runBrandAdvisor() {
   try {
     const r = await api("/api/advisor/brand", { method:"POST", body:JSON.stringify(state.brandInputs) });
     state.brandResult = r; if (r.used!=null&&state.usage) state.usage.used = r.used;
+    state.advisorBrandHistory = await api("/api/advisor/brand/history").catch(()=>state.advisorBrandHistory);
   } catch (ex) { if (ex.data?.upgrade) { state.brandLoading=false; return openUpgrade(ex.message); } toast("⚠ "+ex.message); }
   finally { state.brandLoading = false; render(); }
+}
+
+function recallAdvisorHistory(id) {
+  const g = (state.advisorBrandHistory||[]).find(x=>String(x.id)===String(id));
+  if (!g) return;
+  state.brandInputs.interests = g.brief || "";
+  state.brandInputs.brand_id = g.brand_id || null;
+  if (g.full_result) {
+    state.brandResult = g.full_result;
+    toast("Loaded from history — no tokens used");
+  } else {
+    // older entries generated before full results were saved — only the input can be restored
+    state.brandResult = null;
+    toast("Loaded — press “Build my brand strategy” to regenerate");
+  }
+  render();
+}
+
+/* ============================== MY PLAN ============================= */
+/* Turns an advisor's "next 30 days" steps into a trackable, nudge-able checklist. */
+
+async function addStepsToPlan(steps, brandId, generationId) {
+  try {
+    const r = await api("/api/plan/from-steps", { method: "POST", body: JSON.stringify({ steps, brand_id: brandId, generation_id: generationId }) });
+    state.plan.items = [...(r.items||[]), ...state.plan.items];
+    toast(`Added ${r.items.length} step${r.items.length===1?'':'s'} to My Plan ✓`);
+    render();
+  } catch (ex) { toast("⚠ " + ex.message); }
+}
+
+async function loadPlan() {
+  try {
+    const r = await api("/api/plan");
+    state.plan.items = r.items || [];
+    state.plan.progress = r.progress || null;
+  } catch { /* leave whatever was there */ }
+}
+
+async function togglePlanItem(id, done) {
+  const it = state.plan.items.find(x => String(x.id) === String(id));
+  if (it) { it.status = done ? "done" : "todo"; render(); }  // optimistic
+  try {
+    await api(`/api/plan/items/${id}/toggle`, { method: "POST", body: JSON.stringify({ done }) });
+    state.plan.progress = (await api("/api/plan")).progress;
+    render();
+  } catch (ex) { toast("⚠ " + ex.message); loadPlan().then(render); }
+}
+
+async function deletePlanItem(id) {
+  state.plan.items = state.plan.items.filter(x => String(x.id) !== String(id));
+  render();
+  try { await api(`/api/plan/items/${id}`, { method: "DELETE" }); state.plan.progress = (await api("/api/plan")).progress; }
+  catch (ex) { toast("⚠ " + ex.message); loadPlan().then(render); }
+}
+
+function planProgressBar(p) {
+  if (!p || !p.total) return '';
+  const pct = Math.round((p.done / p.total) * 100);
+  return card(`<div class="flex items-center justify-between mb-2">
+      <div class="text-[13px] font-semibold">Progress</div>
+      <div class="text-xs text-muted">${p.done}/${p.total} steps done</div></div>
+    <div class="h-2 rounded-full bg-line overflow-hidden"><div class="h-full bg-brand" style="width:${pct}%"></div></div>
+    <div class="flex items-center gap-4 mt-2.5 text-xs text-muted">
+      <span>${p.week_done} done this week</span>
+      ${p.overdue?`<span class="text-rose-500 font-semibold">${p.overdue} overdue</span>`:'<span class="text-brand-dark font-semibold">All caught up</span>'}
+    </div>`);
+}
+
+function planItemRow(it) {
+  const done = it.status === "done";
+  const today = new Date().toISOString().slice(0, 10);
+  const overdue = !done && it.due_date && it.due_date < today;
+  return `<div data-card class="flex items-start gap-3 bg-white border border-line rounded-xl2 shadow-card p-3.5 transition ${done?'opacity-60':''}">
+    <button data-plan-toggle="${it.id}" data-done="${done?0:1}" class="mt-0.5 shrink-0 w-5 h-5 rounded-full border-2 grid place-items-center transition ${done?'bg-brand border-brand text-white':'border-line hover:border-brand/50'}">
+      ${done?'<svg viewBox="0 0 24 24" class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>':''}</button>
+    <div class="min-w-0 flex-1">
+      <div class="text-sm ${done?'line-through text-muted':'text-ink'}">${esc(it.text)}</div>
+      <div class="flex items-center gap-2 mt-1 flex-wrap text-[11px] text-faint">
+        ${it.brand_name?`<span class="bg-brand-tint text-brand-dark rounded-full px-2 py-0.5">${esc(it.brand_name)}</span>`:''}
+        ${it.due_date?`<span class="${overdue?'text-rose-500 font-semibold':''}">${overdue?'Overdue · ':'Due '}${esc(it.due_date)}</span>`:''}
+      </div>
+    </div>
+    <button data-plan-del="${it.id}" class="shrink-0 text-faint hover:text-rose-500 p-1">${ic("trash","w-4 h-4")}</button>
+  </div>`;
+}
+
+function planView() {
+  const P = state.plan, items = P.items || [];
+  if (!items.length) return `<div class="max-w-2xl pb-24 md:pb-0">
+    ${card(`<div class="text-center py-14"><div class="w-12 h-12 mx-auto rounded-xl2 bg-paper text-faint grid place-items-center mb-3">${ic("plan","w-6 h-6")}</div>
+      <p class="font-display font-bold text-lg">No plan yet</p>
+      <p class="text-sm text-muted mt-1 max-w-md mx-auto">Generate a strategy in Brand Advisor, then add its "Next 30 days" steps here to track them and get reminded if they slip.</p>
+      <button data-nav="advisor" class="mt-4 text-sm font-semibold text-white bg-brand hover:bg-brand-dark px-5 py-2.5 rounded-xl">Go to Brand Advisor</button></div>`)}
+  </div>`;
+  const todo = items.filter(i => i.status !== "done"), done = items.filter(i => i.status === "done");
+  return `<div class="max-w-2xl space-y-4 pb-24 md:pb-0">
+    ${planProgressBar(P.progress)}
+    ${todo.length?`<div class="space-y-2.5">${todo.map(planItemRow).join("")}</div>`:card(`<p class="text-sm text-muted text-center py-4">Nothing left to do — you're on top of it. 🎉</p>`)}
+    ${done.length?`<div class="pt-2"><div class="text-[11px] font-mono uppercase tracking-wide text-faint mb-2 px-1">Done (${done.length})</div><div class="space-y-2.5">${done.map(planItemRow).join("")}</div></div>`:''}
+  </div>`;
 }
 
 /* ========================== SCRIPT WRITER ========================= */
@@ -2911,6 +3100,9 @@ function wire() {
     $$("[data-open-cal]").forEach(b=>b.onclick=async()=>{ const cal=await api(`/api/calendar/${b.dataset.openCal}`); state.calendar=cal; state.view="calendar"; render(); });
     $$("[data-del-cal]").forEach(b=>b.onclick=async()=>{ if(!confirm("Delete this plan?"))return; await api(`/api/calendar/${b.dataset.delCal}`,{method:"DELETE"}); state.savedCalendars=await api("/api/calendars"); render(); });
   }
+  if (state.view === "history") {
+    $$("[data-history-open]").forEach(b=>b.onclick=()=>openHistoryItem(b.dataset.historyOpen));
+  }
   if (state.view === "brands") {
     const nb=$("[data-new]"); if(nb) nb.onclick=()=>{ if(nb.hasAttribute('data-locked')) return goto('pricing'); state.editing={}; state.brandMode="form"; render(); };
     $$("[data-edit]").forEach(b=>b.onclick=()=>{ state.editing=state.brands.find(x=>x.id===+b.dataset.edit); render(); });
@@ -2943,8 +3135,15 @@ function wire() {
   if (state.view === "advisor") {
     ["interests","platform","goal"].forEach(k=>{ const el=$("#b_"+k); if(el) el.oninput=e=>state.brandInputs[k]=e.target.value; });
     $$("[data-chiptoggle]").forEach(c=>c.onclick=()=>{ const g=c.dataset.group, v=c.dataset.chiptoggle, arr=state.brandInputs[g], i=arr.indexOf(v); if(i>=0)arr.splice(i,1); else arr.push(v); render(); });
+    const bb=$("#b_brand"); if(bb) bb.onchange=()=>{ state.brandInputs.brand_id = bb.value?+bb.value:null; render(); };
     const b=$("#brandBtn"); if(b) b.onclick=runBrandAdvisor;
     $$("[data-copybio]").forEach(b=>b.onclick=()=>{ navigator.clipboard.writeText(state.brandResult.bio_options[+b.dataset.copybio]); b.textContent="Copied ✓"; setTimeout(()=>b.textContent="Copy",1400); });
+    $$("[data-advisor-recall]").forEach(b=>b.onclick=()=>recallAdvisorHistory(b.dataset.advisorRecall));
+    const ap=$("[data-add-plan]"); if(ap) ap.onclick=()=>addStepsToPlan(state.brandResult.next_steps, state.brandInputs.brand_id, state.brandResult.generation_id||null);
+  }
+  if (state.view === "plan") {
+    $$("[data-plan-toggle]").forEach(b=>b.onclick=()=>togglePlanItem(b.dataset.planToggle, b.dataset.done==="1"));
+    $$("[data-plan-del]").forEach(b=>b.onclick=()=>deletePlanItem(b.dataset.planDel));
   }
   if (state.view === "profile") {
     const pf=$("#profileForm"); if(pf) pf.onsubmit=saveProfile;
@@ -2969,6 +3168,8 @@ async function goto(view, fromPop) {
     if (view === "history") state.history = await api("/api/history");
     if (view === "favorites") state.favorites = await api("/api/favorites");
     if (view === "calendars") state.savedCalendars = await api("/api/calendars");
+    if (view === "advisor") state.advisorBrandHistory = await api("/api/advisor/brand/history").catch(()=>[]);
+    if (view === "plan") await loadPlan();
     if (view === "gigs") { state.gigEditing = null; await loadGigs(); }
     if (view === "board") { state.board.items = await api("/api/content"); state.board.justLoaded = true; }
   } catch {}

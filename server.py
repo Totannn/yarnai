@@ -41,6 +41,7 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
 MAIL_FROM = os.getenv("MAIL_FROM", "Vertil <onboarding@resend.dev>").strip()
 APP_BASE_URL = os.getenv("APP_BASE_URL", "https://vertil.ng").rstrip("/")
+COMPANY_ADDRESS = os.getenv("COMPANY_ADDRESS", "Vertil · Lagos, Nigeria").strip()
 
 # --------------------------------------------------------------------------- #
 # Two-tier models. Standard is the fast, cost-efficient default; Premium is the
@@ -466,6 +467,7 @@ def home(user):
         "voice_mix": voice_mix, "content_types": content_types,
         "recent": recent, "continue": cont,
         "gig": {"earned": db.gig_summary(user["id"])["earned"], "count": db.gig_summary(user["id"])["count"]},
+        "plan_progress": db.plan_progress(user["id"]),
     })
 
 
@@ -612,6 +614,201 @@ def _btn(link: str, label: str) -> str:
     return (f'<p style="margin:24px 0"><a href="{link}" style="background:#0e9488;color:#fff;'
             'text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:bold;'
             f'display:inline-block">{label}</a></p>')
+
+
+def _unsub_token(uid: int) -> str:
+    """Stateless, signed unsubscribe token — no DB row or expiry needed."""
+    sig = hmac.new(app.secret_key.encode(), str(uid).encode(), hashlib.sha256).hexdigest()[:24]
+    return f"{uid}.{sig}"
+
+
+def _verify_unsub_token(token: str) -> int | None:
+    try:
+        uid_s, sig = (token or "").split(".", 1)
+        uid = int(uid_s)
+    except ValueError:
+        return None
+    expected = hmac.new(app.secret_key.encode(), str(uid).encode(), hashlib.sha256).hexdigest()[:24]
+    return uid if hmac.compare_digest(sig, expected) else None
+
+
+def _newsletter_preheader(preview_text: str) -> str:
+    return (f'<span style="display:none !important;visibility:hidden;opacity:0;color:transparent;'
+            f'height:0;width:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;">'
+            f'{_esc_html(preview_text)}</span>')
+
+
+def _newsletter_wordmark(color="#f4f7f6", accent="#2dd4bf", size=24) -> str:
+    return (f'<span style="font-family:Helvetica,Arial,sans-serif;font-size:{size}px;'
+            f'font-weight:bold;letter-spacing:-0.7px;color:{color};">Vert'
+            f'<span style="color:{accent};font-family:Arial,Helvetica,sans-serif;">&#8593;</span>'
+            f'<span>&nbsp;</span>l</span>')
+
+
+def _newsletter_footer_rows(bg: str, text_color: str, link_color: str, uid: int) -> str:
+    unsub_link = f"{APP_BASE_URL}/newsletter/unsubscribe?token={_unsub_token(uid)}"
+    return f"""
+    <tr><td style="padding:24px 36px 30px 36px;background-color:{bg};">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+        <tr><td style="font-family:Helvetica,Arial,sans-serif;font-size:13px;line-height:22px;color:{text_color};padding-bottom:10px;">The Broadcast goes out occasionally to Vertil users. You're getting it because you have a Vertil account.</td></tr>
+        <tr><td style="font-family:'Courier New',Courier,monospace;font-size:11px;line-height:20px;letter-spacing:0.6px;padding-bottom:8px;">
+          <a href="{unsub_link}" style="color:{link_color};text-decoration:none;">UNSUBSCRIBE</a></td></tr>
+        <tr><td style="font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:20px;color:{text_color};">{_esc_html(COMPANY_ADDRESS)}</td></tr>
+      </table>
+    </td></tr>"""
+
+
+_NEWSLETTER_MEDIA = ('<style>@media only screen and (max-width:620px){.w600{width:100% !important;}'
+                    '.px{padding-left:22px !important;padding-right:22px !important;}'
+                    '.h1{font-size:26px !important;line-height:32px !important;}}</style>')
+_NEWSLETTER_MSO = ('<!--[if mso]><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96'
+                  '</o:PixelsPerInch></o:OfficeDocumentSettings></xml><![endif]-->')
+
+
+def _newsletter_html_a(subject, preview_text, body_html, cta_url, uid) -> str:
+    """Dark hero, light body."""
+    return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark"><title>{_esc_html(subject)}</title>
+{_NEWSLETTER_MSO}{_NEWSLETTER_MEDIA}</head>
+<body style="margin:0;padding:0;background-color:#e9efed;">
+{_newsletter_preheader(preview_text)}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#e9efed;">
+<tr><td align="center" style="padding:24px 12px 40px 12px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" class="w600" style="width:600px;max-width:600px;background-color:#f4f7f6;">
+  <tr><td class="px" bgcolor="#0c2724" style="background-color:#0c2724;padding:34px 40px 30px 40px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>
+      <td align="left">{_newsletter_wordmark()}</td>
+      <td align="right" style="font-family:'Courier New',Courier,monospace;font-size:11px;letter-spacing:1.4px;color:#90a39f;text-transform:uppercase;">The Broadcast</td>
+    </tr></table>
+  </td></tr>
+  <tr><td class="px" bgcolor="#0c2724" style="background-color:#0c2724;padding:0 40px 40px 40px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+      <tr><td class="h1" style="font-family:Helvetica,Arial,sans-serif;font-size:32px;line-height:38px;font-weight:bold;letter-spacing:-1px;color:#f4f7f6;">{_esc_html(subject)}</td></tr>
+    </table>
+  </td></tr>
+  <tr><td class="px" style="padding:38px 40px 8px 40px;background-color:#f4f7f6;font-family:Helvetica,Arial,sans-serif;font-size:16px;line-height:26px;color:#13312e;">{body_html}</td></tr>
+  <tr><td class="px" style="padding:8px 40px 36px 40px;background-color:#f4f7f6;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td bgcolor="#0e9488" style="background-color:#0e9488;border-radius:8px;">
+        <a href="{cta_url}" style="display:block;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;padding:14px 28px;border-radius:8px;">Open Vertil &rarr;</a></td>
+    </tr></table>
+  </td></tr>
+  {_newsletter_footer_rows("#0c2724", "#90a39f", "#2dd4bf", uid)}
+</table></td></tr></table></body></html>"""
+
+
+def _newsletter_html_b(subject, preview_text, body_html, cta_url, uid) -> str:
+    """Light editorial, teal underline."""
+    return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark"><title>{_esc_html(subject)}</title>
+{_NEWSLETTER_MSO}{_NEWSLETTER_MEDIA}</head>
+<body style="margin:0;padding:0;background-color:#e9efed;">
+{_newsletter_preheader(preview_text)}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#e9efed;">
+<tr><td align="center" style="padding:24px 12px 40px 12px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" class="w600" style="width:600px;max-width:600px;background-color:#f4f7f6;">
+  <tr><td class="px" style="padding:34px 40px 22px 40px;background-color:#f4f7f6;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>
+      <td align="left">{_newsletter_wordmark(color="#0c7a70", accent="#2dd4bf")}</td>
+      <td align="right" style="font-family:'Courier New',Courier,monospace;font-size:11px;letter-spacing:1.4px;color:#5c726e;text-transform:uppercase;">The Broadcast</td>
+    </tr></table>
+  </td></tr>
+  <tr><td class="px" style="padding:0 40px;background-color:#f4f7f6;"><div style="height:4px;background-color:#0e9488;font-size:0;line-height:4px;">&nbsp;</div></td></tr>
+  <tr><td class="px" style="padding:32px 40px 8px 40px;background-color:#f4f7f6;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+      <tr><td class="h1" style="font-family:Helvetica,Arial,sans-serif;font-size:32px;line-height:38px;font-weight:bold;letter-spacing:-1px;color:#13312e;padding-bottom:18px;">{_esc_html(subject)}</td></tr>
+    </table>
+  </td></tr>
+  <tr><td class="px" style="padding:0 40px 8px 40px;background-color:#f4f7f6;font-family:Helvetica,Arial,sans-serif;font-size:16px;line-height:26px;color:#13312e;">{body_html}</td></tr>
+  <tr><td class="px" bgcolor="#0e9488" style="background-color:#0e9488;padding:30px 40px;margin-top:20px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td bgcolor="#0c2724" style="background-color:#0c2724;border-radius:8px;">
+        <a href="{cta_url}" style="display:block;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;padding:14px 28px;border-radius:8px;">Open Vertil &rarr;</a></td>
+    </tr></table>
+  </td></tr>
+  {_newsletter_footer_rows("#f4f7f6", "#5c726e", "#0c7a70", uid)}
+</table></td></tr></table></body></html>"""
+
+
+def _newsletter_html_c(subject, preview_text, body_html, cta_url, uid) -> str:
+    """Teal band masthead, white card body."""
+    return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark"><title>{_esc_html(subject)}</title>
+{_NEWSLETTER_MSO}{_NEWSLETTER_MEDIA}</head>
+<body style="margin:0;padding:0;background-color:#dfe8e6;">
+{_newsletter_preheader(preview_text)}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#dfe8e6;">
+<tr><td align="center" style="padding:24px 12px 40px 12px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" class="w600" style="width:600px;max-width:600px;">
+  <tr><td class="px" bgcolor="#0e9488" style="background-color:#0e9488;padding:26px 32px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>
+      <td align="left">{_newsletter_wordmark(color="#ffffff", accent="#0c2724")}</td>
+      <td align="right" style="font-family:'Courier New',Courier,monospace;font-size:11px;letter-spacing:1.4px;color:#e4f3f1;text-transform:uppercase;">The Broadcast</td>
+    </tr></table>
+  </td></tr>
+  <tr><td class="px" bgcolor="#f4f7f6" style="background-color:#f4f7f6;padding:32px 32px 16px 32px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+      <tr><td class="h1" style="font-family:Helvetica,Arial,sans-serif;font-size:28px;line-height:34px;font-weight:bold;letter-spacing:-1px;color:#13312e;padding-bottom:16px;">{_esc_html(subject)}</td></tr>
+    </table>
+  </td></tr>
+  <tr><td class="px" bgcolor="#f4f7f6" style="background-color:#f4f7f6;padding:0 32px 24px 32px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" bgcolor="#ffffff" style="background-color:#ffffff;border:1px solid #e2e8e6;border-radius:10px;">
+      <tr><td style="padding:24px 26px;font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#13312e;">{body_html}</td></tr>
+    </table>
+  </td></tr>
+  <tr><td class="px" bgcolor="#0c2724" style="background-color:#0c2724;padding:30px 32px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td align="center" bgcolor="#2dd4bf" style="background-color:#2dd4bf;border-radius:8px;">
+        <a href="{cta_url}" style="display:block;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:bold;color:#0c2724;text-decoration:none;padding:14px 28px;border-radius:8px;">Open Vertil &rarr;</a></td>
+    </tr></table>
+  </td></tr>
+  {_newsletter_footer_rows("#f4f7f6", "#5c726e", "#0c7a70", uid)}
+</table></td></tr></table></body></html>"""
+
+
+def _newsletter_html_d(subject, preview_text, body_html, cta_url, uid) -> str:
+    """Full dark dispatch."""
+    return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark"><title>{_esc_html(subject)}</title>
+{_NEWSLETTER_MSO}{_NEWSLETTER_MEDIA}</head>
+<body style="margin:0;padding:0;background-color:#0a1f1d;">
+{_newsletter_preheader(preview_text)}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#0a1f1d;">
+<tr><td align="center" style="padding:24px 12px 40px 12px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" class="w600" style="width:600px;max-width:600px;background-color:#13312e;">
+  <tr><td class="px" style="padding:30px 36px 20px 36px;background-color:#13312e;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>
+      <td align="left">{_newsletter_wordmark()}</td>
+      <td align="right" style="font-family:'Courier New',Courier,monospace;font-size:11px;letter-spacing:1.6px;color:#2dd4bf;text-transform:uppercase;">Dispatch</td>
+    </tr></table>
+  </td></tr>
+  <tr><td class="px" style="padding:0 36px;background-color:#13312e;"><div style="height:1px;background-color:#2f4f4a;font-size:0;line-height:1px;">&nbsp;</div></td></tr>
+  <tr><td class="px" style="padding:26px 36px 8px 36px;background-color:#13312e;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+      <tr><td class="h1" style="font-family:Helvetica,Arial,sans-serif;font-size:28px;line-height:36px;font-weight:bold;letter-spacing:-0.9px;color:#f4f7f6;padding-bottom:16px;">{_esc_html(subject)}</td></tr>
+    </table>
+  </td></tr>
+  <tr><td class="px" style="padding:0 36px 30px 36px;background-color:#13312e;font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#c3d3cf;">{body_html}</td></tr>
+  <tr><td class="px" bgcolor="#0c2724" style="background-color:#0c2724;padding:30px 36px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td align="center" bgcolor="#0e9488" style="background-color:#0e9488;border-radius:4px;">
+        <a href="{cta_url}" style="display:block;font-family:'Courier New',Courier,monospace;font-size:14px;font-weight:bold;letter-spacing:1.4px;color:#ffffff;text-decoration:none;padding:15px 30px;border-radius:4px;text-transform:uppercase;">Open Vertil</a></td>
+    </tr></table>
+  </td></tr>
+  {_newsletter_footer_rows("#13312e", "#90a39f", "#2dd4bf", uid)}
+</table></td></tr></table></body></html>"""
+
+
+_NEWSLETTER_STYLES = {"A": _newsletter_html_a, "B": _newsletter_html_b, "C": _newsletter_html_c, "D": _newsletter_html_d}
+
+
+def _newsletter_email_html(style: str, subject: str, preview_text: str, body_html: str, uid: int) -> str:
+    fn = _NEWSLETTER_STYLES.get((style or "A").upper(), _newsletter_html_a)
+    return fn(subject, preview_text, body_html, APP_BASE_URL + "/app", uid)
 
 
 def _welcome_email_html(name: str, link: str) -> str:
@@ -1264,6 +1461,46 @@ def _send_reminders_cli():
     print(f"[Vertil] sent {_run_due_reminders()} reminder(s)")
 
 
+# --------------------------- plan nudges (accountability) ------------------ #
+
+def _plan_nudge_email_html(name: str, items: list, link: str) -> str:
+    def _row(it):
+        brand = f' — {_esc_html(it["brand_name"])}' if it.get("brand_name") else ""
+        return (f'<li style="margin-bottom:8px"><b>{_esc_html(it["text"])}</b>{brand}'
+                f'<br><span style="color:#e11d48;font-size:12px">Due {_esc_html(it["due_date"])}</span></li>')
+    rows = "".join(_row(it) for it in items)
+    plural = "step" if len(items) == 1 else "steps"
+    return _email_shell(
+        f'<p>Hi {_esc_html(name)},</p>'
+        f'<p>{len(items)} {plural} on your personal brand plan {"is" if len(items)==1 else "are"} overdue — '
+        f'nobody grows a brand by accident. Small consistent steps beat big ones you never take.</p>'
+        f'<ul style="padding-left:18px;margin:16px 0">{rows}</ul>'
+        f'{_btn(link, "Open My Plan")}')
+
+
+def _run_plan_nudges() -> int:
+    """Email users with overdue, un-nudged plan steps. Run from cron (daily)."""
+    by_user = {}
+    for it in db.items_needing_nudge(cutoff_days=2):
+        by_user.setdefault(it["user_id"], []).append(it)
+    sent = 0
+    for uid, items in by_user.items():
+        try:
+            send_email(items[0]["email"], f"⏰ {len(items)} step{'s' if len(items)>1 else ''} waiting on your Vertil plan",
+                       _plan_nudge_email_html(items[0].get("user_name") or "there", items, APP_BASE_URL + "/app"))
+            sent += 1
+        except Exception:
+            pass
+        finally:
+            db.mark_nudged([it["id"] for it in items])  # never re-nudge in a loop, even on mail failure
+    return sent
+
+
+@app.cli.command("send-plan-nudges")
+def _send_plan_nudges_cli():
+    print(f"[Vertil] nudged {_run_plan_nudges()} user(s)")
+
+
 @app.get("/api/content")
 @auth
 def content_list(user):
@@ -1652,23 +1889,69 @@ def advisor_brand(user):
     d = request.get_json(force=True) or {}
     if not (d.get("interests") or "").strip():
         return jsonify({"error": "Tell us your interests / niche first."}), 400
+    brand = db.get_brand(user["id"], d.get("brand_id")) if d.get("brand_id") else None
     if get_client() is None:
         return jsonify({"positioning": "[demo] Add your API key for a real personal-brand strategy.",
                         "tagline": "", "niche": "", "content_pillars": [], "voice": "",
                         "target_brands": [], "bio_options": [], "next_steps": []})
     try:
-        text, in_tok, out_tok = _complete(voice.build_personal_brand_system(), voice.build_personal_brand_user(d), 4000)
+        text, in_tok, out_tok = _complete(voice.build_personal_brand_system(), voice.build_personal_brand_user(d, brand), 4000)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
     result = voice.parse_brand_advice_json(text)
     if not result["positioning"]:
         return jsonify({"error": "Could not build a strategy. Please try again."}), 502
     summary = f"Personal brand: {result.get('tagline') or result.get('niche') or 'strategy'}"
-    db.save_generation(user["id"], d.get("brand_id"), "personal_brand", "", d.get("interests", ""), [summary],
-                       model=MODEL, input_tokens=in_tok, output_tokens=out_tok,
-                       cost=cost_naira(MODEL, in_tok, out_tok))
+    gen_id = db.save_generation(user["id"], d.get("brand_id"), "personal_brand", "", d.get("interests", ""), [summary],
+                                model=MODEL, input_tokens=in_tok, output_tokens=out_tok,
+                                cost=cost_naira(MODEL, in_tok, out_tok), full_json=json.dumps(result))
     result["used"] = db.monthly_generation_count(user["id"])
+    result["generation_id"] = gen_id
     return jsonify(result)
+
+
+@app.get("/api/advisor/brand/history")
+@auth
+def advisor_brand_history(user):
+    return jsonify(db.recent_generations_by_type(user["id"], "personal_brand", 6))
+
+
+# ------------------------------ plan (accountability) ---------------------- #
+
+@app.get("/api/plan")
+@auth
+def plan_list(user):
+    return jsonify({"items": db.list_plan_items(user["id"]), "progress": db.plan_progress(user["id"])})
+
+
+@app.post("/api/plan/from-steps")
+@auth
+def plan_from_steps(user):
+    d = request.get_json(force=True) or {}
+    steps = d.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return jsonify({"error": "No steps provided."}), 400
+    items = db.create_plan_items(user["id"], d.get("brand_id"), d.get("generation_id"), steps)
+    if not items:
+        return jsonify({"error": "No steps provided."}), 400
+    return jsonify({"items": items})
+
+
+@app.post("/api/plan/items/<int:item_id>/toggle")
+@auth
+def plan_toggle(user, item_id):
+    d = request.get_json(force=True) or {}
+    item = db.toggle_plan_item(user["id"], item_id, bool(d.get("done")))
+    if not item:
+        return jsonify({"error": "Not found."}), 404
+    return jsonify(item)
+
+
+@app.delete("/api/plan/items/<int:item_id>")
+@auth
+def plan_delete(user, item_id):
+    db.delete_plan_item(user["id"], item_id)
+    return jsonify({"ok": True})
 
 
 @app.post("/api/script/generate")
@@ -1958,6 +2241,84 @@ def admin_user_delete(actor, uid):
         return jsonify({"error": "You can't delete another admin."}), 400
     db.admin_delete_user(uid)
     return jsonify({"ok": True})
+
+
+# ----------------------------- newsletter ---------------------------------- #
+
+@app.get("/api/admin/newsletter")
+@admin
+def newsletter_info(_user):
+    return jsonify(db.newsletter_stats())
+
+
+@app.post("/api/admin/newsletter/draft")
+@admin
+def newsletter_draft(_user):
+    d = request.get_json(force=True) or {}
+    brief = (d.get("brief") or "").strip()
+    if not brief:
+        return jsonify({"error": "Tell the drafter what this issue should cover."}), 400
+    if get_client() is None:
+        return jsonify({"error": "AI isn't configured — set ANTHROPIC_API_KEY."}), 400
+    try:
+        text, in_tok, out_tok = _complete(voice.build_newsletter_system(),
+                                          voice.build_newsletter_user(brief, db.newsletter_stats()), 3000)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    result = voice.parse_newsletter_json(text)
+    if not result.get("subject"):
+        return jsonify({"error": "Could not draft a newsletter. Try again with a clearer brief."}), 502
+    return jsonify(result)
+
+
+@app.post("/api/admin/newsletter/send-test")
+@admin
+def newsletter_send_test(user):
+    d = request.get_json(force=True) or {}
+    subject, body = (d.get("subject") or "").strip(), (d.get("body") or "").strip()
+    preview_text, style = (d.get("preview_text") or "").strip(), (d.get("style") or "A").strip()
+    if not subject or not body:
+        return jsonify({"error": "Missing subject or body."}), 400
+    ok = send_email(user["email"], f"[TEST] {subject}",
+                    _newsletter_email_html(style, subject, preview_text, body, user["id"]))
+    if not ok:
+        return jsonify({"error": "Email sending isn't configured (RESEND_API_KEY)."}), 500
+    return jsonify({"ok": True, "sent_to": user["email"]})
+
+
+@app.post("/api/admin/newsletter/send")
+@admin
+def newsletter_send(_user):
+    d = request.get_json(force=True) or {}
+    subject, body = (d.get("subject") or "").strip(), (d.get("body") or "").strip()
+    preview_text, style = (d.get("preview_text") or "").strip(), (d.get("style") or "A").strip()
+    if not subject or not body:
+        return jsonify({"error": "Missing subject or body."}), 400
+    if not d.get("confirm"):
+        return jsonify({"error": "Confirmation required."}), 400
+    subs = db.list_newsletter_subscribers()
+    sent = 0
+    for s in subs:
+        try:
+            if send_email(s["email"], subject, _newsletter_email_html(style, subject, preview_text, body, s["id"])):
+                sent += 1
+        except Exception:
+            pass
+    return jsonify({"sent": sent, "total": len(subs)})
+
+
+@app.get("/newsletter/unsubscribe")
+def newsletter_unsubscribe():
+    uid = _verify_unsub_token(request.args.get("token", ""))
+    if uid:
+        db.set_newsletter_opt_out(uid, True)
+        msg = "You've been unsubscribed from the Vertil newsletter. You'll still get account emails like receipts and reminders."
+    else:
+        msg = "This unsubscribe link is invalid or has expired."
+    return f"""<!doctype html><html><head><meta charset="utf-8"><title>Vertil</title>
+      <style>body{{font-family:'Segoe UI',Arial,sans-serif;max-width:440px;margin:80px auto;padding:0 24px;color:#13312e;text-align:center}}
+      h1{{color:#0e9488;font-size:22px;margin-bottom:12px}}a{{color:#0e9488}}</style></head>
+      <body><h1>Vertil</h1><p>{msg}</p><p><a href="/app">Go to Vertil &rarr;</a></p></body></html>"""
 
 
 if __name__ == "__main__":

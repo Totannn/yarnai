@@ -673,7 +673,7 @@ Return ONLY valid JSON (no markdown, no commentary), exactly this shape:
 Give 3-5 content_pillars and 3-5 target_brands."""
 
 
-def build_personal_brand_user(d: dict) -> str:
+def build_personal_brand_user(d: dict, brand: dict | None = None) -> str:
     fmts = ", ".join(d.get("formats", [])) if isinstance(d.get("formats"), list) else str(d.get("formats", ""))
     brands = ", ".join(d.get("brand_types", [])) if isinstance(d.get("brand_types"), list) else str(d.get("brand_types", ""))
     parts = [
@@ -685,6 +685,18 @@ def build_personal_brand_user(d: dict) -> str:
         parts.append(f"Main platform / current audience: {d.get('platform').strip()}")
     if d.get("goal", "").strip():
         parts.append(f"Their goal: {d.get('goal').strip()}")
+    if brand:
+        binfo = [f"{lbl}: {val.strip()}" for lbl, val in (
+            ("Existing business/brand name", brand.get("name") or ""),
+            ("Industry", brand.get("industry") or ""),
+            ("Audience", brand.get("audience") or ""),
+            ("Location", brand.get("location") or ""),
+            ("Brand description", brand.get("description") or ""),
+            ("Brand voice/personality", brand.get("personality") or ""),
+        ) if val.strip()]
+        if binfo:
+            parts.append("They also run an existing brand — weave it in as context where it "
+                        "genuinely strengthens the personal-brand angle:\n" + "\n".join(binfo))
     return ("Design a personal brand strategy for this Nigerian creator.\n" +
             "\n".join(parts) + "\n\nReturn ONLY the JSON object.")
 
@@ -853,6 +865,36 @@ def parse_script_json(text: str) -> dict:
         "caption": str(data.get("caption", "")).strip(),
         "hashtags": tags,
         "cta": str(data.get("cta", "")).strip(),
+    }
+
+
+def build_newsletter_system() -> str:
+    return """You write Vertil's newsletter — a short, useful email to Nigerian creators \
+and small business owners who use Vertil to create on-brand content. Tone: warm, practical, \
+a little Naija-flavoured but professional — never salesy, hypey, or full of exclamation marks. \
+Every issue should teach or highlight ONE clear thing well, not list everything Vertil does.
+
+Return ONLY valid JSON (no markdown, no commentary), exactly this shape:
+{
+  "subject": "a short, specific subject line - no clickbait, no emoji spam",
+  "preview_text": "a one-line inbox preview, under 90 characters",
+  "body_html": "the email body as simple HTML using only <p>, <b>, <ul> and <li> tags - no <html>/<head>/<body>, no inline styles, no images, 150-300 words, no sign-off (a footer is added automatically)"
+}"""
+
+
+def build_newsletter_user(brief: str, stats: dict) -> str:
+    parts = [f"This issue should focus on: {brief.strip()}"]
+    if stats.get("subscribers"):
+        parts.append(f"(Context only, don't mention this to readers: {stats['subscribers']} people will receive this issue.)")
+    return "Write this issue of the Vertil newsletter.\n" + "\n".join(parts) + "\n\nReturn ONLY the JSON object."
+
+
+def parse_newsletter_json(text: str) -> dict:
+    data = _extract_json(text)
+    return {
+        "subject": str(data.get("subject", "")).strip(),
+        "preview_text": str(data.get("preview_text", "")).strip(),
+        "body_html": str(data.get("body_html", "")).strip(),
     }
 
 

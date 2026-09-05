@@ -11,7 +11,15 @@ function vmark(px = 36) {
     <span class="vi" style="font-size:${Math.round(px * 0.5)}px"><span class="vi-tip" style="border-bottom-color:#fff"></span><span class="vi-stem" style="background:#fff"></span></span></span>`;
 }
 
-const state = { user: null, overview: null, users: null, applications: null, detail: null, section: "overview", q: "" };
+const state = { user: null, overview: null, users: null, applications: null, detail: null, section: "overview", q: "",
+  newsletter: null, newsletterDraft: null, nlBrief: "", nlDrafting: false, nlStyle: "A" };
+
+const NL_STYLES = [
+  { key: "A", label: "Dark hero", blurb: "Forest hero, light body" },
+  { key: "B", label: "Light editorial", blurb: "Clean, teal underline" },
+  { key: "C", label: "Teal + card", blurb: "Teal band, white card" },
+  { key: "D", label: "Dark dispatch", blurb: "Full dark, mono labels" },
+];
 
 async function api(path, opts = {}) {
   const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
@@ -43,8 +51,8 @@ async function boot() {
 }
 
 async function load() {
-  const [ov, us, apps] = await Promise.all([api("/api/admin/overview"), api("/api/admin/users"), api("/api/admin/applications")]);
-  state.overview = ov; state.users = us; state.applications = apps;
+  const [ov, us, apps, nl] = await Promise.all([api("/api/admin/overview"), api("/api/admin/users"), api("/api/admin/applications"), api("/api/admin/newsletter")]);
+  state.overview = ov; state.users = us; state.applications = apps; state.newsletter = nl;
 }
 
 /* ------------------------------ login ----------------------------- */
@@ -169,6 +177,7 @@ const NAV = [
   { key: "overview", label: "Overview", icon: '<path d="M4 13h7V4H4v9Zm9 7h7v-9h-7v9ZM4 20h7v-5H4v5ZM13 9h7V4h-7v5Z"/>' },
   { key: "customers", label: "Customers", icon: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>' },
   { key: "applications", label: "Applications", icon: '<path d="M4 5h16v14H4z"/><path d="M4 10h4l2 3h4l2-3h4"/>' },
+  { key: "newsletter", label: "Newsletter", icon: '<path d="M4 6h16v12H4z"/><path d="m4 7 8 6 8-6"/>' },
 ];
 
 function adminSidebar() {
@@ -201,7 +210,7 @@ function renderDash() {
     ${adminSidebar()}
     <div class="flex-1 min-w-0 flex flex-col">
       ${adminTopbar()}
-      <main class="flex-1 px-5 sm:px-7 py-6 w-full max-w-[1180px]">${state.section === "customers" ? customersSection() : state.section === "applications" ? applicationsSection() : overviewSection()}</main>
+      <main class="flex-1 px-5 sm:px-7 py-6 w-full max-w-[1180px]">${state.section === "customers" ? customersSection() : state.section === "applications" ? applicationsSection() : state.section === "newsletter" ? newsletterSection() : overviewSection()}</main>
     </div></div>`;
   wireDash();
 }
@@ -279,6 +288,39 @@ function applicationsSection() {
       <tbody>${list.map(appRow).join("") || `<tr><td colspan="6" class="py-4 text-muted">No applications yet.</td></tr>`}</tbody></table></div>`);
 }
 
+function newsletterSection() {
+  const N = state.newsletterDraft || {};
+  const nl = state.newsletter || {};
+  const hasDraft = !!(N.subject || N.body_html);
+  return `
+    ${card(`<div class="text-[13px] font-semibold mb-1 text-white">Subscribers</div>
+      <div class="flex items-center gap-8 mt-1">
+        <div><div class="font-display font-extrabold text-2xl text-brand-bright">${nl.subscribers||0}</div><div class="text-[11px] text-muted">will receive the next send</div></div>
+        <div><div class="font-display font-extrabold text-2xl text-slate-400">${nl.opted_out||0}</div><div class="text-[11px] text-muted">opted out</div></div>
+      </div>`)}
+    ${card(`<div class="text-[13px] font-semibold mb-2 text-white">Draft with AI</div>
+      <textarea id="nlBrief" rows="2" placeholder="What should this issue focus on? e.g. the new Brand Advisor feature, plus a tip on posting consistency" class="w-full bg-panel border border-edge rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand/60">${esc(state.nlBrief||"")}</textarea>
+      <button id="nlDraftBtn" ${state.nlDrafting?"disabled":""} class="mt-2 text-xs font-semibold bg-brand text-ink rounded-lg px-3 py-2 hover:bg-brand-bright disabled:opacity-50">${state.nlDrafting?"Drafting…":"Generate draft"}</button>`)}
+    ${hasDraft ? card(`<div class="text-[13px] font-semibold mb-2 text-white">Review &amp; send</div>
+      <div class="mb-3"><span class="text-[11px] text-faint block mb-1.5">Template style</span>
+        <div class="flex flex-wrap gap-2">${NL_STYLES.map(s => `
+          <button data-nl-style="${s.key}" class="text-left border rounded-lg px-3 py-2 text-xs transition ${state.nlStyle===s.key?"border-brand bg-brand/10 text-brand-bright":"border-edge text-slate-300 hover:border-edge/80"}">
+            <div class="font-semibold">${s.key} · ${s.label}</div><div class="text-faint">${s.blurb}</div></button>`).join("")}</div></div>
+      <label class="block mb-2"><span class="text-[11px] text-faint">Subject</span>
+        <input id="nlSubject" value="${esc(N.subject||"")}" class="w-full bg-panel border border-edge rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand/60"/></label>
+      <label class="block mb-2"><span class="text-[11px] text-faint">Inbox preview text</span>
+        <input id="nlPreviewText" value="${esc(N.preview_text||"")}" class="w-full bg-panel border border-edge rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand/60"/></label>
+      <label class="block mb-2"><span class="text-[11px] text-faint">Body (HTML — &lt;p&gt;, &lt;b&gt;, &lt;ul&gt;/&lt;li&gt; only)</span>
+        <textarea id="nlBody" rows="8" class="w-full bg-panel border border-edge rounded-lg px-3 py-2 text-sm text-slate-100 font-mono outline-none focus:border-brand/60">${esc(N.body_html||"")}</textarea></label>
+      <div class="text-[11px] text-faint mb-1.5">Content preview <span class="text-slate-500">(send a test to see the actual template chrome)</span></div>
+      <div id="nlPreview" class="bg-white text-ink rounded-lg p-4 text-sm mb-3">${N.body_html||""}</div>
+      <div class="flex flex-wrap gap-2 items-center">
+        <button id="nlTestBtn" class="text-xs font-semibold border border-edge rounded-lg px-3 py-2 text-slate-200 hover:bg-edge/40">Send test to me</button>
+        <button id="nlSendBtn" class="text-xs font-semibold bg-brand text-ink rounded-lg px-3 py-2 hover:bg-brand-bright ml-auto">Send to ${nl.subscribers||0} subscribers</button>
+      </div>`) : ""}
+  `;
+}
+
 function appRow(a) {
   const wa = (a.phone || "").replace(/[^\d]/g, "").replace(/^0/, "234");
   const statuses = ["new", "contacted", "accepted", "rejected"];
@@ -313,6 +355,53 @@ function wireDash() {
     wireRows();
   };
   wireRows();
+  wireNewsletter();
+}
+
+function wireNewsletter() {
+  if (state.section !== "newsletter") return;
+  const brief = $("#nlBrief"); if (brief) brief.oninput = () => state.nlBrief = brief.value;
+  const draftBtn = $("#nlDraftBtn");
+  if (draftBtn) draftBtn.onclick = async () => {
+    const b = ($("#nlBrief")?.value || "").trim();
+    if (!b) return alert("Describe what this issue should cover first.");
+    state.nlBrief = b; state.nlDrafting = true; renderDash();
+    try { state.newsletterDraft = await api("/api/admin/newsletter/draft", { method: "POST", body: JSON.stringify({ brief: b }) }); }
+    catch (e) { alert(e.message); }
+    state.nlDrafting = false; renderDash();
+  };
+  const subj = $("#nlSubject");
+  if (subj) subj.oninput = () => { state.newsletterDraft = state.newsletterDraft || {}; state.newsletterDraft.subject = subj.value; };
+  const pvt = $("#nlPreviewText");
+  if (pvt) pvt.oninput = () => { state.newsletterDraft = state.newsletterDraft || {}; state.newsletterDraft.preview_text = pvt.value; };
+  const body = $("#nlBody");
+  if (body) body.oninput = () => {
+    state.newsletterDraft = state.newsletterDraft || {}; state.newsletterDraft.body_html = body.value;
+    const pv = $("#nlPreview"); if (pv) pv.innerHTML = body.value;
+  };
+  $$("[data-nl-style]").forEach(b => b.onclick = () => { state.nlStyle = b.dataset.nlStyle; renderDash(); });
+  const testBtn = $("#nlTestBtn");
+  if (testBtn) testBtn.onclick = async () => {
+    try {
+      const r = await api("/api/admin/newsletter/send-test", { method: "POST", body: JSON.stringify({
+        subject: $("#nlSubject").value, body: $("#nlBody").value,
+        preview_text: $("#nlPreviewText").value, style: state.nlStyle }) });
+      alert("Test sent to " + r.sent_to);
+    } catch (e) { alert(e.message); }
+  };
+  const sendBtn = $("#nlSendBtn");
+  if (sendBtn) sendBtn.onclick = async () => {
+    const n = (state.newsletter && state.newsletter.subscribers) || 0;
+    if (!confirm(`Send this newsletter to ${n} subscribers? This can't be undone.`)) return;
+    try {
+      const r = await api("/api/admin/newsletter/send", { method: "POST", body: JSON.stringify({
+        subject: $("#nlSubject").value, body: $("#nlBody").value,
+        preview_text: $("#nlPreviewText").value, style: state.nlStyle, confirm: true }) });
+      alert(`Sent to ${r.sent}/${r.total} subscribers.`);
+      state.newsletter = await api("/api/admin/newsletter");
+      renderDash();
+    } catch (e) { alert(e.message); }
+  };
 }
 
 function userRow(u) {

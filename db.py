@@ -194,6 +194,19 @@ def init_db() -> None:
                 created_at {_REAL} NOT NULL
             )""")
         c.execute(f"""
+            CREATE TABLE IF NOT EXISTS plan_items (
+                id             {_PK},
+                user_id        INTEGER NOT NULL,
+                brand_id       INTEGER,
+                generation_id  INTEGER,
+                text           TEXT NOT NULL,
+                status         TEXT NOT NULL DEFAULT 'todo',
+                due_date       TEXT,
+                completed_at   {_REAL},
+                last_nudged_at {_REAL},
+                created_at     {_REAL} NOT NULL
+            )""")
+        c.execute(f"""
             CREATE TABLE IF NOT EXISTS applications (
                 id         {_PK},
                 name       TEXT NOT NULL,
@@ -230,10 +243,12 @@ def init_db() -> None:
         _add_col(c, "users", "suspended", "INTEGER NOT NULL DEFAULT 0")
         _add_col(c, "users", "notes", "TEXT DEFAULT ''")
         _add_col(c, "users", "phone", "TEXT DEFAULT ''")
+        _add_col(c, "users", "newsletter_opt_out", "INTEGER NOT NULL DEFAULT 0")
         _add_col(c, "generations", "input_tokens", "INTEGER DEFAULT 0")
         _add_col(c, "generations", "output_tokens", "INTEGER DEFAULT 0")
         _add_col(c, "generations", "cost", f"{_REAL} DEFAULT 0")
         _add_col(c, "generations", "model", "TEXT DEFAULT ''")
+        _add_col(c, "generations", "full_json", "TEXT DEFAULT ''")
 
 
 # ------------------------------- users ------------------------------------ #
@@ -378,14 +393,18 @@ def delete_brand(user_id: int, brand_id: int) -> None:
 
 def save_generation(user_id: int, brand_id, content_type, tone, brief, variants,
                     model: str = "", input_tokens: int = 0, output_tokens: int = 0,
-                    cost: float = 0.0) -> None:
+                    cost: float = 0.0, full_json: str = "") -> int:
+    """full_json optionally stores the complete structured result (e.g. an advisor's
+    full JSON response) so it can be replayed later without another AI call.
+    Returns the new row's id."""
     with _conn() as c:
-        c.execute(
+        return _insert(
+            c,
             "INSERT INTO generations (user_id, brand_id, content_type, tone, brief, output, "
-            "model, input_tokens, output_tokens, cost, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "model, input_tokens, output_tokens, cost, full_json, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (user_id, brand_id, content_type, tone, brief, json.dumps(variants),
-             model, input_tokens, output_tokens, cost, time.time()),
+             model, input_tokens, output_tokens, cost, full_json, time.time()),
         )
 
 
@@ -404,6 +423,32 @@ def recent_generations(user_id: int, limit: int = 20) -> list[dict]:
             d["variants"] = json.loads(d.pop("output") or "[]")
         except json.JSONDecodeError:
             d["variants"] = []
+        out.append(d)
+    return out
+
+
+def recent_generations_by_type(user_id: int, content_type: str, limit: int = 6) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT g.*, b.name AS brand_name FROM generations g "
+            "LEFT JOIN brands b ON b.id = g.brand_id "
+            "WHERE g.user_id=? AND g.content_type=? ORDER BY g.created_at DESC LIMIT ?",
+            (user_id, content_type, limit),
+        ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["variants"] = json.loads(d.pop("output") or "[]")
+        except json.JSONDecodeError:
+            d["variants"] = []
+        fj = d.pop("full_json", "") or ""
+        d["full_result"] = None
+        if fj:
+            try:
+                d["full_result"] = json.loads(fj)
+            except json.JSONDecodeError:
+                d["full_result"] = None
         out.append(d)
     return out
 
@@ -720,6 +765,94 @@ def save_suggestion(user_id: int, day: str, event_key: str, brand_id, idea: str,
                 (user_id, day, event_key, brand_id, idea, voice, type_, time.time()))
 
 
+# ------------------------------ plan items --------------------------------- #
+# Turns an advisor's "next 30 days" steps into a trackable, nudge-able checklist.
+
+def create_plan_items(user_id: int, brand_id, generation_id, steps: list) -> list[dict]:
+    steps = [str(s).strip() for s in (steps or []) if str(s).strip()][:8]
+    if not steps:
+        return []
+    n = len(steps)
+    now = time.time()
+    out = []
+    with _conn() as c:
+        for i, text in enumerate(steps):
+            due_date = time.strftime("%Y-%m-%d", time.localtime(now + round((i + 1) * 30 / n) * 86400))
+            pid = _insert(
+                c, "INSERT INTO plan_items (user_id, brand_id, generation_id, text, status, due_date, created_at) "
+                   "VALUES (?,?,?,?,?,?,?)",
+                (user_id, brand_id, generation_id, text, "todo", due_date, now))
+            out.append({"id": pid, "user_id": user_id, "brand_id": brand_id, "generation_id": generation_id,
+                       "text": text, "status": "todo", "due_date": due_date,
+                       "completed_at": None, "created_at": now, "brand_name": None})
+    return out
+
+
+def list_plan_items(user_id: int) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT p.*, b.name AS brand_name FROM plan_items p "
+            "LEFT JOIN brands b ON b.id = p.brand_id "
+            "WHERE p.user_id=? ORDER BY (p.status='done'), p.due_date, p.created_at",
+            (user_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def toggle_plan_item(user_id: int, item_id: int, done: bool) -> dict | None:
+    with _conn() as c:
+        c.execute("UPDATE plan_items SET status=?, completed_at=? WHERE id=? AND user_id=?",
+                  ("done" if done else "todo", time.time() if done else None, item_id, user_id))
+        r = c.execute(
+            "SELECT p.*, b.name AS brand_name FROM plan_items p LEFT JOIN brands b ON b.id=p.brand_id "
+            "WHERE p.id=? AND p.user_id=?", (item_id, user_id)).fetchone()
+    return dict(r) if r else None
+
+
+def delete_plan_item(user_id: int, item_id: int) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM plan_items WHERE id=? AND user_id=?", (item_id, user_id))
+
+
+def plan_progress(user_id: int) -> dict:
+    week_start = time.time() - 7 * 86400
+    today = time.strftime("%Y-%m-%d")
+    with _conn() as c:
+        total = c.execute("SELECT COUNT(*) AS n FROM plan_items WHERE user_id=?", (user_id,)).fetchone()["n"]
+        done = c.execute("SELECT COUNT(*) AS n FROM plan_items WHERE user_id=? AND status='done'",
+                         (user_id,)).fetchone()["n"]
+        week_done = c.execute(
+            "SELECT COUNT(*) AS n FROM plan_items WHERE user_id=? AND status='done' AND completed_at>=?",
+            (user_id, week_start)).fetchone()["n"]
+        overdue = c.execute(
+            "SELECT COUNT(*) AS n FROM plan_items WHERE user_id=? AND status='todo' AND due_date<?",
+            (user_id, today)).fetchone()["n"]
+    return {"total": total, "done": done, "week_done": week_done, "overdue": overdue}
+
+
+def items_needing_nudge(cutoff_days: int = 2) -> list[dict]:
+    """Overdue todo items not nudged in the last `cutoff_days` days, for the reminder cron."""
+    cutoff = time.time() - cutoff_days * 86400
+    today = time.strftime("%Y-%m-%d")
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT p.*, u.email, u.name AS user_name, b.name AS brand_name FROM plan_items p "
+            "JOIN users u ON u.id=p.user_id LEFT JOIN brands b ON b.id=p.brand_id "
+            "WHERE p.status='todo' AND p.due_date<? AND u.suspended=0 "
+            "AND (p.last_nudged_at IS NULL OR p.last_nudged_at<?) "
+            "ORDER BY p.user_id, p.due_date",
+            (today, cutoff)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def mark_nudged(item_ids: list) -> None:
+    if not item_ids:
+        return
+    now = time.time()
+    with _conn() as c:
+        qs = ",".join("?" for _ in item_ids)
+        c.execute(f"UPDATE plan_items SET last_nudged_at=? WHERE id IN ({qs})", (now, *item_ids))
+
+
 # ------------------------------- home/dashboard --------------------------- #
 
 def home_overview(user_id: int) -> dict:
@@ -898,7 +1031,30 @@ def admin_delete_user(uid: int) -> bool:
         exists = c.execute("SELECT id FROM users WHERE id=?", (uid,)).fetchone()
         if not exists:
             return False
-        for tbl in ("generations", "brands", "calendars", "favorites", "gigs", "brand_feedback"):
+        for tbl in ("generations", "brands", "calendars", "favorites", "gigs", "brand_feedback", "plan_items"):
             c.execute(f"DELETE FROM {tbl} WHERE user_id=?", (uid,))
         c.execute("DELETE FROM users WHERE id=?", (uid,))
     return True
+
+
+# ----------------------------- newsletter ---------------------------------- #
+
+def list_newsletter_subscribers() -> list[dict]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id, email, name FROM users WHERE suspended=0 AND newsletter_opt_out=0"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def newsletter_stats() -> dict:
+    with _conn() as c:
+        subs = c.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE suspended=0 AND newsletter_opt_out=0").fetchone()["n"]
+        opted_out = c.execute("SELECT COUNT(*) AS n FROM users WHERE newsletter_opt_out=1").fetchone()["n"]
+    return {"subscribers": subs, "opted_out": opted_out}
+
+
+def set_newsletter_opt_out(user_id: int, out: bool) -> None:
+    with _conn() as c:
+        c.execute("UPDATE users SET newsletter_opt_out=? WHERE id=?", (1 if out else 0, user_id))
