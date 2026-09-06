@@ -2339,6 +2339,53 @@ def newsletter_schedule_create(_user):
     return jsonify(db.create_scheduled_newsletter(send_date, brief, style))
 
 
+@app.post("/api/admin/newsletter/plan-week")
+@admin
+def newsletter_plan_week(_user):
+    """One prompt -> several fully-drafted issues spread across the open days this week."""
+    d = request.get_json(force=True) or {}
+    prompt = (d.get("prompt") or "").strip()
+    style = (d.get("style") or "A").strip()
+    try:
+        count = max(1, min(int(d.get("count") or 3), 5))
+    except (TypeError, ValueError):
+        count = 3
+    if not prompt:
+        return jsonify({"error": "Describe what this week's newsletters should cover."}), 400
+    if get_client() is None:
+        return jsonify({"error": "AI isn't configured — set ANTHROPIC_API_KEY."}), 400
+
+    existing = {row["send_date"] for row in db.list_scheduled_newsletters(
+        time.strftime("%Y-%m-%d"), time.strftime("%Y-%m-%d", time.localtime(time.time() + 13 * 86400)))}
+    candidates = []
+    for i in range(1, 8):  # tomorrow through the next 7 days
+        dt = time.localtime(time.time() + i * 86400)
+        ds = time.strftime("%Y-%m-%d", dt)
+        if ds not in existing:
+            candidates.append({"date": ds, "weekday": time.strftime("%A", dt)})
+    if len(candidates) < count:
+        return jsonify({"error": f"Only {len(candidates)} open day(s) left this week — free up a day or lower the count."}), 400
+
+    try:
+        text, in_tok, out_tok = _complete(
+            voice.build_newsletter_week_system(),
+            voice.build_newsletter_week_user(prompt, count, candidates, db.newsletter_stats()), 6000)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    issues = voice.parse_newsletter_week_json(text, {c["date"] for c in candidates})
+    if not issues:
+        return jsonify({"error": "Could not plan the week. Try a clearer prompt."}), 502
+
+    created = []
+    for it in issues:
+        item = db.create_scheduled_newsletter(it["send_date"], it["topic"] or it["subject"], style)
+        item = db.update_scheduled_newsletter(item["id"], subject=it["subject"],
+                                              preview_text=it["preview_text"], body_html=it["body_html"])
+        created.append(item)
+    return jsonify({"created": created, "requested": count})
+
+
 @app.put("/api/admin/newsletter/schedule/<int:sid>")
 @admin
 def newsletter_schedule_update(_user, sid):

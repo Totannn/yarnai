@@ -898,6 +898,66 @@ def parse_newsletter_json(text: str) -> dict:
     }
 
 
+def build_newsletter_week_system() -> str:
+    return """You are Vertil's newsletter planner. Given a direction from the admin and a list of \
+available send dates, you plan and fully draft several newsletter issues for the week — one per \
+chosen date — so the admin can review and approve without writing anything themselves.
+
+Each issue follows the same rules as a single Vertil newsletter issue: warm, practical, Naija-flavoured \
+but professional, never salesy or hypey, teaching or highlighting ONE thing well in 150-300 words. \
+Across the week, vary the ANGLE so it doesn't feel repetitive — mix things like a feature highlight, a \
+practical tip, a market/voice spotlight, a rate/pricing insight, an encouragement or consistency \
+reminder. Never reuse the same angle on two dates.
+
+Return ONLY valid JSON (no markdown, no commentary), exactly this shape:
+{
+  "issues": [
+    {
+      "send_date": "one of the exact dates given to you, YYYY-MM-DD",
+      "topic": "a short internal label for what this issue covers",
+      "subject": "short, specific subject line - no clickbait, no emoji spam",
+      "preview_text": "one-line inbox preview, under 90 characters",
+      "body_html": "the email body as simple HTML using only <p>, <b>, <ul> and <li> tags - no <html>/<head>/<body>, no inline styles, no images, 150-300 words, no sign-off"
+    }
+  ]
+}
+Pick exactly the number of dates requested, spread across the week rather than clustered together, \
+choosing only from the dates you were given."""
+
+
+def build_newsletter_week_user(prompt: str, count: int, candidate_dates: list, stats: dict) -> str:
+    dates_str = "\n".join(f"- {d['date']} ({d['weekday']})" for d in candidate_dates)
+    parts = [
+        f"Plan {count} newsletter issue(s) for this week.",
+        f"Direction from the admin: {prompt.strip()}",
+        f"Available dates to choose from (pick exactly {count}, spread them out):\n{dates_str}",
+    ]
+    if stats.get("subscribers"):
+        parts.append(f"(Context only, don't mention this to readers: {stats['subscribers']} people will receive each issue.)")
+    return "\n\n".join(parts) + "\n\nReturn ONLY the JSON object."
+
+
+def parse_newsletter_week_json(text: str, valid_dates: set) -> list:
+    data = _extract_json(text)
+    out = []
+    seen = set()
+    for item in (data.get("issues") or []):
+        if not isinstance(item, dict):
+            continue
+        d = str(item.get("send_date", "")).strip()
+        if d not in valid_dates or d in seen:
+            continue
+        seen.add(d)
+        out.append({
+            "send_date": d,
+            "topic": str(item.get("topic", "")).strip(),
+            "subject": str(item.get("subject", "")).strip(),
+            "preview_text": str(item.get("preview_text", "")).strip(),
+            "body_html": str(item.get("body_html", "")).strip(),
+        })
+    return out
+
+
 def script_options() -> dict:
     return {
         "platforms": SCRIPT_PLATFORMS,

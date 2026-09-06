@@ -13,7 +13,8 @@ function vmark(px = 36) {
 
 const state = { user: null, overview: null, users: null, applications: null, detail: null, section: "overview", q: "",
   newsletter: null, newsletterDraft: null, nlBrief: "", nlDrafting: false, nlStyle: "A", nlTestEmail: "",
-  nlSchedule: [], nlSchedEditing: null, nlSchedBusy: false };
+  nlSchedule: [], nlSchedEditing: null, nlSchedBusy: false,
+  wpPrompt: "", wpCount: 3, wpStyle: "A", wpBusy: false };
 
 const NL_STYLES = [
   { key: "A", label: "Dark hero", blurb: "Forest hero, light body" },
@@ -38,6 +39,23 @@ function fmtDate(epoch) {
 }
 const waHref = p => "https://wa.me/" + String(p || "").replace(/[^\d]/g, "").replace(/^0/, "234");
 const phoneLink = p => p ? `<a href="${waHref(p)}" target="_blank" rel="noopener" class="text-brand-bright hover:underline">${esc(p)}</a>` : '<span class="text-faint">—</span>';
+
+// Lives outside #app so it survives renderDash()'s full innerHTML swap.
+function toast(msg, kind = "ok") {
+  let t = document.getElementById("adminToast");
+  if (!t) {
+    t = document.createElement("div");
+    t.id = "adminToast";
+    t.style.cssText = "position:fixed;bottom:22px;right:22px;z-index:9999;";
+    document.body.appendChild(t);
+  }
+  const bg = kind === "error" ? "#3f1d21" : "#0e9488";
+  const fg = kind === "error" ? "#fca5a5" : "#04120f";
+  const border = kind === "error" ? "1px solid #7f2d33" : "none";
+  t.innerHTML = `<div style="background:${bg};color:${fg};border:${border};font-size:13px;font-weight:600;padding:11px 18px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-width:340px;">${esc(msg)}</div>`;
+  clearTimeout(window.__adminToastTO);
+  window.__adminToastTO = setTimeout(() => { t.innerHTML = ""; }, 3400);
+}
 
 /* ------------------------------ boot ------------------------------ */
 
@@ -302,41 +320,76 @@ function applicationsSection() {
       <tbody>${list.map(appRow).join("") || `<tr><td colspan="6" class="py-4 text-muted">No applications yet.</td></tr>`}</tbody></table></div>`);
 }
 
+const NL_STATUS_META = {
+  sent:   { color: "#5eead4", bg: "rgba(94,234,212,.14)",  ring: "border-brand-bright/40",   label: it => `Sent · ${it.sent_count ?? 0}` },
+  ready:  { color: "#6ee7b7", bg: "rgba(110,231,183,.14)", ring: "border-emerald-400/50",    label: () => "Ready" },
+  failed: { color: "#fda4af", bg: "rgba(253,164,175,.14)", ring: "border-rose-400/50",       label: () => "Failed" },
+  draft:  { color: "#cbd5e1", bg: "rgba(203,213,225,.10)", ring: "border-edge",              label: () => "Draft" },
+};
+
+function newsletterDayCard(dateStr, it, isToday) {
+  const d = new Date(dateStr + "T00:00:00");
+  const wd = d.toLocaleDateString("en-GB", { weekday: "short" });
+  const meta = it ? NL_STATUS_META[it.status] || NL_STATUS_META.draft : null;
+  const attr = !it ? `data-sched-new="${dateStr}"` : `data-sched-edit="${it.id}"`;
+  const title = it ? esc(it.subject || it.brief) : "";
+  return `<button ${attr} class="group text-left rounded-xl border p-2.5 flex flex-col gap-1.5 transition-all duration-150
+      ${isToday ? "border-brand-bright/60 shadow-[0_0_0_1px_rgba(45,212,191,.25)]" : it ? meta.ring : "border-edge/70 border-dashed"}
+      ${it ? "bg-panel hover:border-brand/50" : "bg-transparent hover:bg-edge/30 hover:border-edge"}"
+      style="min-height:96px;">
+    <div class="flex items-center justify-between">
+      <span class="text-[10px] font-mono uppercase tracking-wide ${isToday?"text-brand-bright":"text-faint"}">${wd}${isToday?" · today":""}</span>
+      <span class="text-xs font-bold ${isToday?"text-brand-bright":"text-slate-200"}">${d.getDate()}</span>
+    </div>
+    ${it
+      ? `<div class="text-[11.5px] leading-snug text-slate-100 flex-1" style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;">${title}</div>
+         <span class="self-start text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded" style="color:${meta.color};background:${meta.bg}">${meta.label(it)}</span>`
+      : `<div class="flex-1 flex items-center justify-center text-faint text-xl leading-none opacity-0 group-hover:opacity-100 transition-opacity">+</div>`}
+  </button>`;
+}
+
 function newsletterCalendar() {
-  const days = [];
-  const today = new Date();
-  for (let i = 0; i < 14; i++) days.push(new Date(today.getTime() + i * 86400000).toISOString().slice(0, 10));
   const byDate = {};
   (state.nlSchedule || []).forEach(it => byDate[it.send_date] = it);
-  const badge = it => {
-    if (!it) return "";
-    if (it.status === "sent") return `<span class="text-[10px] font-semibold bg-brand/20 text-brand-bright rounded-full px-2 py-0.5 whitespace-nowrap">SENT · ${it.sent_count ?? 0}</span>`;
-    if (it.status === "ready") return `<span class="text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 rounded-full px-2 py-0.5 whitespace-nowrap">READY</span>`;
-    if (it.status === "failed") return `<span class="text-[10px] font-semibold bg-rose-500/20 text-rose-300 rounded-full px-2 py-0.5 whitespace-nowrap">FAILED</span>`;
-    return `<span class="text-[10px] font-semibold bg-edge text-slate-300 rounded-full px-2 py-0.5 whitespace-nowrap">DRAFT</span>`;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const todayStr = today.toISOString().slice(0, 10);
+  const week = offset => {
+    const out = [];
+    for (let i = 0; i < 7; i++) out.push(new Date(today.getTime() + (offset * 7 + i) * 86400000).toISOString().slice(0, 10));
+    return out;
   };
-  const rows = days.map(dateStr => {
-    const d = new Date(dateStr + "T00:00:00");
-    const label = d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
-    const isToday = dateStr === today.toISOString().slice(0, 10);
-    const it = byDate[dateStr];
-    const title = it ? esc(it.subject || it.brief) : "";
-    const action = !it
-      ? `<button data-sched-new="${dateStr}" class="text-xs font-semibold text-brand hover:underline whitespace-nowrap">+ Plan</button>`
-      : it.status !== "sent"
-        ? `<button data-sched-edit="${it.id}" class="text-xs font-semibold text-brand hover:underline whitespace-nowrap">Edit</button>`
-        : `<button data-sched-edit="${it.id}" class="text-xs font-semibold text-slate-400 hover:underline whitespace-nowrap">View</button>`;
-    return `<div class="flex items-center gap-3 py-2.5 border-b border-edge/60 last:border-0">
-      <div class="w-24 shrink-0 text-xs ${isToday?"text-brand-bright font-semibold":"text-muted"}">${label}${isToday?" · today":""}</div>
-      <div class="flex-1 min-w-0 text-sm ${it?"text-slate-100":"text-faint italic"} truncate">${title || "Nothing planned"}</div>
-      ${badge(it)}
-      <div class="shrink-0">${action}</div>
-    </div>`;
-  }).join("");
-  return card(`<div class="flex items-center justify-between mb-1 flex-wrap gap-1">
-      <div class="text-[13px] font-semibold text-white">Next 14 days</div>
-      <div class="text-[11px] text-faint">Sends automatically at 11:00 on days marked READY</div></div>
-    ${rows}`);
+  const weekGrid = days => `<div class="grid grid-cols-7 gap-2">${days.map(ds => newsletterDayCard(ds, byDate[ds], ds === todayStr)).join("")}</div>`;
+  const plannedCount = (state.nlSchedule || []).filter(it => it.status === "ready" || it.status === "sent").length;
+  return card(`<div class="flex items-center justify-between mb-3 flex-wrap gap-1.5">
+      <div class="flex items-center gap-2">
+        <div class="text-[13px] font-semibold text-white">Calendar</div>
+        ${plannedCount ? `<span class="text-[10px] font-bold bg-brand/20 text-brand-bright rounded-full px-2 py-0.5">${plannedCount} planned</span>` : ""}
+      </div>
+      <div class="text-[11px] text-faint">Auto-sends at 11:00 WAT on days marked <span class="text-emerald-300 font-semibold">Ready</span></div></div>
+    <div class="space-y-2">${weekGrid(0)}</div>
+    <div class="h-px bg-edge/60 my-3"></div>
+    <div class="space-y-2">${weekGrid(1)}</div>`);
+}
+
+function newsletterWeekPlanner() {
+  return `<div class="rounded-xl2 p-4 mb-4" style="background:linear-gradient(135deg,#0c2724,#0e3d38 60%,#0c2724);border:1px solid rgba(45,212,191,.25)">
+    <div class="flex items-center gap-2 mb-1">
+      <span class="w-6 h-6 rounded-lg bg-brand-bright/15 text-brand-bright grid place-items-center shrink-0">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><path d="M12 2 9.5 8.5 3 9l5 4.5L6.5 20 12 16.5 17.5 20 16 13.5l5-4.5-6.5-.5z"/></svg>
+      </span>
+      <div class="text-[13px] font-semibold text-white">Plan my week with AI</div>
+    </div>
+    <div class="text-[11px] text-faint mb-2.5">One prompt, several open days fully drafted at once. Review and mark each Ready — nothing sends on its own.</div>
+    <textarea id="wpPrompt" rows="2" placeholder="e.g. Feature My Plan and Brand Advisor this week, one consistency tip, keep it upbeat" class="w-full bg-panel/80 border border-edge rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand-bright/60">${esc(state.wpPrompt||"")}</textarea>
+    <div class="flex flex-wrap items-center gap-2.5 mt-2.5">
+      <label class="text-xs text-slate-300 flex items-center gap-1.5">Issues
+        <select id="wpCount" class="bg-panel border border-edge rounded-lg px-2 py-1.5 text-xs text-slate-100 outline-none focus:border-brand-bright/60">
+          ${[3,4,5].map(n => `<option value="${n}" ${state.wpCount===n?"selected":""}>${n}</option>`).join("")}
+        </select></label>
+      <div class="flex gap-1">${NL_STYLES.map(s => `<button data-wp-style="${s.key}" title="${esc(s.label)}" class="text-[11px] font-semibold w-6 h-6 rounded-lg border transition ${state.wpStyle===s.key?"border-brand-bright bg-brand-bright/15 text-brand-bright":"border-edge text-slate-400 hover:border-edge/60"}">${s.key}</button>`).join("")}</div>
+      <button id="wpPlanBtn" ${state.wpBusy?"disabled":""} class="text-xs font-semibold bg-brand-bright text-ink rounded-lg px-3.5 py-2 hover:brightness-110 disabled:opacity-50 ml-auto shadow-[0_2px_12px_rgba(45,212,191,.25)]">${state.wpBusy?"Planning your week…":"Plan my week"}</button>
+    </div>
+  </div>`;
 }
 
 function newsletterSchedEditor() {
@@ -386,6 +439,7 @@ function newsletterSection() {
         <div><div class="font-display font-extrabold text-2xl text-brand-bright">${nl.subscribers||0}</div><div class="text-[11px] text-muted">will receive the next send</div></div>
         <div><div class="font-display font-extrabold text-2xl text-slate-400">${nl.opted_out||0}</div><div class="text-[11px] text-muted">opted out</div></div>
       </div>`)}
+    ${newsletterWeekPlanner()}
     ${newsletterCalendar()}
     ${newsletterSchedEditor()}
     ${card(`<div class="text-[13px] font-semibold mb-2 text-white">One-off: draft with AI</div>
@@ -457,10 +511,10 @@ function wireNewsletter() {
   const draftBtn = $("#nlDraftBtn");
   if (draftBtn) draftBtn.onclick = async () => {
     const b = ($("#nlBrief")?.value || "").trim();
-    if (!b) return alert("Describe what this issue should cover first.");
+    if (!b) return toast("Describe what this issue should cover first.", "error");
     state.nlBrief = b; state.nlDrafting = true; renderDash();
     try { state.newsletterDraft = await api("/api/admin/newsletter/draft", { method: "POST", body: JSON.stringify({ brief: b }) }); }
-    catch (e) { alert(e.message); }
+    catch (e) { toast(e.message, "error"); }
     state.nlDrafting = false; renderDash();
   };
   const subj = $("#nlSubject");
@@ -481,8 +535,8 @@ function wireNewsletter() {
       const r = await api("/api/admin/newsletter/send-test", { method: "POST", body: JSON.stringify({
         subject: $("#nlSubject").value, body: $("#nlBody").value,
         preview_text: $("#nlPreviewText").value, style: state.nlStyle, to: $("#nlTestEmail").value }) });
-      alert("Test sent to " + r.sent_to);
-    } catch (e) { alert(e.message); }
+      toast("Test sent to " + r.sent_to);
+    } catch (e) { toast(e.message, "error"); }
   };
   const sendBtn = $("#nlSendBtn");
   if (sendBtn) sendBtn.onclick = async () => {
@@ -492,10 +546,26 @@ function wireNewsletter() {
       const r = await api("/api/admin/newsletter/send", { method: "POST", body: JSON.stringify({
         subject: $("#nlSubject").value, body: $("#nlBody").value,
         preview_text: $("#nlPreviewText").value, style: state.nlStyle, confirm: true }) });
-      alert(`Sent to ${r.sent}/${r.total} subscribers.`);
+      toast(`Sent to ${r.sent}/${r.total} subscribers.`);
       state.newsletter = await api("/api/admin/newsletter");
       renderDash();
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast(e.message, "error"); }
+  };
+
+  const wpPromptEl = $("#wpPrompt"); if (wpPromptEl) wpPromptEl.oninput = () => state.wpPrompt = wpPromptEl.value;
+  const wpCountEl = $("#wpCount"); if (wpCountEl) wpCountEl.onchange = () => state.wpCount = +wpCountEl.value;
+  $$("[data-wp-style]").forEach(b => b.onclick = () => { state.wpStyle = b.dataset.wpStyle; renderDash(); });
+  const wpPlanBtn = $("#wpPlanBtn");
+  if (wpPlanBtn) wpPlanBtn.onclick = async () => {
+    const p = ($("#wpPrompt")?.value || "").trim();
+    if (!p) return toast("Describe what this week should cover.", "error");
+    state.wpPrompt = p; state.wpBusy = true; renderDash();
+    try {
+      const r = await api("/api/admin/newsletter/plan-week", { method: "POST", body: JSON.stringify({ prompt: p, count: state.wpCount, style: state.wpStyle }) });
+      await reloadSchedule();
+      toast(`Drafted ${r.created.length} issue${r.created.length===1?"":"s"} — review them below and mark each Ready.`);
+    } catch (ex) { toast(ex.message, "error"); }
+    state.wpBusy = false; renderDash();
   };
 
   $$("[data-sched-new]").forEach(b => b.onclick = () => {
@@ -516,7 +586,7 @@ function wireNewsletter() {
   const schedDraftBtn = $("#schedDraftBtn");
   if (schedDraftBtn) schedDraftBtn.onclick = async () => {
     const e = state.nlSchedEditing;
-    if (!e.brief.trim()) return alert("Add a topic first.");
+    if (!e.brief.trim()) return toast("Add a topic first.", "error");
     state.nlSchedBusy = true; renderDash();
     try {
       let id = e.id;
@@ -528,19 +598,21 @@ function wireNewsletter() {
       }
       state.nlSchedEditing = await api(`/api/admin/newsletter/schedule/${id}/draft`, { method: "POST" });
       await reloadSchedule();
-    } catch (ex) { alert(ex.message); }
+      toast("Draft ready — review and mark it Ready when you're happy.");
+    } catch (ex) { toast(ex.message, "error"); }
     state.nlSchedBusy = false; renderDash();
   };
   const schedSaveOnlyBtn = $("#schedSaveOnlyBtn");
   if (schedSaveOnlyBtn) schedSaveOnlyBtn.onclick = async () => {
     const e = state.nlSchedEditing;
-    if (!e.brief.trim()) return alert("Add a topic first.");
+    if (!e.brief.trim()) return toast("Add a topic first.", "error");
     try {
       state.nlSchedEditing = await api("/api/admin/newsletter/schedule", { method: "POST", body: JSON.stringify({ send_date: e.send_date, brief: e.brief, style: e.style }) });
       await reloadSchedule();
       state.nlSchedEditing = null;
+      toast("Topic saved for that day.");
       renderDash();
-    } catch (ex) { alert(ex.message); }
+    } catch (ex) { toast(ex.message, "error"); }
   };
   const schedDeleteBtn = $("#schedDeleteBtn");
   if (schedDeleteBtn) schedDeleteBtn.onclick = async () => {
@@ -549,7 +621,8 @@ function wireNewsletter() {
       await api(`/api/admin/newsletter/schedule/${state.nlSchedEditing.id}`, { method: "DELETE" });
       state.nlSchedEditing = null;
       await reloadSchedule(); renderDash();
-    } catch (ex) { alert(ex.message); }
+      toast("Deleted.");
+    } catch (ex) { toast(ex.message, "error"); }
   };
   const schedSaveBtn = $("#schedSaveBtn");
   if (schedSaveBtn) schedSaveBtn.onclick = async () => {
@@ -558,7 +631,8 @@ function wireNewsletter() {
       state.nlSchedEditing = await api(`/api/admin/newsletter/schedule/${e.id}`, { method: "PUT", body: JSON.stringify({
         subject: e.subject, preview_text: e.preview_text, body_html: e.body_html, style: e.style }) });
       await reloadSchedule(); renderDash();
-    } catch (ex) { alert(ex.message); }
+      toast("Changes saved.");
+    } catch (ex) { toast(ex.message, "error"); }
   };
   const schedReadyBtn = $("#schedReadyBtn");
   if (schedReadyBtn) schedReadyBtn.onclick = async () => {
@@ -568,7 +642,8 @@ function wireNewsletter() {
         subject: e.subject, preview_text: e.preview_text, body_html: e.body_html, style: e.style, status: "ready" }) });
       state.nlSchedEditing = null;
       await reloadSchedule(); renderDash();
-    } catch (ex) { alert(ex.message); }
+      toast(`Marked Ready — sends automatically on ${e.send_date}.`);
+    } catch (ex) { toast(ex.message, "error"); }
   };
   const schedSendNowBtn = $("#schedSendNowBtn");
   if (schedSendNowBtn) schedSendNowBtn.onclick = async () => {
@@ -579,11 +654,11 @@ function wireNewsletter() {
       await api(`/api/admin/newsletter/schedule/${e.id}`, { method: "PUT", body: JSON.stringify({
         subject: e.subject, preview_text: e.preview_text, body_html: e.body_html, style: e.style }) });
       const r = await api(`/api/admin/newsletter/schedule/${e.id}/send-now`, { method: "POST" });
-      alert(`Sent to ${r.sent}/${r.total} subscribers.`);
+      toast(`Sent to ${r.sent}/${r.total} subscribers.`);
       state.nlSchedEditing = null;
       state.newsletter = await api("/api/admin/newsletter");
       await reloadSchedule(); renderDash();
-    } catch (ex) { alert(ex.message); }
+    } catch (ex) { toast(ex.message, "error"); }
   };
 }
 
