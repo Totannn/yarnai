@@ -2289,6 +2289,19 @@ def newsletter_send_test(user):
     return jsonify({"ok": True, "sent_to": to})
 
 
+def _send_newsletter_blast(style: str, subject: str, preview_text: str, body_html: str) -> tuple[int, int]:
+    """Emails every current subscriber this issue. Returns (sent, total)."""
+    subs = db.list_newsletter_subscribers()
+    sent = 0
+    for s in subs:
+        try:
+            if send_email(s["email"], subject, _newsletter_email_html(style, subject, preview_text, body_html, s["id"])):
+                sent += 1
+        except Exception:
+            pass
+    return sent, len(subs)
+
+
 @app.post("/api/admin/newsletter/send")
 @admin
 def newsletter_send(_user):
@@ -2299,15 +2312,103 @@ def newsletter_send(_user):
         return jsonify({"error": "Missing subject or body."}), 400
     if not d.get("confirm"):
         return jsonify({"error": "Confirmation required."}), 400
-    subs = db.list_newsletter_subscribers()
-    sent = 0
-    for s in subs:
-        try:
-            if send_email(s["email"], subject, _newsletter_email_html(style, subject, preview_text, body, s["id"])):
-                sent += 1
-        except Exception:
-            pass
-    return jsonify({"sent": sent, "total": len(subs)})
+    sent, total = _send_newsletter_blast(style, subject, preview_text, body)
+    return jsonify({"sent": sent, "total": total})
+
+
+# ------------------------- newsletter schedule ------------------------------ #
+
+@app.get("/api/admin/newsletter/schedule")
+@admin
+def newsletter_schedule_list(_user):
+    start = request.args.get("start") or time.strftime("%Y-%m-%d")
+    end = request.args.get("end") or time.strftime("%Y-%m-%d", time.localtime(time.time() + 20 * 86400))
+    return jsonify(db.list_scheduled_newsletters(start, end))
+
+
+@app.post("/api/admin/newsletter/schedule")
+@admin
+def newsletter_schedule_create(_user):
+    d = request.get_json(force=True) or {}
+    send_date, brief = (d.get("send_date") or "").strip(), (d.get("brief") or "").strip()
+    style = (d.get("style") or "A").strip()
+    if not send_date or not brief:
+        return jsonify({"error": "Pick a date and a topic."}), 400
+    if db.list_scheduled_newsletters(send_date, send_date):
+        return jsonify({"error": "That date already has a scheduled issue. Edit or delete it first."}), 409
+    return jsonify(db.create_scheduled_newsletter(send_date, brief, style))
+
+
+@app.put("/api/admin/newsletter/schedule/<int:sid>")
+@admin
+def newsletter_schedule_update(_user, sid):
+    d = request.get_json(force=True) or {}
+    fields = {k: d[k] for k in ("subject", "preview_text", "body_html", "style", "brief", "send_date", "status") if k in d}
+    if fields.get("status") == "ready":
+        cur = db.get_scheduled_newsletter(sid) or {}
+        merged = {**cur, **fields}
+        if not (merged.get("subject") and merged.get("body_html")):
+            return jsonify({"error": "Draft the content before marking it ready."}), 400
+    item = db.update_scheduled_newsletter(sid, **fields)
+    if not item:
+        return jsonify({"error": "Not found."}), 404
+    return jsonify(item)
+
+
+@app.delete("/api/admin/newsletter/schedule/<int:sid>")
+@admin
+def newsletter_schedule_delete(_user, sid):
+    db.delete_scheduled_newsletter(sid)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/admin/newsletter/schedule/<int:sid>/draft")
+@admin
+def newsletter_schedule_draft(_user, sid):
+    item = db.get_scheduled_newsletter(sid)
+    if not item:
+        return jsonify({"error": "Not found."}), 404
+    if get_client() is None:
+        return jsonify({"error": "AI isn't configured — set ANTHROPIC_API_KEY."}), 400
+    try:
+        text, in_tok, out_tok = _complete(voice.build_newsletter_system(),
+                                          voice.build_newsletter_user(item["brief"], db.newsletter_stats()), 3000)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    result = voice.parse_newsletter_json(text)
+    if not result.get("subject"):
+        return jsonify({"error": "Could not draft a newsletter. Try again."}), 502
+    return jsonify(db.update_scheduled_newsletter(
+        sid, subject=result["subject"], preview_text=result["preview_text"], body_html=result["body_html"]))
+
+
+@app.post("/api/admin/newsletter/schedule/<int:sid>/send-now")
+@admin
+def newsletter_schedule_send_now(_user, sid):
+    item = db.get_scheduled_newsletter(sid)
+    if not item:
+        return jsonify({"error": "Not found."}), 404
+    if not (item.get("subject") and item.get("body_html")):
+        return jsonify({"error": "This issue has no drafted content yet."}), 400
+    sent, total = _send_newsletter_blast(item["style"] or "A", item["subject"], item.get("preview_text") or "", item["body_html"])
+    db.mark_scheduled_newsletter_sent(sid, sent, ok=True)
+    return jsonify({"sent": sent, "total": total})
+
+
+def _run_scheduled_newsletter() -> str:
+    """Send today's newsletter issue if one is marked ready. Run daily (cron) at 11:00."""
+    today = time.strftime("%Y-%m-%d")
+    item = db.get_ready_newsletter_for_date(today)
+    if not item:
+        return "no newsletter scheduled for today"
+    sent, total = _send_newsletter_blast(item["style"] or "A", item["subject"], item.get("preview_text") or "", item["body_html"])
+    db.mark_scheduled_newsletter_sent(item["id"], sent, ok=True)
+    return f"sent today's newsletter ({item['subject']!r}) to {sent}/{total}"
+
+
+@app.cli.command("send-scheduled-newsletter")
+def _send_scheduled_newsletter_cli():
+    print(f"[Vertil] {_run_scheduled_newsletter()}")
 
 
 @app.get("/newsletter/unsubscribe")

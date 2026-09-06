@@ -207,6 +207,20 @@ def init_db() -> None:
                 created_at     {_REAL} NOT NULL
             )""")
         c.execute(f"""
+            CREATE TABLE IF NOT EXISTS newsletter_schedule (
+                id           {_PK},
+                send_date    TEXT NOT NULL,
+                brief        TEXT NOT NULL,
+                subject      TEXT,
+                preview_text TEXT,
+                body_html    TEXT,
+                style        TEXT NOT NULL DEFAULT 'A',
+                status       TEXT NOT NULL DEFAULT 'draft',
+                sent_count   INTEGER,
+                sent_at      {_REAL},
+                created_at   {_REAL} NOT NULL
+            )""")
+        c.execute(f"""
             CREATE TABLE IF NOT EXISTS applications (
                 id         {_PK},
                 name       TEXT NOT NULL,
@@ -1058,3 +1072,65 @@ def newsletter_stats() -> dict:
 def set_newsletter_opt_out(user_id: int, out: bool) -> None:
     with _conn() as c:
         c.execute("UPDATE users SET newsletter_opt_out=? WHERE id=?", (1 if out else 0, user_id))
+
+
+# ------------------------- newsletter schedule ----------------------------- #
+# A calendar of planned issues: pick a date, draft it whenever, mark it
+# "ready" when you're happy — a daily cron then sends whatever is ready
+# for today, so 3-4 issues a week can run unattended once planned.
+
+def create_scheduled_newsletter(send_date: str, brief: str, style: str = "A") -> dict:
+    now = time.time()
+    with _conn() as c:
+        nid = _insert(
+            c, "INSERT INTO newsletter_schedule (send_date, brief, style, status, created_at) "
+               "VALUES (?,?,?,?,?)",
+            (send_date, brief.strip(), style, "draft", now))
+    return get_scheduled_newsletter(nid)
+
+
+def get_scheduled_newsletter(nid: int) -> dict | None:
+    with _conn() as c:
+        r = c.execute("SELECT * FROM newsletter_schedule WHERE id=?", (nid,)).fetchone()
+    return dict(r) if r else None
+
+
+def list_scheduled_newsletters(start_date: str, end_date: str) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM newsletter_schedule WHERE send_date>=? AND send_date<=? ORDER BY send_date",
+            (start_date, end_date)).fetchall()
+    return [dict(r) for r in rows]
+
+
+_SCHED_FIELDS = {"brief", "subject", "preview_text", "body_html", "style", "status", "send_date"}
+
+
+def update_scheduled_newsletter(nid: int, **fields) -> dict | None:
+    sets, params = [], []
+    for k, v in fields.items():
+        if k in _SCHED_FIELDS:
+            sets.append(f"{k}=?")
+            params.append(v)
+    if sets:
+        with _conn() as c:
+            c.execute(f"UPDATE newsletter_schedule SET {', '.join(sets)} WHERE id=?", (*params, nid))
+    return get_scheduled_newsletter(nid)
+
+
+def delete_scheduled_newsletter(nid: int) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM newsletter_schedule WHERE id=?", (nid,))
+
+
+def get_ready_newsletter_for_date(send_date: str) -> dict | None:
+    with _conn() as c:
+        r = c.execute("SELECT * FROM newsletter_schedule WHERE send_date=? AND status='ready' LIMIT 1",
+                      (send_date,)).fetchone()
+    return dict(r) if r else None
+
+
+def mark_scheduled_newsletter_sent(nid: int, sent_count: int, ok: bool = True) -> None:
+    with _conn() as c:
+        c.execute("UPDATE newsletter_schedule SET status=?, sent_count=?, sent_at=? WHERE id=?",
+                  ("sent" if ok else "failed", sent_count, time.time(), nid))

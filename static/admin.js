@@ -12,7 +12,8 @@ function vmark(px = 36) {
 }
 
 const state = { user: null, overview: null, users: null, applications: null, detail: null, section: "overview", q: "",
-  newsletter: null, newsletterDraft: null, nlBrief: "", nlDrafting: false, nlStyle: "A", nlTestEmail: "" };
+  newsletter: null, newsletterDraft: null, nlBrief: "", nlDrafting: false, nlStyle: "A", nlTestEmail: "",
+  nlSchedule: [], nlSchedEditing: null, nlSchedBusy: false };
 
 const NL_STYLES = [
   { key: "A", label: "Dark hero", blurb: "Forest hero, light body" },
@@ -50,9 +51,22 @@ async function boot() {
   }
 }
 
+function scheduleWindow() {
+  const start = new Date(); const end = new Date(start.getTime() + 13 * 86400000);
+  return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+}
+async function reloadSchedule() {
+  const { start, end } = scheduleWindow();
+  state.nlSchedule = await api(`/api/admin/newsletter/schedule?start=${start}&end=${end}`);
+}
+
 async function load() {
-  const [ov, us, apps, nl] = await Promise.all([api("/api/admin/overview"), api("/api/admin/users"), api("/api/admin/applications"), api("/api/admin/newsletter")]);
-  state.overview = ov; state.users = us; state.applications = apps; state.newsletter = nl;
+  const { start, end } = scheduleWindow();
+  const [ov, us, apps, nl, sched] = await Promise.all([
+    api("/api/admin/overview"), api("/api/admin/users"), api("/api/admin/applications"),
+    api("/api/admin/newsletter"), api(`/api/admin/newsletter/schedule?start=${start}&end=${end}`),
+  ]);
+  state.overview = ov; state.users = us; state.applications = apps; state.newsletter = nl; state.nlSchedule = sched;
 }
 
 /* ------------------------------ login ----------------------------- */
@@ -288,6 +302,80 @@ function applicationsSection() {
       <tbody>${list.map(appRow).join("") || `<tr><td colspan="6" class="py-4 text-muted">No applications yet.</td></tr>`}</tbody></table></div>`);
 }
 
+function newsletterCalendar() {
+  const days = [];
+  const today = new Date();
+  for (let i = 0; i < 14; i++) days.push(new Date(today.getTime() + i * 86400000).toISOString().slice(0, 10));
+  const byDate = {};
+  (state.nlSchedule || []).forEach(it => byDate[it.send_date] = it);
+  const badge = it => {
+    if (!it) return "";
+    if (it.status === "sent") return `<span class="text-[10px] font-semibold bg-brand/20 text-brand-bright rounded-full px-2 py-0.5 whitespace-nowrap">SENT · ${it.sent_count ?? 0}</span>`;
+    if (it.status === "ready") return `<span class="text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 rounded-full px-2 py-0.5 whitespace-nowrap">READY</span>`;
+    if (it.status === "failed") return `<span class="text-[10px] font-semibold bg-rose-500/20 text-rose-300 rounded-full px-2 py-0.5 whitespace-nowrap">FAILED</span>`;
+    return `<span class="text-[10px] font-semibold bg-edge text-slate-300 rounded-full px-2 py-0.5 whitespace-nowrap">DRAFT</span>`;
+  };
+  const rows = days.map(dateStr => {
+    const d = new Date(dateStr + "T00:00:00");
+    const label = d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+    const isToday = dateStr === today.toISOString().slice(0, 10);
+    const it = byDate[dateStr];
+    const title = it ? esc(it.subject || it.brief) : "";
+    const action = !it
+      ? `<button data-sched-new="${dateStr}" class="text-xs font-semibold text-brand hover:underline whitespace-nowrap">+ Plan</button>`
+      : it.status !== "sent"
+        ? `<button data-sched-edit="${it.id}" class="text-xs font-semibold text-brand hover:underline whitespace-nowrap">Edit</button>`
+        : `<button data-sched-edit="${it.id}" class="text-xs font-semibold text-slate-400 hover:underline whitespace-nowrap">View</button>`;
+    return `<div class="flex items-center gap-3 py-2.5 border-b border-edge/60 last:border-0">
+      <div class="w-24 shrink-0 text-xs ${isToday?"text-brand-bright font-semibold":"text-muted"}">${label}${isToday?" · today":""}</div>
+      <div class="flex-1 min-w-0 text-sm ${it?"text-slate-100":"text-faint italic"} truncate">${title || "Nothing planned"}</div>
+      ${badge(it)}
+      <div class="shrink-0">${action}</div>
+    </div>`;
+  }).join("");
+  return card(`<div class="flex items-center justify-between mb-1 flex-wrap gap-1">
+      <div class="text-[13px] font-semibold text-white">Next 14 days</div>
+      <div class="text-[11px] text-faint">Sends automatically at 11:00 on days marked READY</div></div>
+    ${rows}`);
+}
+
+function newsletterSchedEditor() {
+  const e = state.nlSchedEditing;
+  if (!e) return "";
+  const dateLabel = new Date(e.send_date + "T00:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+  const canMarkReady = !!(e.subject && e.body_html);
+  const isNew = !e.id;
+  const isSent = e.status === "sent";
+  return card(`<div class="flex items-center justify-between mb-3">
+      <div class="text-[13px] font-semibold text-white">${isSent?"Sent":"Plan"} — ${esc(dateLabel)}</div>
+      <button data-sched-cancel class="text-xs text-muted hover:text-white">Close</button></div>
+    <label class="block mb-2"><span class="text-[11px] text-faint">Topic</span>
+      <input id="schedBrief" ${isSent?"disabled":""} value="${esc(e.brief||"")}" placeholder="e.g. Content Calendar quarterly planning + a consistency tip" class="w-full bg-panel border border-edge rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand/60 disabled:opacity-60"/></label>
+    <div class="mb-3"><span class="text-[11px] text-faint block mb-1.5">Template style</span>
+      <div class="flex flex-wrap gap-2">${NL_STYLES.map(s => `
+        <button data-sched-style="${s.key}" ${isSent?"disabled":""} class="text-left border rounded-lg px-3 py-2 text-xs transition ${e.style===s.key?"border-brand bg-brand/10 text-brand-bright":"border-edge text-slate-300 hover:border-edge/80"}">
+          <div class="font-semibold">${s.key} · ${s.label}</div></button>`).join("")}</div></div>
+    ${!isSent ? `<div class="flex flex-wrap gap-2 mb-4">
+      <button id="schedDraftBtn" ${state.nlSchedBusy?"disabled":""} class="text-xs font-semibold bg-brand text-ink rounded-lg px-3 py-2 hover:bg-brand-bright disabled:opacity-50">${state.nlSchedBusy?"Drafting…":(e.subject?"Regenerate draft":"Generate draft")}</button>
+      ${isNew ? `<button id="schedSaveOnlyBtn" class="text-xs font-semibold border border-edge rounded-lg px-3 py-2 text-slate-200 hover:bg-edge/40">Save topic only</button>` : ""}
+      ${!isNew ? `<button id="schedDeleteBtn" class="text-xs font-semibold border border-rose-500/50 text-rose-300 rounded-lg px-3 py-2 hover:bg-rose-500/10 ml-auto">Delete</button>` : ""}
+    </div>` : ""}
+    ${e.subject ? `
+    <label class="block mb-2"><span class="text-[11px] text-faint">Subject</span>
+      <input id="schedSubject" ${isSent?"disabled":""} value="${esc(e.subject||"")}" class="w-full bg-panel border border-edge rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand/60 disabled:opacity-60"/></label>
+    <label class="block mb-2"><span class="text-[11px] text-faint">Inbox preview text</span>
+      <input id="schedPreview" ${isSent?"disabled":""} value="${esc(e.preview_text||"")}" class="w-full bg-panel border border-edge rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand/60 disabled:opacity-60"/></label>
+    <label class="block mb-3"><span class="text-[11px] text-faint">Body (HTML)</span>
+      <textarea id="schedBody" ${isSent?"disabled":""} rows="7" class="w-full bg-panel border border-edge rounded-lg px-3 py-2 text-sm text-slate-100 font-mono outline-none focus:border-brand/60 disabled:opacity-60">${esc(e.body_html||"")}</textarea></label>
+    ${!isSent ? `<div class="flex flex-wrap gap-2 items-center">
+      <button id="schedSaveBtn" class="text-xs font-semibold border border-edge rounded-lg px-3 py-2 text-slate-200 hover:bg-edge/40">Save changes</button>
+      ${e.status !== "ready" ? `<button id="schedReadyBtn" ${canMarkReady?"":"disabled"} class="text-xs font-semibold bg-emerald-500/90 text-ink rounded-lg px-3 py-2 hover:bg-emerald-400 disabled:opacity-50">Mark ready — sends ${esc(dateLabel)}</button>`
+        : `<span class="text-xs font-semibold text-emerald-300 px-1">Ready to send</span>`}
+      <button id="schedSendNowBtn" class="text-xs font-semibold border border-brand/50 text-brand rounded-lg px-3 py-2 hover:bg-brand/10 ml-auto">Send now instead</button>
+    </div>` : `<div class="text-xs text-muted">Sent to ${e.sent_count ?? 0} subscribers.</div>`}` : ""}
+  `);
+}
+
 function newsletterSection() {
   const N = state.newsletterDraft || {};
   const nl = state.newsletter || {};
@@ -298,7 +386,10 @@ function newsletterSection() {
         <div><div class="font-display font-extrabold text-2xl text-brand-bright">${nl.subscribers||0}</div><div class="text-[11px] text-muted">will receive the next send</div></div>
         <div><div class="font-display font-extrabold text-2xl text-slate-400">${nl.opted_out||0}</div><div class="text-[11px] text-muted">opted out</div></div>
       </div>`)}
-    ${card(`<div class="text-[13px] font-semibold mb-2 text-white">Draft with AI</div>
+    ${newsletterCalendar()}
+    ${newsletterSchedEditor()}
+    ${card(`<div class="text-[13px] font-semibold mb-2 text-white">One-off: draft with AI</div>
+      <div class="text-[11px] text-faint mb-2 -mt-1">For an immediate send outside the schedule. Use the calendar above to plan ahead.</div>
       <textarea id="nlBrief" rows="2" placeholder="What should this issue focus on? e.g. the new Brand Advisor feature, plus a tip on posting consistency" class="w-full bg-panel border border-edge rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand/60">${esc(state.nlBrief||"")}</textarea>
       <button id="nlDraftBtn" ${state.nlDrafting?"disabled":""} class="mt-2 text-xs font-semibold bg-brand text-ink rounded-lg px-3 py-2 hover:bg-brand-bright disabled:opacity-50">${state.nlDrafting?"Drafting…":"Generate draft"}</button>`)}
     ${hasDraft ? card(`<div class="text-[13px] font-semibold mb-2 text-white">Review &amp; send</div>
@@ -405,6 +496,94 @@ function wireNewsletter() {
       state.newsletter = await api("/api/admin/newsletter");
       renderDash();
     } catch (e) { alert(e.message); }
+  };
+
+  $$("[data-sched-new]").forEach(b => b.onclick = () => {
+    state.nlSchedEditing = { id: null, send_date: b.dataset.schedNew, brief: "", subject: "", preview_text: "", body_html: "", style: "A", status: "draft" };
+    renderDash();
+  });
+  $$("[data-sched-edit]").forEach(b => b.onclick = () => {
+    const it = (state.nlSchedule || []).find(x => String(x.id) === b.dataset.schedEdit);
+    if (it) { state.nlSchedEditing = { ...it }; renderDash(); }
+  });
+  const schedCancel = $("[data-sched-cancel]"); if (schedCancel) schedCancel.onclick = () => { state.nlSchedEditing = null; renderDash(); };
+  const schedBriefEl = $("#schedBrief"); if (schedBriefEl) schedBriefEl.oninput = () => state.nlSchedEditing.brief = schedBriefEl.value;
+  $$("[data-sched-style]").forEach(b => b.onclick = () => { state.nlSchedEditing.style = b.dataset.schedStyle; renderDash(); });
+  const schedSubjEl = $("#schedSubject"); if (schedSubjEl) schedSubjEl.oninput = () => state.nlSchedEditing.subject = schedSubjEl.value;
+  const schedPrevEl = $("#schedPreview"); if (schedPrevEl) schedPrevEl.oninput = () => state.nlSchedEditing.preview_text = schedPrevEl.value;
+  const schedBodyEl = $("#schedBody"); if (schedBodyEl) schedBodyEl.oninput = () => state.nlSchedEditing.body_html = schedBodyEl.value;
+
+  const schedDraftBtn = $("#schedDraftBtn");
+  if (schedDraftBtn) schedDraftBtn.onclick = async () => {
+    const e = state.nlSchedEditing;
+    if (!e.brief.trim()) return alert("Add a topic first.");
+    state.nlSchedBusy = true; renderDash();
+    try {
+      let id = e.id;
+      if (!id) {
+        const created = await api("/api/admin/newsletter/schedule", { method: "POST", body: JSON.stringify({ send_date: e.send_date, brief: e.brief, style: e.style }) });
+        id = created.id; state.nlSchedEditing.id = id;
+      } else {
+        await api(`/api/admin/newsletter/schedule/${id}`, { method: "PUT", body: JSON.stringify({ brief: e.brief, style: e.style }) });
+      }
+      state.nlSchedEditing = await api(`/api/admin/newsletter/schedule/${id}/draft`, { method: "POST" });
+      await reloadSchedule();
+    } catch (ex) { alert(ex.message); }
+    state.nlSchedBusy = false; renderDash();
+  };
+  const schedSaveOnlyBtn = $("#schedSaveOnlyBtn");
+  if (schedSaveOnlyBtn) schedSaveOnlyBtn.onclick = async () => {
+    const e = state.nlSchedEditing;
+    if (!e.brief.trim()) return alert("Add a topic first.");
+    try {
+      state.nlSchedEditing = await api("/api/admin/newsletter/schedule", { method: "POST", body: JSON.stringify({ send_date: e.send_date, brief: e.brief, style: e.style }) });
+      await reloadSchedule();
+      state.nlSchedEditing = null;
+      renderDash();
+    } catch (ex) { alert(ex.message); }
+  };
+  const schedDeleteBtn = $("#schedDeleteBtn");
+  if (schedDeleteBtn) schedDeleteBtn.onclick = async () => {
+    if (!confirm("Delete this scheduled issue?")) return;
+    try {
+      await api(`/api/admin/newsletter/schedule/${state.nlSchedEditing.id}`, { method: "DELETE" });
+      state.nlSchedEditing = null;
+      await reloadSchedule(); renderDash();
+    } catch (ex) { alert(ex.message); }
+  };
+  const schedSaveBtn = $("#schedSaveBtn");
+  if (schedSaveBtn) schedSaveBtn.onclick = async () => {
+    const e = state.nlSchedEditing;
+    try {
+      state.nlSchedEditing = await api(`/api/admin/newsletter/schedule/${e.id}`, { method: "PUT", body: JSON.stringify({
+        subject: e.subject, preview_text: e.preview_text, body_html: e.body_html, style: e.style }) });
+      await reloadSchedule(); renderDash();
+    } catch (ex) { alert(ex.message); }
+  };
+  const schedReadyBtn = $("#schedReadyBtn");
+  if (schedReadyBtn) schedReadyBtn.onclick = async () => {
+    const e = state.nlSchedEditing;
+    try {
+      await api(`/api/admin/newsletter/schedule/${e.id}`, { method: "PUT", body: JSON.stringify({
+        subject: e.subject, preview_text: e.preview_text, body_html: e.body_html, style: e.style, status: "ready" }) });
+      state.nlSchedEditing = null;
+      await reloadSchedule(); renderDash();
+    } catch (ex) { alert(ex.message); }
+  };
+  const schedSendNowBtn = $("#schedSendNowBtn");
+  if (schedSendNowBtn) schedSendNowBtn.onclick = async () => {
+    const e = state.nlSchedEditing;
+    if (!confirm("Send this issue to all subscribers right now?")) return;
+    try {
+      // persist any edits first so what sends matches what's on screen
+      await api(`/api/admin/newsletter/schedule/${e.id}`, { method: "PUT", body: JSON.stringify({
+        subject: e.subject, preview_text: e.preview_text, body_html: e.body_html, style: e.style }) });
+      const r = await api(`/api/admin/newsletter/schedule/${e.id}/send-now`, { method: "POST" });
+      alert(`Sent to ${r.sent}/${r.total} subscribers.`);
+      state.nlSchedEditing = null;
+      state.newsletter = await api("/api/admin/newsletter");
+      await reloadSchedule(); renderDash();
+    } catch (ex) { alert(ex.message); }
   };
 }
 
