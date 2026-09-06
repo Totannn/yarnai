@@ -2277,13 +2277,16 @@ def newsletter_send_test(user):
     d = request.get_json(force=True) or {}
     subject, body = (d.get("subject") or "").strip(), (d.get("body") or "").strip()
     preview_text, style = (d.get("preview_text") or "").strip(), (d.get("style") or "A").strip()
+    to = (d.get("to") or "").strip().lower() or user["email"]
+    if "@" not in to:
+        return jsonify({"error": "Enter a valid test email address."}), 400
     if not subject or not body:
         return jsonify({"error": "Missing subject or body."}), 400
-    ok = send_email(user["email"], f"[TEST] {subject}",
+    ok = send_email(to, f"[TEST] {subject}",
                     _newsletter_email_html(style, subject, preview_text, body, user["id"]))
     if not ok:
         return jsonify({"error": "Email sending isn't configured (RESEND_API_KEY)."}), 500
-    return jsonify({"ok": True, "sent_to": user["email"]})
+    return jsonify({"ok": True, "sent_to": to})
 
 
 @app.post("/api/admin/newsletter/send")

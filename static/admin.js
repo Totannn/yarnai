@@ -12,7 +12,7 @@ function vmark(px = 36) {
 }
 
 const state = { user: null, overview: null, users: null, applications: null, detail: null, section: "overview", q: "",
-  newsletter: null, newsletterDraft: null, nlBrief: "", nlDrafting: false, nlStyle: "A" };
+  newsletter: null, newsletterDraft: null, nlBrief: "", nlDrafting: false, nlStyle: "A", nlTestEmail: "" };
 
 const NL_STYLES = [
   { key: "A", label: "Dark hero", blurb: "Forest hero, light body" },
@@ -314,8 +314,10 @@ function newsletterSection() {
         <textarea id="nlBody" rows="8" class="w-full bg-panel border border-edge rounded-lg px-3 py-2 text-sm text-slate-100 font-mono outline-none focus:border-brand/60">${esc(N.body_html||"")}</textarea></label>
       <div class="text-[11px] text-faint mb-1.5">Content preview <span class="text-slate-500">(send a test to see the actual template chrome)</span></div>
       <div id="nlPreview" class="bg-white text-ink rounded-lg p-4 text-sm mb-3">${N.body_html||""}</div>
+      <label class="block mb-2"><span class="text-[11px] text-faint">Send test to</span>
+        <input id="nlTestEmail" type="email" value="${esc(state.nlTestEmail || (state.user && state.user.email) || "")}" class="w-full bg-panel border border-edge rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand/60"/></label>
       <div class="flex flex-wrap gap-2 items-center">
-        <button id="nlTestBtn" class="text-xs font-semibold border border-edge rounded-lg px-3 py-2 text-slate-200 hover:bg-edge/40">Send test to me</button>
+        <button id="nlTestBtn" class="text-xs font-semibold border border-edge rounded-lg px-3 py-2 text-slate-200 hover:bg-edge/40">Send test</button>
         <button id="nlSendBtn" class="text-xs font-semibold bg-brand text-ink rounded-lg px-3 py-2 hover:bg-brand-bright ml-auto">Send to ${nl.subscribers||0} subscribers</button>
       </div>`) : ""}
   `;
@@ -380,12 +382,14 @@ function wireNewsletter() {
     const pv = $("#nlPreview"); if (pv) pv.innerHTML = body.value;
   };
   $$("[data-nl-style]").forEach(b => b.onclick = () => { state.nlStyle = b.dataset.nlStyle; renderDash(); });
+  const testEmail = $("#nlTestEmail");
+  if (testEmail) testEmail.oninput = () => state.nlTestEmail = testEmail.value;
   const testBtn = $("#nlTestBtn");
   if (testBtn) testBtn.onclick = async () => {
     try {
       const r = await api("/api/admin/newsletter/send-test", { method: "POST", body: JSON.stringify({
         subject: $("#nlSubject").value, body: $("#nlBody").value,
-        preview_text: $("#nlPreviewText").value, style: state.nlStyle }) });
+        preview_text: $("#nlPreviewText").value, style: state.nlStyle, to: $("#nlTestEmail").value }) });
       alert("Test sent to " + r.sent_to);
     } catch (e) { alert(e.message); }
   };
