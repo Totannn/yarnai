@@ -366,9 +366,9 @@ function newsletterCalendar() {
         ${plannedCount ? `<span class="text-[10px] font-bold bg-brand/20 text-brand-bright rounded-full px-2 py-0.5">${plannedCount} planned</span>` : ""}
       </div>
       <div class="text-[11px] text-faint">Auto-sends at 11:00 WAT on days marked <span class="text-emerald-300 font-semibold">Ready</span></div></div>
-    <div class="space-y-2">${weekGrid(0)}</div>
+    <div class="space-y-2">${weekGrid(week(0))}</div>
     <div class="h-px bg-edge/60 my-3"></div>
-    <div class="space-y-2">${weekGrid(1)}</div>`);
+    <div class="space-y-2">${weekGrid(week(1))}</div>`);
 }
 
 function newsletterWeekPlanner() {
