@@ -148,6 +148,18 @@ CONTENT_TYPES: dict[str, dict] = {
             "punchy and shareable, built for Nigerian Twitter energy. Optional 1-2 hashtags."
         ),
     },
+    "linkedin_post": {
+        "label": "LinkedIn Post",
+        "emoji": "💼",
+        "spec": (
+            "Write a professional LinkedIn post. Open with a strong hook line (a bold claim, "
+            "a number, or a lesson) that stands alone as the preview text. Use short paragraphs "
+            "and line breaks — LinkedIn favours whitespace and scannability. Share real insight, "
+            "a result, or a story with a clear point; avoid empty corporate buzzwords ('synergy', "
+            "'thought leader'). Close with a question or a soft call-to-action that invites "
+            "comments. Add 3-5 relevant hashtags at the end."
+        ),
+    },
     "whatsapp_broadcast": {
         "label": "WhatsApp Broadcast",
         "emoji": "💬",

@@ -64,7 +64,8 @@ const OB_PLATFORMS = [
   { id: "instagram", label: "Instagram" }, { id: "whatsapp", label: "WhatsApp" },
   { id: "facebook", label: "Facebook" }, { id: "tiktok", label: "TikTok" },
   { id: "email", label: "Email" }, { id: "web", label: "Blog / website" },
-  { id: "x", label: "X (Twitter)" }, { id: "market", label: "In-person / market" },
+  { id: "x", label: "X (Twitter)" }, { id: "linkedin", label: "LinkedIn" },
+  { id: "market", label: "In-person / market" },
 ];
 const OB_GOALS = [
   { id: "sales", label: "Sell more", sub: "Turn content into orders" },
@@ -110,6 +111,7 @@ const ICONP = {
   instagram_caption: '<rect x="3" y="6" width="18" height="14" rx="2.5"/><circle cx="12" cy="13" r="3.2"/><path d="M8.5 6 10 3.6h4L15.5 6"/>',
   tiktok_caption: '<path d="M9 17.5V8.2a4.5 4.5 0 1 0 3 4.2V4h.5a4 4 0 0 0 4 4"/>',
   tweet: '<path d="M4 5h16v10H9l-5 4z"/><path d="M8.5 9h7M8.5 11.5h4"/>',
+  linkedin_post: '<rect x="3.5" y="9" width="17" height="12" rx="2"/><path d="M8 9V6.5A2.5 2.5 0 0 1 10.5 4h3A2.5 2.5 0 0 1 16 6.5V9"/><path d="M3.5 14h17"/>',
   whatsapp_broadcast: '<path d="M20 11.5a7.5 7.5 0 0 1-10.9 6.7L4 20l1.9-5A7.5 7.5 0 1 1 20 11.5Z"/><path d="M9 11h6M9 13.5h3.5"/>',
   product_description: '<path d="M3.5 11.5 11.5 3.5H20V12l-8 8z"/><circle cx="15.5" cy="8.5" r="1.4"/>',
   sms: '<rect x="6" y="3" width="12" height="18" rx="2.5"/><path d="M10.5 18h3"/>',
@@ -3261,7 +3263,7 @@ const PV_TYPES = [
   { k: "linkedin", label: "Pro post" }, { k: "tiktok", label: "Short video" },
 ];
 const PV_BY_CT = {
-  instagram_caption: "ig", tiktok_caption: "tiktok", tweet: "linkedin",
+  instagram_caption: "ig", tiktok_caption: "tiktok", linkedin_post: "linkedin",
   whatsapp_broadcast: "wa", product_description: "product", sms: "sms",
   ad_copy: "ad", email: "email",
 };
