@@ -258,6 +258,7 @@ def init_db() -> None:
         _add_col(c, "users", "notes", "TEXT DEFAULT ''")
         _add_col(c, "users", "phone", "TEXT DEFAULT ''")
         _add_col(c, "users", "newsletter_opt_out", "INTEGER NOT NULL DEFAULT 0")
+        _add_col(c, "users", "last_reengage_at", f"{_REAL}")
         _add_col(c, "generations", "input_tokens", "INTEGER DEFAULT 0")
         _add_col(c, "generations", "output_tokens", "INTEGER DEFAULT 0")
         _add_col(c, "generations", "cost", f"{_REAL} DEFAULT 0")
@@ -347,7 +348,7 @@ def monthly_generation_count(user_id: int) -> int:
     with _conn() as c:
         r = c.execute(
             "SELECT COUNT(*) AS n FROM generations WHERE user_id=? AND created_at>=? "
-            "AND content_type NOT IN ('content_calendar','brand_learn','bulk_catalog')",
+            "AND content_type NOT IN ('content_calendar','brand_learn','bulk_catalog','reengagement')",
             (user_id, since),
         ).fetchone()
     return r["n"] if r else 0
@@ -867,6 +868,40 @@ def mark_nudged(item_ids: list) -> None:
         c.execute(f"UPDATE plan_items SET last_nudged_at=? WHERE id IN ({qs})", (now, *item_ids))
 
 
+# ---------------------------- re-engagement -------------------------------- #
+# Users who set up a brand but have gone quiet — a candidate list for the
+# win-back agent, which hands them a ready-made post instead of a plain nudge.
+
+def quiet_users(inactive_days: int = 7, min_account_age_days: int = 3, cooldown_days: int = 10) -> list:
+    now = time.time()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT u.id, u.email, u.name FROM users u "
+            "WHERE u.suspended=0 AND u.created_at<? "
+            "AND (u.last_reengage_at IS NULL OR u.last_reengage_at<?) "
+            "AND EXISTS (SELECT 1 FROM brands b WHERE b.user_id=u.id) "
+            "AND NOT EXISTS (SELECT 1 FROM generations g WHERE g.user_id=u.id "
+            "AND g.content_type NOT IN ('content_calendar','brand_learn','bulk_catalog','reengagement') "
+            "AND g.created_at>=?) "
+            "ORDER BY u.created_at",
+            (now - min_account_age_days * 86400, now - cooldown_days * 86400, now - inactive_days * 86400),
+        ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            b = c.execute("SELECT id, name FROM brands WHERE user_id=? ORDER BY created_at DESC LIMIT 1",
+                         (d["id"],)).fetchone()
+            d["brand_id"] = b["id"] if b else None
+            d["brand_name"] = b["name"] if b else None
+            out.append(d)
+    return out
+
+
+def set_reengaged(user_id: int) -> None:
+    with _conn() as c:
+        c.execute("UPDATE users SET last_reengage_at=? WHERE id=?", (time.time(), user_id))
+
+
 # ------------------------------- home/dashboard --------------------------- #
 
 def home_overview(user_id: int) -> dict:
@@ -875,7 +910,7 @@ def home_overview(user_id: int) -> dict:
     win30 = now - 30 * 86400          # current quota window
     prev30 = win30 - 30 * 86400        # the 30 days before that
     win14 = now - 14 * 86400
-    REAL = "g.content_type NOT IN ('content_calendar','brand_learn','bulk_catalog','writer')"   # exclude non-copy rows
+    REAL = "g.content_type NOT IN ('content_calendar','brand_learn','bulk_catalog','writer','reengagement')"   # exclude non-copy rows
     with _conn() as c:
         total = c.execute(
             f"SELECT COUNT(*) AS n FROM generations g WHERE g.user_id=? AND {REAL}",

@@ -1501,6 +1501,79 @@ def _send_plan_nudges_cli():
     print(f"[Vertil] nudged {_run_plan_nudges()} user(s)")
 
 
+# --------------------------- re-engagement agent ---------------------------- #
+# Instead of nagging a quiet user to "come back", write them a ready-to-post
+# piece for their own brand and hand it over — removes the reason they left
+# (nothing to post) rather than just reminding them they left.
+
+def _pick_reengagement_brief(profile: dict | None) -> tuple[str, str]:
+    """Returns (content_type, brief) tied to the nearest Nigerian cultural moment."""
+    events, _day = _naija_events()
+    ev = events[0]
+    idea, content_type = None, "instagram_caption"
+    if get_client() is not None:
+        try:
+            text, _it, _ot = _complete(
+                voice.build_suggestion_system(profile),
+                voice.build_suggestion_user(ev["name"], ev["blurb"], _days_label(ev["days"])), 400)
+            out = voice.parse_suggestion_json(text)
+            if out and out.get("idea"):
+                idea, content_type = out["idea"], out.get("content_type") or content_type
+        except Exception:
+            pass
+    if not idea:
+        fb = _STATIC_SUGGEST.get(ev["key"], _STATIC_SUGGEST["payday"])
+        idea, content_type = fb["idea"], fb["type"]
+    return content_type, idea
+
+
+def _reengagement_email_html(name: str, brand_name: str, content_type_label: str, text: str, link: str) -> str:
+    return _email_shell(
+        f"<p>Hi {_esc_html(name)},</p>"
+        f"<p>It's been quiet on <b>{_esc_html(brand_name)}</b> for a while — so instead of just reminding you, "
+        f"we wrote something you can post today. A ready-to-use {_esc_html(content_type_label)}, in your brand's voice:</p>"
+        f'<div style="background:#f4f7f6;border:1px solid #e2e8e6;border-radius:10px;padding:16px;margin:16px 0;'
+        f'white-space:pre-wrap;font-size:14px;color:#13312e">{_esc_html(text)}</div>'
+        f"<p>Copy it as-is, tweak it, or open Studio to regenerate it in a different voice.</p>"
+        f'{_btn(link, "Open in Studio")}')
+
+
+def _run_reengagement(max_users: int = 25) -> str:
+    """Emails quiet users a ready-made post for their brand. Run daily (cron)."""
+    candidates = db.quiet_users()[:max_users]
+    sent = 0
+    for u in candidates:
+        db.set_reengaged(u["id"])  # mark first — a hiccup below shouldn't retry-loop tomorrow
+        if not u.get("brand_id"):
+            continue
+        profile = db.get_brand(u["id"], u["brand_id"])
+        if not profile:
+            continue
+        try:
+            content_type, brief = _pick_reengagement_brief(profile)
+            system = voice.build_system_prompt(profile, "friendly", db.liked_examples(u["id"], u["brand_id"]))
+            usr = voice.build_user_prompt(content_type, brief, 1)
+            text, in_tok, out_tok = _complete(system, usr, 2500)
+            piece = (voice.split_variants(text) or [""])[0]
+            if not piece.strip():
+                continue
+            db.save_generation(u["id"], u["brand_id"], "reengagement", "friendly", brief, [piece],
+                               model=MODEL, input_tokens=in_tok, output_tokens=out_tok,
+                               cost=cost_naira(MODEL, in_tok, out_tok))
+            type_label = _TYPE_LABELS.get(content_type, content_type.replace("_", " "))
+            if send_email(u["email"], f"A ready-to-post {type_label} for {u['brand_name']}",
+                         _reengagement_email_html(u.get("name") or "there", u["brand_name"], type_label, piece, APP_BASE_URL + "/app")):
+                sent += 1
+        except Exception:
+            pass
+    return f"sent {sent}/{len(candidates)} quiet user(s) a ready-made post"
+
+
+@app.cli.command("send-reengagement")
+def _send_reengagement_cli():
+    print(f"[Vertil] {_run_reengagement()}")
+
+
 @app.get("/api/content")
 @auth
 def content_list(user):
@@ -2109,7 +2182,8 @@ _TYPE_LABELS = {**{k: v["label"] for k, v in voice.CONTENT_TYPES.items()},
                 "content_calendar": "Content Calendar",
                 "rate_advisor": "Rate Advisor", "personal_brand": "Brand Advisor",
                 "script": "Script Writer", "brand_learn": "Learn My Brand",
-                "bulk_catalog": "Bulk Catalogue", "writer": "Writers Hub"}
+                "bulk_catalog": "Bulk Catalogue", "writer": "Writers Hub",
+                "reengagement": "Made for you"}
 
 
 @app.get("/api/admin/overview")
