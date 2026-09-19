@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Vertil for Teams</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand:  { DEFAULT: "#0e9488", dark: "#0c7a70", bright: "#2dd4bf", tint: "#e4f3f1", ring: "#0e9488" },
+            gold:   { DEFAULT: "#b7791f", tint: "#fdf4e3" },
+            forest: { DEFAULT: "#0c2724", 2: "#0f322d" },
+            ink:    "#13312e",
+            muted:  "#5c726e",
+            faint:  "#90a39f",
+            line:   "#e2e8e6",
+            paper:  "#f4f7f6",
+          },
+          fontFamily: {
+            display: ['"Space Grotesk"', "system-ui", "sans-serif"],
+            sans: ['"Space Grotesk"', "system-ui", "sans-serif"],
+            mono: ['"Space Mono"', "ui-monospace", "monospace"],
+          },
+          boxShadow: {
+            card: "0 1px 2px rgba(12,39,36,.04), 0 1px 3px rgba(12,39,36,.07)",
+            lift: "0 6px 16px rgba(12,39,36,.08), 0 2px 6px rgba(12,39,36,.05)",
+          },
+          borderRadius: { xl2: "1rem" },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+  <style>
+    html, body { overflow-x: clip; max-width: 100%; }
+    body { font-family: 'Space Grotesk', system-ui, sans-serif; }
+    h1,h2,h3,.font-display { font-family: 'Space Grotesk', system-ui, sans-serif; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spin { animation: spin .8s linear infinite; }
+    @keyframes fadeUp { from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:none} }
+    .fade-up { animation: fadeUp .3s ease both; }
+    .vword { display:inline-flex; align-items:flex-end; font-weight:600; letter-spacing:-0.04em; line-height:.9; }
+    .vi { display:inline-flex; flex-direction:column; align-items:center; justify-content:flex-end; height:.96em; margin:0 .05em .04em; }
+    .vi-tip { width:0; height:0; border-left:.2em solid transparent; border-right:.2em solid transparent; border-bottom:.28em solid var(--vi,#0e9488); }
+    .vi-stem { width:.135em; height:.5em; background:var(--vi,#0e9488); border-radius:.02em; margin-top:.025em; }
+    .auth-input{width:100%;margin-top:.25rem;background:#fff;border:1px solid #eceef1;border-radius:.6rem;padding:.6rem .75rem;font-size:.9rem;outline:none}
+    .auth-input:focus{border-color:#0b8457;box-shadow:0 0 0 3px rgba(11,132,87,.15)}
+  </style>
+</head>
+<body class="h-full bg-paper text-ink antialiased">
+  <div id="app" class="min-h-full"></div>
+  <script src="{{ url_for('static', filename='team.js') }}"></script>
+</body>
+</html>

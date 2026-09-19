@@ -221,6 +221,17 @@ def init_db() -> None:
                 created_at   {_REAL} NOT NULL
             )""")
         c.execute(f"""
+            CREATE TABLE IF NOT EXISTS org_seats (
+                id         {_PK},
+                owner_id   INTEGER NOT NULL,
+                member_id  INTEGER,
+                email      TEXT NOT NULL,
+                token      TEXT,
+                status     TEXT NOT NULL DEFAULT 'invited',
+                invited_at {_REAL} NOT NULL,
+                joined_at  {_REAL}
+            )""")
+        c.execute(f"""
             CREATE TABLE IF NOT EXISTS applications (
                 id         {_PK},
                 name       TEXT NOT NULL,
@@ -384,18 +395,30 @@ def update_brand(user_id: int, brand_id: int, data: dict) -> dict | None:
 def get_brand(user_id: int, brand_id: int) -> dict | None:
     with _conn() as c:
         r = c.execute("SELECT * FROM brands WHERE id=? AND user_id=?", (brand_id, user_id)).fetchone()
+        if not r:
+            owner = c.execute("SELECT owner_id FROM org_seats WHERE member_id=? AND status='active'",
+                              (user_id,)).fetchone()
+            if owner:
+                r = c.execute("SELECT * FROM brands WHERE id=? AND user_id=?",
+                             (brand_id, owner["owner_id"])).fetchone()
     return dict(r) if r else None
 
 
 def list_brands(user_id: int) -> list[dict]:
     with _conn() as c:
-        rows = c.execute("SELECT * FROM brands WHERE user_id=? ORDER BY created_at DESC", (user_id,)).fetchall()
+        seat = c.execute("SELECT owner_id FROM org_seats WHERE member_id=? AND status='active'",
+                         (user_id,)).fetchone()
+        owner_id = seat["owner_id"] if seat else user_id
+        rows = c.execute("SELECT * FROM brands WHERE user_id=? ORDER BY created_at DESC", (owner_id,)).fetchall()
     return [dict(r) for r in rows]
 
 
 def count_brands(user_id: int) -> int:
     with _conn() as c:
-        r = c.execute("SELECT COUNT(*) AS n FROM brands WHERE user_id=?", (user_id,)).fetchone()
+        seat = c.execute("SELECT owner_id FROM org_seats WHERE member_id=? AND status='active'",
+                         (user_id,)).fetchone()
+        owner_id = seat["owner_id"] if seat else user_id
+        r = c.execute("SELECT COUNT(*) AS n FROM brands WHERE user_id=?", (owner_id,)).fetchone()
     return r["n"] if r else 0
 
 
@@ -900,6 +923,92 @@ def quiet_users(inactive_days: int = 7, min_account_age_days: int = 3, cooldown_
 def set_reengaged(user_id: int) -> None:
     with _conn() as c:
         c.execute("UPDATE users SET last_reengage_at=? WHERE id=?", (time.time(), user_id))
+
+
+# -------------------------------- team seats -------------------------------- #
+# A "Business" plan owner can invite teammates by email; each invited person
+# gets their own Vertil login, linked here as a seat. Seats share the owner's
+# brand voices and pool the owner's monthly generation quota.
+
+def get_org_owner(user_id: int) -> int | None:
+    """If user_id is an active seat on someone else's workspace, returns the owner's id."""
+    with _conn() as c:
+        r = c.execute("SELECT owner_id FROM org_seats WHERE member_id=? AND status='active'",
+                      (user_id,)).fetchone()
+    return r["owner_id"] if r else None
+
+
+def count_active_seats(owner_id: int) -> int:
+    with _conn() as c:
+        r = c.execute("SELECT COUNT(*) AS n FROM org_seats WHERE owner_id=? AND status IN ('invited','active')",
+                      (owner_id,)).fetchone()
+    return r["n"] if r else 0
+
+
+def list_org_seats(owner_id: int) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT s.*, u.name AS member_name FROM org_seats s "
+            "LEFT JOIN users u ON u.id=s.member_id "
+            "WHERE s.owner_id=? AND s.status != 'removed' ORDER BY s.invited_at",
+            (owner_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def create_seat_invite(owner_id: int, email: str, token: str) -> dict:
+    email = email.lower().strip()
+    now = time.time()
+    with _conn() as c:
+        existing = c.execute(
+            "SELECT id FROM org_seats WHERE owner_id=? AND email=? AND status IN ('invited','active')",
+            (owner_id, email)).fetchone()
+        if existing:
+            raise ValueError("already invited")
+        sid = _insert(c, "INSERT INTO org_seats (owner_id, email, token, status, invited_at) "
+                         "VALUES (?,?,?,?,?)", (owner_id, email, token, "invited", now))
+        r = c.execute("SELECT * FROM org_seats WHERE id=?", (sid,)).fetchone()
+    return dict(r)
+
+
+def get_seat_by_token(token: str) -> dict | None:
+    with _conn() as c:
+        r = c.execute("SELECT * FROM org_seats WHERE token=? AND status='invited'", (token,)).fetchone()
+    return dict(r) if r else None
+
+
+def accept_seat_invite(token: str, user_id: int) -> dict | None:
+    with _conn() as c:
+        r = c.execute("SELECT * FROM org_seats WHERE token=? AND status='invited'", (token,)).fetchone()
+        if not r:
+            return None
+        c.execute("UPDATE org_seats SET member_id=?, status='active', joined_at=?, token=NULL WHERE id=?",
+                  (user_id, time.time(), r["id"]))
+    return dict(r)
+
+
+def remove_seat(owner_id: int, seat_id: int) -> None:
+    with _conn() as c:
+        c.execute("UPDATE org_seats SET status='removed' WHERE id=? AND owner_id=?", (seat_id, owner_id))
+
+
+def leave_seat(member_id: int) -> None:
+    with _conn() as c:
+        c.execute("UPDATE org_seats SET status='removed' WHERE member_id=? AND status='active'", (member_id,))
+
+
+def team_monthly_generation_count(owner_id: int) -> int:
+    """Pooled 30-day usage across the owner + every active seat."""
+    since = time.time() - 30 * 24 * 3600
+    with _conn() as c:
+        member_ids = [r["member_id"] for r in c.execute(
+            "SELECT member_id FROM org_seats WHERE owner_id=? AND status='active'", (owner_id,)).fetchall()]
+        ids = [owner_id] + [m for m in member_ids if m]
+        qs = ",".join("?" for _ in ids)
+        r = c.execute(
+            f"SELECT COUNT(*) AS n FROM generations WHERE user_id IN ({qs}) AND created_at>=? "
+            "AND content_type NOT IN ('content_calendar','brand_learn','bulk_catalog','reengagement')",
+            (*ids, since)).fetchone()
+    return r["n"] if r else 0
 
 
 # ------------------------------- home/dashboard --------------------------- #

@@ -92,11 +92,18 @@ PLANS = {
     "pro": {
         "name": "Pro", "price": 45000, "gen_limit": None, "brands": 10, "calendar": True,
         "brand_learn": True, "bulk": True,
-        "blurb": "Power user / team",
+        "blurb": "Power user",
         "features": ["Unlimited generations", "10 brand voices", "Learn My Brand (AI)", "Bulk catalogue generator", "Everything in Growth"],
     },
+    "business": {
+        "name": "Business", "price": 150000, "gen_limit": None, "brands": 10, "calendar": True,
+        "brand_learn": True, "bulk": True, "seats": 5,
+        "blurb": "Team workspace",
+        "features": ["Unlimited generations, pooled across your team", "5 team seats included",
+                    "Shared brand voices", "Everything in Pro"],
+    },
 }
-PLAN_ORDER = ["free", "starter", "growth", "pro"]
+PLAN_ORDER = ["free", "starter", "growth", "pro", "business"]
 
 # Per-million-token prices (USD) → used to compute Naira AI spend for the admin view.
 PRICES = {
@@ -203,13 +210,33 @@ def clean_phone(raw) -> str | None:
     return s if _PHONE_RE.match(s) else None
 
 
+def workspace_owner_id(user) -> int:
+    """The account whose plan/brands/quota this user actually operates under —
+    their own id, unless they're an active seat on someone else's workspace."""
+    return db.get_org_owner(user["id"]) or user["id"]
+
+
 def plan_of(user) -> dict:
+    owner_id = workspace_owner_id(user)
+    if owner_id != user["id"]:
+        owner = db.get_user(owner_id)
+        if owner:
+            return PLANS.get(owner.get("plan", "free"), PLANS["free"])
     return PLANS.get(user.get("plan", "free"), PLANS["free"])
+
+
+def _effective_usage(user) -> int:
+    """Pooled monthly generation count across the user's whole workspace — or just
+    their own, if they're not part of a team."""
+    owner_id = workspace_owner_id(user)
+    return (db.team_monthly_generation_count(owner_id) if db.count_active_seats(owner_id)
+           else db.monthly_generation_count(user["id"]))
 
 
 def usage_payload(user) -> dict:
     p = plan_of(user)
-    used = db.monthly_generation_count(user["id"])
+    owner_id = workspace_owner_id(user)
+    used = _effective_usage(user)
     return {
         "plan": user.get("plan", "free"),
         "plan_name": p["name"],
@@ -220,6 +247,8 @@ def usage_payload(user) -> dict:
         "calendar": p["calendar"],
         "brand_learn": bool(p.get("brand_learn")),
         "bulk": bool(p.get("bulk")),
+        "seats": p.get("seats"),
+        "is_team_member": owner_id != user["id"],
     }
 
 
@@ -461,7 +490,7 @@ def home(user):
     return jsonify({
         "streak": streak,
         "summary": {"pieces_month": o["month"], "brands_count": o["brands"], "top_voice": top_voice},
-        "usage": {"used": db.monthly_generation_count(user["id"]), "limit": p["gen_limit"],
+        "usage": {"used": _effective_usage(user), "limit": p["gen_limit"],
                   "resets_in_days": resets_in_days},
         "kpis": kpis, "activity_14d": activity_14d,
         "voice_mix": voice_mix, "content_types": content_types,
@@ -1044,9 +1073,14 @@ def get_brands(user):
     return jsonify(db.list_brands(user["id"]))
 
 
+_TEAM_BRAND_ERR = {"error": "Only your workspace owner can manage brand voices — ask them to update it."}
+
+
 @app.post("/api/brands")
 @auth
 def post_brand(user):
+    if db.get_org_owner(user["id"]):
+        return jsonify(_TEAM_BRAND_ERR), 403
     data = request.get_json(force=True) or {}
     if not (data.get("name") or "").strip():
         return jsonify({"error": "Brand name is required"}), 400
@@ -1059,6 +1093,8 @@ def post_brand(user):
 @app.put("/api/brands/<int:brand_id>")
 @auth
 def put_brand(user, brand_id):
+    if db.get_org_owner(user["id"]):
+        return jsonify(_TEAM_BRAND_ERR), 403
     if not db.get_brand(user["id"], brand_id):
         return jsonify({"error": "Brand not found"}), 404
     return jsonify(db.update_brand(user["id"], brand_id, request.get_json(force=True) or {}))
@@ -1067,6 +1103,8 @@ def put_brand(user, brand_id):
 @app.delete("/api/brands/<int:brand_id>")
 @auth
 def remove_brand(user, brand_id):
+    if db.get_org_owner(user["id"]):
+        return jsonify(_TEAM_BRAND_ERR), 403
     db.delete_brand(user["id"], brand_id)
     return jsonify({"ok": True})
 
@@ -1374,7 +1412,7 @@ def writer_polish(user):
     db.save_generation(user["id"], d.get("brand_id"), "writer", tone or "", f"[{mode}] writer polish",
                        [result["improved"]], model=MODEL, input_tokens=u.input_tokens,
                        output_tokens=u.output_tokens, cost=cost_naira(MODEL, u.input_tokens, u.output_tokens))
-    return jsonify({"result": result, "used": db.monthly_generation_count(user["id"])})
+    return jsonify({"result": result, "used": _effective_usage(user)})
 
 
 # ------------------------------ history ----------------------------------- #
@@ -1658,7 +1696,7 @@ def generate(user):
     req = request.get_json(force=True) or {}
     uid = user["id"]
     p = plan_of(user)
-    if p["gen_limit"] is not None and db.monthly_generation_count(uid) >= p["gen_limit"]:
+    if _over_limit(user):
         return jsonify({"error": f"You've used all {p['gen_limit']} generations on the "
                                  f"{p['name']} plan this month. Upgrade to keep yarning.",
                         "upgrade": True}), 402
@@ -1704,7 +1742,7 @@ def generate(user):
         db.save_generation(uid, brand_id, content_type, tone, brief, result,
                            model=(MODEL if client else ""), input_tokens=in_tok,
                            output_tokens=out_tok, cost=cost_naira(MODEL, in_tok, out_tok))
-        yield _sse("done", {"variants": result, "used": db.monthly_generation_count(uid)})
+        yield _sse("done", {"variants": result, "used": _effective_usage(user)})
 
     return Response(stream_with_context(stream()), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -1717,8 +1755,7 @@ def refine(user):
     original = (d.get("text") or "").strip()
     if not original:
         return jsonify({"error": "Nothing to refine"}), 400
-    p = plan_of(user)
-    if p["gen_limit"] is not None and db.monthly_generation_count(user["id"]) >= p["gen_limit"]:
+    if _over_limit(user):
         return jsonify({"error": "Monthly limit reached. Upgrade to keep refining.", "upgrade": True}), 402
 
     profile = db.get_brand(user["id"], d.get("brand_id")) if d.get("brand_id") else None
@@ -1742,7 +1779,7 @@ def refine(user):
                        d.get("tone", ""), "[refine] " + d.get("instruction", ""), [text.strip()],
                        model=MODEL, input_tokens=in_tok, output_tokens=out_tok,
                        cost=cost_naira(MODEL, in_tok, out_tok))
-    return jsonify({"text": text.strip(), "used": db.monthly_generation_count(user["id"])})
+    return jsonify({"text": text.strip(), "used": _effective_usage(user)})
 
 
 # ------------------------- bulk catalogue --------------------------------- #
@@ -1908,7 +1945,7 @@ def calendar_delete(user, cal_id):
 
 def _over_limit(user) -> bool:
     p = plan_of(user)
-    return p["gen_limit"] is not None and db.monthly_generation_count(user["id"]) >= p["gen_limit"]
+    return p["gen_limit"] is not None and _effective_usage(user) >= p["gen_limit"]
 
 
 def _complete(system: str, user_msg: str, max_tokens: int = 3000):
@@ -1950,7 +1987,7 @@ def advisor_rate(user):
     db.save_generation(user["id"], d.get("brand_id"), "rate_advisor", "", d.get("service", ""), [summary],
                        model=MODEL, input_tokens=in_tok, output_tokens=out_tok,
                        cost=cost_naira(MODEL, in_tok, out_tok))
-    result["used"] = db.monthly_generation_count(user["id"])
+    result["used"] = _effective_usage(user)
     return jsonify(result)
 
 
@@ -1978,7 +2015,7 @@ def advisor_brand(user):
     gen_id = db.save_generation(user["id"], d.get("brand_id"), "personal_brand", "", d.get("interests", ""), [summary],
                                 model=MODEL, input_tokens=in_tok, output_tokens=out_tok,
                                 cost=cost_naira(MODEL, in_tok, out_tok), full_json=json.dumps(result))
-    result["used"] = db.monthly_generation_count(user["id"])
+    result["used"] = _effective_usage(user)
     result["generation_id"] = gen_id
     return jsonify(result)
 
@@ -2051,7 +2088,7 @@ def script_generate(user):
     db.save_generation(user["id"], d.get("brand_id"), "script", d.get("tone", ""), d.get("idea", ""), [summary],
                        model=MODEL, input_tokens=in_tok, output_tokens=out_tok,
                        cost=cost_naira(MODEL, in_tok, out_tok))
-    result["used"] = db.monthly_generation_count(user["id"])
+    result["used"] = _effective_usage(user)
     return jsonify(result)
 
 
@@ -2544,6 +2581,113 @@ def newsletter_unsubscribe():
       <style>body{{font-family:'Segoe UI',Arial,sans-serif;max-width:440px;margin:80px auto;padding:0 24px;color:#13312e;text-align:center}}
       h1{{color:#0e9488;font-size:22px;margin-bottom:12px}}a{{color:#0e9488}}</style></head>
       <body><h1>Vertil</h1><p>{msg}</p><p><a href="/app">Go to Vertil &rarr;</a></p></body></html>"""
+
+
+# ------------------------------- team seats --------------------------------- #
+
+def _team_invite_email_html(owner_name: str, link: str) -> str:
+    return _email_shell(
+        f"<p>Hi,</p>"
+        f"<p><b>{_esc_html(owner_name)}</b> has invited you to join their team workspace on Vertil — "
+        f"you'll write in the same brand voice and share the team's plan.</p>"
+        f'{_btn(link, "Accept invite")}'
+        f'<p style="font-size:12px;color:#9aa8a4">If you weren\'t expecting this, you can ignore this email.</p>')
+
+
+@app.get("/api/team")
+@auth
+def team_info(user):
+    owner_id = db.get_org_owner(user["id"])
+    if owner_id:
+        owner = db.get_user(owner_id)
+        return jsonify({"is_member": True, "is_owner": False,
+                        "owner_name": (owner or {}).get("name") or "your team"})
+    p = plan_of(user)
+    seats_limit = p.get("seats")
+    if not seats_limit:
+        return jsonify({"is_member": False, "is_owner": False})
+    seats = [{k: v for k, v in s.items() if k != "token"} for s in db.list_org_seats(user["id"])]
+    return jsonify({"is_member": False, "is_owner": True, "seats": seats, "seats_limit": seats_limit})
+
+
+@app.post("/api/team/invite")
+@auth
+def team_invite(user):
+    if db.get_org_owner(user["id"]):
+        return jsonify({"error": "You're a member of a workspace, not an owner — ask your workspace owner to invite people."}), 403
+    seats_limit = plan_of(user).get("seats")
+    if not seats_limit:
+        return jsonify({"error": "Upgrade to the Business plan to invite teammates.", "upgrade": True}), 402
+    email = ((request.get_json(force=True) or {}).get("email") or "").strip().lower()
+    if "@" not in email:
+        return jsonify({"error": "Enter a valid email address."}), 400
+    if email == (user.get("email") or "").lower():
+        return jsonify({"error": "That's your own email."}), 400
+    if db.count_active_seats(user["id"]) >= seats_limit:
+        return jsonify({"error": f"You've used all {seats_limit} seats on the Business plan."}), 400
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    try:
+        db.create_seat_invite(user["id"], email, token_hash)
+    except ValueError:
+        return jsonify({"error": "That person already has a pending or active seat."}), 409
+    link = f"{APP_BASE_URL}/team?invite={token}"
+    send_email(email, f"{user.get('name') or 'A Vertil user'} invited you to their team workspace",
+              _team_invite_email_html(user.get("name") or "A teammate", link))
+    return jsonify({"ok": True})
+
+
+@app.post("/api/team/remove")
+@auth
+def team_remove(user):
+    seat_id = (request.get_json(force=True) or {}).get("seat_id")
+    if not seat_id:
+        return jsonify({"error": "Missing seat_id."}), 400
+    db.remove_seat(user["id"], int(seat_id))
+    return jsonify({"ok": True})
+
+
+@app.post("/api/team/leave")
+@auth
+def team_leave(user):
+    if not db.get_org_owner(user["id"]):
+        return jsonify({"error": "You're not part of a team workspace."}), 400
+    db.leave_seat(user["id"])
+    return jsonify({"ok": True})
+
+
+@app.get("/api/team/invite-info")
+def team_invite_info():
+    token = request.args.get("token", "")
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    seat = db.get_seat_by_token(token_hash)
+    if not seat:
+        return jsonify({"error": "This invite is invalid or has already been used."}), 404
+    owner = db.get_user(seat["owner_id"])
+    existing = db.get_user_by_email(seat["email"])
+    return jsonify({"email": seat["email"], "owner_name": (owner or {}).get("name") or "A Vertil user",
+                    "account_exists": bool(existing)})
+
+
+@app.post("/api/team/accept")
+@auth
+def team_accept(user):
+    token = (request.get_json(force=True) or {}).get("token", "")
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    seat = db.get_seat_by_token(token_hash)
+    if not seat:
+        return jsonify({"error": "This invite is invalid or has already been used."}), 404
+    if seat["email"] != (user.get("email") or "").lower():
+        return jsonify({"error": f"This invite was sent to {seat['email']} — log in with that email instead."}), 403
+    if db.get_org_owner(user["id"]) or user.get("plan") == "business":
+        return jsonify({"error": "This account is already part of a workspace."}), 400
+    db.accept_seat_invite(token_hash, user["id"])
+    return jsonify({"ok": True})
+
+
+@app.get("/team")
+def team_page():
+    return render_template("team.html")
 
 
 if __name__ == "__main__":

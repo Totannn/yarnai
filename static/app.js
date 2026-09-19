@@ -23,6 +23,7 @@ const state = {
   scriptResult: null, scriptLoading: false,
   // accountability plan (checklist from advisor "next steps")
   plan: { items: [], progress: null, adding: false },
+  team: null,
   // gig diary
   gigs: [], gigSummary: null, gigEditing: null,
   // content board (idea → posted)
@@ -99,6 +100,7 @@ const ICON = {
   advisor: '<path d="M12 3v2M12 19v2M3 12h2M19 12h2M12 8a4 4 0 0 1 4 4c0 1.5-1 2.5-1.6 3.2-.4.5-.4 1.3-.4 1.8h-4c0-.5 0-1.3-.4-1.8C9 14.5 8 13.5 8 12a4 4 0 0 1 4-4ZM10 19h4"/>',
   gigs: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18"/>',
   plan: '<path d="M9 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3"/><rect x="8.5" y="3" width="7" height="4" rx="1"/><path d="m8.5 13 2 2 4-4"/>',
+  team: '<circle cx="8.5" cy="8" r="3"/><path d="M2.5 20v-1a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5v1"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 20v-1c0-1.6-.6-3-1.6-4.1M17.5 12a4 4 0 0 1 3.5 6.9v1.1"/>',
   admin: '<path d="M12 3 4 6v5c0 4.5 3.2 8.5 8 10 4.8-1.5 8-5.5 8-10V6l-8-3Z"/><path d="m9 12 2 2 4-4"/>',
   script: '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/>',
 };
@@ -643,6 +645,7 @@ function routeView() {
     case "rate": return rateView();
     case "advisor": return brandAdvisorView();
     case "plan": return planView();
+    case "team": return teamView();
     case "script": return studioTabs("script") + scriptView();
     case "gigs": return gigsView();
     case "profile": return profileView();
@@ -669,6 +672,7 @@ function sidebar() {
       ${item("brands","Brands")}${item("learn","Learn My Brand")}${item("favorites","Saved Copy")}${item("history","History")}
       <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">Advisors</div>
       ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("plan","My Plan")}${item("gigs","Gig Diary")}
+      ${(state.usage?.seats || state.usage?.is_team_member) ? item("team","Team") : ""}
     </nav>
     <div class="mt-auto space-y-2">
       ${usageCard()}
@@ -696,6 +700,7 @@ function sidebar() {
         ${item("brands","Brands")}${item("learn","Learn My Brand")}${item("favorites","Saved Copy")}${item("history","History")}
         <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">Advisors</div>
         ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("plan","My Plan")}${item("gigs","Gig Diary")}
+        ${(state.usage?.seats || state.usage?.is_team_member) ? item("team","Team") : ""}
         ${item("pricing","Plans & Pricing")}
       </nav>
       <div class="mt-auto space-y-2 pt-5">
@@ -746,6 +751,7 @@ function topbar() {
     rate:["Rate Advisor","Wetin to charge — realistic Naira pricing for your gigs"],
     advisor:["Brand Advisor","Build your personal brand and win the right brand deals"],
     plan:["My Plan","Your accountability checklist — turn strategy into steps you actually take"],
+    team:["Team","Your shared workspace — one brand voice, one pooled plan"],
     gigs:["Gig Diary","Track every gig and what you made"],
     script:["Script Writer","Scene-by-scene short-video scripts built on trending formats"],
     profile:["Account","Manage your profile, plan and security"],
@@ -2505,7 +2511,7 @@ function pricingView() {
         ${isCur?'Current plan':(p.price?'Upgrade':'Downgrade')}</button></div>`;
   }).join("");
   return `<div class="pb-24 md:pb-0">
-    <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">${cards}</div>
+    <div class="grid sm:grid-cols-2 lg:grid-cols-5 gap-4">${cards}</div>
     <p class="text-xs text-muted text-center mt-5">${state.config.paystack?'Secure checkout via Paystack — card, bank transfer, USSD.':'⚙️ Paystack not configured — choosing a plan will simulate the upgrade so you can test limits.'}</p>
   </div>`;
 }
@@ -2836,6 +2842,67 @@ function planView() {
   </div>`;
 }
 
+/* ================================ TEAM ================================ */
+
+function seatStatusBadge(s) {
+  if (s.status === "active") return `<span class="text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full bg-brand-tint text-brand-dark">Active</span>`;
+  return `<span class="text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full bg-paper text-muted">Invited</span>`;
+}
+
+function teamView() {
+  const T = state.team;
+  if (!T) return `<div class="grid place-items-center py-24"><div class="w-9 h-9 border-[3px] border-brand/25 border-t-brand rounded-full spin"></div></div>`;
+
+  if (T.is_member) {
+    return `<div class="max-w-xl pb-24 md:pb-0">
+      ${card(`<div class="text-center py-10">
+        <div class="w-12 h-12 mx-auto rounded-xl2 bg-brand-tint text-brand grid place-items-center mb-3">${ic("team","w-6 h-6")}</div>
+        <p class="font-display font-bold text-lg">You're on ${esc(T.owner_name)}'s team</p>
+        <p class="text-sm text-muted mt-1 max-w-sm mx-auto">You're writing in their shared brand voice, and your generations count toward their team's pooled plan.</p>
+        <button data-team-leave class="mt-5 text-sm font-semibold text-rose-500 border border-line rounded-xl px-4 py-2 hover:border-rose-300">Leave this workspace</button>
+      </div>`)}
+    </div>`;
+  }
+
+  if (!T.is_owner) {
+    return `<div class="max-w-xl pb-24 md:pb-0">
+      ${card(`<div class="text-center py-10">
+        <div class="w-12 h-12 mx-auto rounded-xl2 bg-paper text-faint grid place-items-center mb-3">${ic("team","w-6 h-6")}</div>
+        <p class="font-display font-bold text-lg">Bring your team onto Vertil</p>
+        <p class="text-sm text-muted mt-1 max-w-sm mx-auto">Upgrade to the Business plan to invite teammates into a shared workspace — one brand voice, one pooled plan.</p>
+        <button data-nav="pricing" class="mt-4 text-sm font-semibold text-white bg-brand hover:bg-brand-dark px-5 py-2.5 rounded-xl">See plans</button>
+      </div>`)}
+    </div>`;
+  }
+
+  const seats = T.seats || [];
+  const atLimit = seats.length >= T.seats_limit;
+  const rows = seats.map(s => `
+    <div class="flex items-center gap-3 py-3 border-b border-line last:border-0">
+      <div class="w-9 h-9 rounded-full bg-brand-tint text-brand-dark grid place-items-center text-xs font-bold shrink-0">${esc((s.member_name||s.email)[0].toUpperCase())}</div>
+      <div class="min-w-0 flex-1"><div class="text-sm font-semibold truncate">${esc(s.member_name || s.email)}</div>
+        <div class="text-xs text-muted truncate">${esc(s.email)}</div></div>
+      ${seatStatusBadge(s)}
+      <button data-team-remove="${s.id}" class="shrink-0 text-xs text-faint hover:text-rose-500 p-1">${ic("trash","w-4 h-4")}</button>
+    </div>`).join("");
+
+  return `<div class="max-w-xl space-y-4 pb-24 md:pb-0">
+    ${card(`<div class="flex items-center justify-between mb-1">
+        <div class="text-[13px] font-semibold">Seats</div>
+        <span class="text-xs text-faint">${seats.length}/${T.seats_limit} used</span></div>
+      <div class="h-1.5 rounded-full bg-line overflow-hidden mb-1"><div class="h-full bg-brand" style="width:${Math.min(100, seats.length/T.seats_limit*100)}%"></div></div>
+      <p class="text-xs text-muted">Everyone here shares your brand voices and your team's pooled monthly plan.</p>`)}
+    ${card(`<div class="text-[13px] font-semibold mb-2">Invite a teammate</div>
+      <form id="teamInviteForm" class="flex gap-2">
+        <input id="teamInviteEmail" type="email" required placeholder="teammate@email.com" ${atLimit?'disabled':''} class="flex-1 bg-paper border border-line rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 disabled:opacity-50"/>
+        <button type="submit" ${atLimit?'disabled':''} class="shrink-0 text-sm font-semibold text-white bg-brand hover:bg-brand-dark rounded-lg px-4 py-2.5 shadow-sm disabled:opacity-50">Invite</button>
+      </form>
+      ${atLimit?`<p class="text-xs text-rose-500 mt-2">You've used all ${T.seats_limit} seats on the Business plan.</p>`:''}
+      <p id="teamInviteErr" class="text-xs text-rose-500 mt-2 hidden"></p>`)}
+    ${seats.length ? card(`<div class="text-[13px] font-semibold mb-1">Your team</div>${rows}`) : card(`<p class="text-sm text-muted text-center py-4">No teammates yet — invite your first one above.</p>`)}
+  </div>`;
+}
+
 /* ========================== SCRIPT WRITER ========================= */
 
 function scriptView() {
@@ -3147,6 +3214,38 @@ function wire() {
     $$("[data-plan-toggle]").forEach(b=>b.onclick=()=>togglePlanItem(b.dataset.planToggle, b.dataset.done==="1"));
     $$("[data-plan-del]").forEach(b=>b.onclick=()=>deletePlanItem(b.dataset.planDel));
   }
+  if (state.view === "team") {
+    const form=$("#teamInviteForm");
+    if (form) form.onsubmit = async e => {
+      e.preventDefault();
+      const email = $("#teamInviteEmail").value.trim();
+      const err = $("#teamInviteErr");
+      err.classList.add("hidden");
+      try {
+        await api("/api/team/invite", { method:"POST", body:JSON.stringify({ email }) });
+        toast(`Invited ${email}`);
+        state.team = await api("/api/team");
+        render();
+      } catch (ex) { err.textContent = ex.message; err.classList.remove("hidden"); }
+    };
+    $$("[data-team-remove]").forEach(b=>b.onclick=async()=>{
+      if (!confirm("Remove this teammate? They'll lose access to the shared brand and plan immediately.")) return;
+      try {
+        await api("/api/team/remove", { method:"POST", body:JSON.stringify({ seat_id:+b.dataset.teamRemove }) });
+        state.team = await api("/api/team");
+        render();
+      } catch (ex) { toast("⚠ " + ex.message); }
+    });
+    const leaveBtn=$("[data-team-leave]");
+    if (leaveBtn) leaveBtn.onclick = async () => {
+      if (!confirm("Leave this workspace? You'll go back to your own individual plan.")) return;
+      try {
+        await api("/api/team/leave", { method:"POST" });
+        await refreshUsage();
+        goto("home");
+      } catch (ex) { toast("⚠ " + ex.message); }
+    };
+  }
   if (state.view === "profile") {
     const pf=$("#profileForm"); if(pf) pf.onsubmit=saveProfile;
     const pw=$("#pwForm"); if(pw) pw.onsubmit=changePassword;
@@ -3172,6 +3271,7 @@ async function goto(view, fromPop) {
     if (view === "calendars") state.savedCalendars = await api("/api/calendars");
     if (view === "advisor") state.advisorBrandHistory = await api("/api/advisor/brand/history").catch(()=>[]);
     if (view === "plan") await loadPlan();
+    if (view === "team") state.team = await api("/api/team").catch(() => null);
     if (view === "gigs") { state.gigEditing = null; await loadGigs(); }
     if (view === "board") { state.board.items = await api("/api/content"); state.board.justLoaded = true; }
   } catch {}
