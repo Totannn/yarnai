@@ -2132,6 +2132,11 @@ def billing_init(user):
     plan = (request.get_json(force=True) or {}).get("plan", "")
     if plan not in PLANS or plan == "free":
         return jsonify({"error": "Choose a paid plan."}), 400
+    owner_id = db.get_org_owner(user["id"])
+    if owner_id:
+        owner = db.get_user(owner_id)
+        return jsonify({"error": f"You're on {(owner or {}).get('name') or 'a'}'s team workspace, using their "
+                                 f"plan already — leave that workspace first if you want your own paid plan."}), 400
     if not PAYSTACK_SECRET:
         return jsonify({"error": "Paystack not configured", "paystack": False}), 400
     amount = PLANS[plan]["price"] * 100  # kobo
@@ -2202,6 +2207,10 @@ def billing_simulate(user):
     plan = (request.get_json(force=True) or {}).get("plan", "")
     if plan not in PLANS:
         return jsonify({"error": "Unknown plan"}), 400
+    if plan != "free" and db.get_org_owner(user["id"]):
+        owner = db.get_user(db.get_org_owner(user["id"]))
+        return jsonify({"error": f"You're on {(owner or {}).get('name') or 'a'}'s team workspace, using their "
+                                 f"plan already — leave that workspace first if you want your own paid plan."}), 400
     if plan != "free" and PAYSTACK_SECRET and not is_admin(user):
         return jsonify({"error": "Payment required.", "paystack": True}), 402
     if plan == "free":
@@ -2665,8 +2674,11 @@ def team_invite_info():
         return jsonify({"error": "This invite is invalid or has already been used."}), 404
     owner = db.get_user(seat["owner_id"])
     existing = db.get_user_by_email(seat["email"])
+    current_plan = existing.get("plan") if existing else None
+    already_teamed = bool(existing) and (bool(db.get_org_owner(existing["id"])) or current_plan == "business")
     return jsonify({"email": seat["email"], "owner_name": (owner or {}).get("name") or "A Vertil user",
-                    "account_exists": bool(existing)})
+                    "account_exists": bool(existing), "already_teamed": already_teamed,
+                    "current_plan_name": PLANS.get(current_plan, {}).get("name") if current_plan and current_plan != "free" else None})
 
 
 @app.post("/api/team/accept")

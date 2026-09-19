@@ -123,6 +123,10 @@ function renderInviteAccept(info) {
       <p class="text-sm text-muted mt-3">${esc(info.owner_name)} invited you to their team workspace on Vertil.</p>
     </div>
     <h2 class="font-display font-extrabold text-2xl">${login ? "Sign in to accept" : "Create your account"}</h2>
+    ${info.current_plan_name ? `<div class="mt-3 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3">
+      You're currently on the <b>${esc(info.current_plan_name)}</b> plan. Joining this workspace switches you to
+      ${esc(info.owner_name)}'s shared plan instead — you may want to downgrade your own plan afterward to avoid paying for both.
+    </div>` : ""}
     <form id="inviteForm" class="mt-5 space-y-3">
       ${login ? "" : `<div><label class="text-xs font-semibold text-muted">Your name</label>
         <input name="name" placeholder="Your name" class="auth-input"/></div>`}
@@ -166,6 +170,9 @@ async function boot() {
     let info;
     try { info = await api(`/api/team/invite-info?token=${encodeURIComponent(inviteToken)}`); }
     catch (ex) { return renderInviteError(ex.message); }
+    if (info.already_teamed && (!me || me.email.toLowerCase() === info.email.toLowerCase())) {
+      return renderInviteError(`The account for ${info.email} is already part of a team workspace — leave that one first before accepting a new invite.`);
+    }
     if (me) {
       if (me.email.toLowerCase() !== info.email.toLowerCase()) return renderInviteMismatch(info);
       try {
