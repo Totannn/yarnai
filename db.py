@@ -232,6 +232,28 @@ def init_db() -> None:
                 joined_at  {_REAL}
             )""")
         c.execute(f"""
+            CREATE TABLE IF NOT EXISTS social_connections (
+                id                    {_PK},
+                brand_id              INTEGER NOT NULL,
+                platform              TEXT NOT NULL,
+                upload_post_username  TEXT NOT NULL,
+                status                TEXT NOT NULL DEFAULT 'pending',
+                connected_at          {_REAL},
+                created_at            {_REAL} NOT NULL
+            )""")
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS post_history (
+                id         {_PK},
+                brand_id   INTEGER NOT NULL,
+                platform   TEXT NOT NULL,
+                media_type TEXT,
+                thumbnail  TEXT,
+                caption    TEXT,
+                post_url   TEXT,
+                status     TEXT NOT NULL DEFAULT 'published',
+                posted_at  {_REAL} NOT NULL
+            )""")
+        c.execute(f"""
             CREATE TABLE IF NOT EXISTS applications (
                 id         {_PK},
                 name       TEXT NOT NULL,
@@ -989,6 +1011,63 @@ def accept_seat_invite(token: str, user_id: int) -> dict | None:
 def remove_seat(owner_id: int, seat_id: int) -> None:
     with _conn() as c:
         c.execute("UPDATE org_seats SET status='removed' WHERE id=? AND owner_id=?", (seat_id, owner_id))
+
+
+def get_social_connection(brand_id: int, platform: str) -> dict | None:
+    with _conn() as c:
+        r = c.execute("SELECT * FROM social_connections WHERE brand_id=? AND platform=?",
+                      (brand_id, platform)).fetchone()
+    return dict(r) if r else None
+
+
+def create_social_connection(brand_id: int, platform: str, upload_post_username: str) -> dict:
+    now = time.time()
+    with _conn() as c:
+        existing = c.execute("SELECT id FROM social_connections WHERE brand_id=? AND platform=?",
+                             (brand_id, platform)).fetchone()
+        if existing:
+            c.execute("UPDATE social_connections SET upload_post_username=?, status='pending', connected_at=NULL "
+                      "WHERE id=?", (upload_post_username, existing["id"]))
+            cid = existing["id"]
+        else:
+            cid = _insert(c, "INSERT INTO social_connections (brand_id, platform, upload_post_username, status, "
+                             "created_at) VALUES (?,?,?,?,?)", (brand_id, platform, upload_post_username, "pending", now))
+        r = c.execute("SELECT * FROM social_connections WHERE id=?", (cid,)).fetchone()
+    return dict(r)
+
+
+def set_social_connection_status(brand_id: int, platform: str, status: str) -> None:
+    with _conn() as c:
+        c.execute("UPDATE social_connections SET status=?, connected_at=? WHERE brand_id=? AND platform=?",
+                  (status, time.time() if status == "connected" else None, brand_id, platform))
+
+
+def delete_social_connection(brand_id: int, platform: str) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM social_connections WHERE brand_id=? AND platform=?", (brand_id, platform))
+
+
+def create_post_history(brand_id: int, platform: str, media_type: str, thumbnail: str,
+                        caption: str, post_url: str | None, status: str = "published") -> dict:
+    now = time.time()
+    with _conn() as c:
+        pid = _insert(c, "INSERT INTO post_history (brand_id, platform, media_type, thumbnail, caption, "
+                         "post_url, status, posted_at) VALUES (?,?,?,?,?,?,?,?)",
+                      (brand_id, platform, media_type, thumbnail, caption, post_url, status, now))
+        r = c.execute("SELECT * FROM post_history WHERE id=?", (pid,)).fetchone()
+    return dict(r)
+
+
+def list_post_history(user_id: int, start: float, end: float) -> list[dict]:
+    with _conn() as c:
+        seat = c.execute("SELECT owner_id FROM org_seats WHERE member_id=? AND status='active'",
+                         (user_id,)).fetchone()
+        owner_id = seat["owner_id"] if seat else user_id
+        rows = c.execute(
+            "SELECT p.*, b.name AS brand_name FROM post_history p JOIN brands b ON b.id = p.brand_id "
+            "WHERE b.user_id=? AND p.posted_at >= ? AND p.posted_at <= ? ORDER BY p.posted_at",
+            (owner_id, start, end)).fetchall()
+    return [dict(r) for r in rows]
 
 
 def leave_seat(member_id: int) -> None:

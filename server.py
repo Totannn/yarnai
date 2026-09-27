@@ -20,12 +20,14 @@ import re
 import secrets
 import time
 from html.parser import HTMLParser
+from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
 from flask import (Flask, Response, jsonify, redirect, render_template,
                    request, session, stream_with_context)
 from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.utils import secure_filename
 
 # Load .env BEFORE importing db — db reads DATABASE_URL at import time, so the
 # env must be populated first (matters when config comes from a .env file).
@@ -42,6 +44,8 @@ RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
 MAIL_FROM = os.getenv("MAIL_FROM", "Vertil <onboarding@resend.dev>").strip()
 APP_BASE_URL = os.getenv("APP_BASE_URL", "https://vertil.ng").rstrip("/")
 COMPANY_ADDRESS = os.getenv("COMPANY_ADDRESS", "Vertil · Lagos, Nigeria").strip()
+UPLOAD_POST_API_KEY = os.getenv("UPLOAD_POST_API_KEY", "").strip()
+UPLOAD_POST_BASE = "https://api.upload-post.com/api"
 
 # --------------------------------------------------------------------------- #
 # Two-tier models. Standard is the fast, cost-efficient default; Premium is the
@@ -126,7 +130,9 @@ def is_admin(user) -> bool:
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "yarn-ai-dev-secret-change-me")
-app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16MB upload cap (Learn My Brand)
+app.config["MAX_CONTENT_LENGTH"] = 250 * 1024 * 1024  # 250MB — covers Learn My Brand docs and Reel-length video uploads
+POST_MEDIA_DIR = Path(app.static_folder) / "post_media"
+POST_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 # Reload templates on change during local dev (no effect on the compiled prod behaviour we care about).
 app.config["TEMPLATES_AUTO_RELOAD"] = os.getenv("TEMPLATES_AUTO_RELOAD", "1") == "1"
 _client = None
@@ -408,6 +414,7 @@ def config():
         "refine_presets": [{"key": k, "label": k.replace("_", " ").title()} for k in voice.REFINE_PRESETS],
         "plans": [{"key": k, **PLANS[k]} for k in PLAN_ORDER],
         "paystack": bool(PAYSTACK_SECRET),
+        "social_posting": bool(UPLOAD_POST_API_KEY),
         "google_client_id": GOOGLE_CLIENT_ID,
         "advisor_options": voice.advisor_options(),
         "script_options": voice.script_options(),
@@ -1107,6 +1114,162 @@ def remove_brand(user, brand_id):
         return jsonify(_TEAM_BRAND_ERR), 403
     db.delete_brand(user["id"], brand_id)
     return jsonify({"ok": True})
+
+
+def _upload_post_username(brand_id: int) -> str:
+    return f"vertil-brand-{brand_id}"
+
+
+@app.post("/api/social/connect")
+@auth
+def social_connect(user):
+    if db.get_org_owner(user["id"]):
+        return jsonify(_TEAM_BRAND_ERR), 403
+    if not UPLOAD_POST_API_KEY:
+        return jsonify({"error": "Social posting isn't configured yet."}), 400
+    data = request.get_json(force=True) or {}
+    brand_id = data.get("brand_id")
+    brand = db.get_brand(user["id"], brand_id) if brand_id else None
+    if not brand:
+        return jsonify({"error": "Brand not found"}), 404
+    username = _upload_post_username(brand_id)
+    headers = {"Authorization": f"Apikey {UPLOAD_POST_API_KEY}"}
+    try:
+        httpx.post(f"{UPLOAD_POST_BASE}/uploadposts/users", headers=headers,
+                   json={"username": username}, timeout=20)
+        r = httpx.post(f"{UPLOAD_POST_BASE}/uploadposts/users/generate-jwt", headers=headers,
+                        json={
+                            "username": username,
+                            "redirect_url": f"{APP_BASE_URL}/api/social/callback?brand_id={brand_id}",
+                            "platforms": ["instagram"],
+                            "connect_title": f"Connect Instagram for {brand.get('name') or 'your brand'}",
+                            "show_calendar": False,
+                        }, timeout=20)
+        out = r.json()
+    except Exception as exc:
+        return jsonify({"error": f"Upload-Post error: {exc}"}), 502
+    access_url = out.get("access_url")
+    if not access_url:
+        return jsonify({"error": out.get("message") or "Could not start the Instagram connect flow."}), 502
+    db.create_social_connection(brand_id, "instagram", username)
+    return jsonify({"access_url": access_url})
+
+
+@app.get("/api/social/callback")
+@auth
+def social_callback(user):
+    brand_id = request.args.get("brand_id", type=int)
+    status = request.args.get("connect_status", "success")
+    if brand_id and db.get_brand(user["id"], brand_id):
+        db.set_social_connection_status(brand_id, "instagram", "connected" if status == "success" else "pending")
+    return redirect(f"{APP_BASE_URL}/app?social=instagram&status={status}")
+
+
+@app.get("/api/social/status")
+@auth
+def social_status(user):
+    brand_id = request.args.get("brand_id", type=int)
+    if not brand_id or not db.get_brand(user["id"], brand_id):
+        return jsonify({"error": "Brand not found"}), 404
+    conn = db.get_social_connection(brand_id, "instagram")
+    return jsonify(conn or {"status": "not_connected"})
+
+
+@app.post("/api/social/publish")
+@auth
+def social_publish(user):
+    if not UPLOAD_POST_API_KEY:
+        return jsonify({"error": "Social posting isn't configured yet."}), 400
+    brand_id = request.form.get("brand_id", type=int)
+    caption = (request.form.get("caption") or "").strip()
+    brand = db.get_brand(user["id"], brand_id) if brand_id else None
+    if not brand:
+        return jsonify({"error": "Brand not found"}), 404
+    conn = db.get_social_connection(brand_id, "instagram")
+    if not conn or conn.get("status") != "connected":
+        return jsonify({"error": "Instagram isn't connected for this brand yet."}), 400
+    media = request.files.get("media")
+    if not media or not media.filename:
+        return jsonify({"error": "Attach a photo or video — Instagram posts need media."}), 400
+    if not caption:
+        return jsonify({"error": "Add a caption before publishing."}), 400
+    is_video = (media.mimetype or "").startswith("video/")
+    media_bytes = media.stream.read()
+    headers = {"Authorization": f"Apikey {UPLOAD_POST_API_KEY}"}
+    common = {"user": conn["upload_post_username"], "platform[]": "instagram", "title": caption}
+    try:
+        if is_video:
+            r = httpx.post(
+                f"{UPLOAD_POST_BASE}/upload",
+                headers=headers,
+                data={**common, "media_type": "REELS"},
+                files={"video": (media.filename, media_bytes, media.mimetype)},
+                timeout=180,
+            )
+        else:
+            r = httpx.post(
+                f"{UPLOAD_POST_BASE}/upload_photos",
+                headers=headers,
+                data=common,
+                files={"photos[]": (media.filename, media_bytes, media.mimetype)},
+                timeout=60,
+            )
+        out = r.json()
+    except Exception as exc:
+        return jsonify({"error": f"Upload-Post error: {exc}"}), 502
+    result = (out.get("results") or {}).get("instagram") or {}
+
+    def _save_thumbnail() -> str | None:
+        ext = os.path.splitext(secure_filename(media.filename))[1] or (".mp4" if is_video else ".jpg")
+        fname = f"{brand_id}_{int(time.time())}{ext}"
+        (POST_MEDIA_DIR / fname).write_bytes(media_bytes)
+        return f"/static/post_media/{fname}"
+
+    if out.get("success") and result.get("success"):
+        thumb = _save_thumbnail()
+        db.create_post_history(brand_id, "instagram", "video" if is_video else "photo", thumb,
+                               caption, result.get("url"), "published")
+        return jsonify({"ok": True, "url": result.get("url")})
+    if out.get("success") and out.get("request_id") and not out.get("results"):
+        thumb = _save_thumbnail()
+        db.create_post_history(brand_id, "instagram", "video" if is_video else "photo", thumb,
+                               caption, None, "processing")
+        return jsonify({"ok": True, "processing": True,
+                        "message": "Submitted — Instagram is still processing it, check your account in a minute."})
+    return jsonify({"error": result.get("error") or out.get("message") or "Publish failed."}), 502
+
+
+@app.get("/api/social/pages")
+@auth
+def social_pages(user):
+    if not UPLOAD_POST_API_KEY:
+        return jsonify({"pages": []})
+    headers = {"Authorization": f"Apikey {UPLOAD_POST_API_KEY}"}
+    pages = []
+    for b in db.list_brands(user["id"]):
+        conn = db.get_social_connection(b["id"], "instagram")
+        if not conn or conn.get("status") != "connected":
+            continue
+        page = {"brand_id": b["id"], "brand_name": b["name"], "platform": "instagram", "stats": None}
+        try:
+            r = httpx.get(f"{UPLOAD_POST_BASE}/analytics/{conn['upload_post_username']}",
+                          headers=headers, params={"platforms": "instagram"}, timeout=20)
+            page["stats"] = (r.json() or {}).get("instagram")
+        except Exception:
+            pass
+        pages.append(page)
+    return jsonify({"pages": pages})
+
+
+@app.get("/api/social/history")
+@auth
+def social_history(user):
+    try:
+        start = datetime.datetime.strptime(request.args.get("start", ""), "%Y-%m-%d").timestamp()
+        end = datetime.datetime.strptime(request.args.get("end", ""), "%Y-%m-%d").timestamp() + 86400
+    except ValueError:
+        return jsonify({"error": "start and end must be YYYY-MM-DD"}), 400
+    return jsonify({"posts": db.list_post_history(user["id"], start, end)})
 
 
 @app.post("/api/brands/from-posts")

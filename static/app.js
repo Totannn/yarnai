@@ -24,6 +24,10 @@ const state = {
   // accountability plan (checklist from advisor "next steps")
   plan: { items: [], progress: null, adding: false },
   team: null,
+  social: {}, // { [brandId]: {status, upload_post_username} }
+  publish: { open: false, brandId: null, caption: "", image: null, sending: false },
+  pages: null, pagesLoading: false, pagesTab: "analytics",
+  posts: { weekStart: null, items: null, loading: false },
   // gig diary
   gigs: [], gigSummary: null, gigEditing: null,
   // content board (idea → posted)
@@ -103,6 +107,7 @@ const ICON = {
   team: '<circle cx="8.5" cy="8" r="3"/><path d="M2.5 20v-1a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5v1"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 20v-1c0-1.6-.6-3-1.6-4.1M17.5 12a4 4 0 0 1 3.5 6.9v1.1"/>',
   admin: '<path d="M12 3 4 6v5c0 4.5 3.2 8.5 8 10 4.8-1.5 8-5.5 8-10V6l-8-3Z"/><path d="m9 12 2 2 4-4"/>',
   script: '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/>',
+  pages: '<path d="M4 19V10M10 19V5M16 19v-7M3 19h18"/>',
 };
 
 const ADVISOR_LABELS = { rate_advisor: "Rate Advisor", personal_brand: "Brand Advisor", script: "Script Writer", brand_learn: "Learn My Brand", content_calendar: "Content Calendar", bulk_catalog: "Bulk Catalogue", writer: "Writers Hub" };
@@ -198,6 +203,7 @@ async function boot() {
     state.user = me.user; state.usage = me.usage;
     await loadData();
     handleUpgradeReturn();
+    if (state.view === "brands" && state.config?.social_posting) await loadSocialStatuses();
     if (state.user.onboarded) { render(); }
     else { startOnboarding(); }
   } catch {
@@ -210,6 +216,10 @@ async function loadData() {
   state.brands = await api("/api/brands");
   if (state.brands.length && !state.activeBrandId) state.activeBrandId = state.brands[0].id;
   state.home = await api("/api/home").catch(() => null);
+  if (state.usage?.seats || state.usage?.is_team_member) {
+    state.team = await api("/api/team").catch(() => null);
+  }
+  if (state.brands.length && state.config?.social_posting) await loadSocialStatuses();
 }
 
 async function refreshUsage() {
@@ -639,6 +649,7 @@ function routeView() {
     case "calendar": return calendarView();
     case "calendars": return savedCalendarsView();
     case "brands": return state.editing !== null ? brandForm() : brandsView();
+    case "pages": return pagesView();
     case "favorites": return favoritesView();
     case "history": return historyView();
     case "pricing": return pricingView();
@@ -653,36 +664,45 @@ function routeView() {
   }
 }
 
+const SIDEBAR_STYLE = `<style>
+.vsb{position:fixed;top:0;left:0;height:100vh;width:76px;z-index:40;transition:width .2s cubic-bezier(.4,0,.2,1),box-shadow .2s ease;overflow:hidden;will-change:width}
+.vsb:hover{width:252px;box-shadow:12px 0 32px -8px rgba(15,23,20,.14),0 0 0 1px rgba(15,23,20,.05)}
+.vsb .vsb-fade{opacity:0;white-space:nowrap;transition:opacity .12s ease}
+.vsb:hover .vsb-fade{opacity:1;transition-delay:.06s}
+.vsb-item{width:100%;display:flex;align-items:center;gap:12px;padding:9px 15px;border-radius:12px;font-size:13.5px;font-weight:500;white-space:nowrap;transition:background-color .15s ease,color .15s ease}
+.vsb-item svg{flex-shrink:0}
+</style>`;
+
 function sidebar() {
   const item = (key, label) => {
     const on = state.view === key || (key === "studio" && WORKSPACE_VIEWS.includes(state.view));
-    return `<button data-nav="${key}" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition
-      ${on ? "bg-brand-tint text-brand-dark" : "text-muted hover:bg-paper hover:text-ink"}">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px]">${ICON[key]}</svg>${label}</button>`;
+    return `<button data-nav="${key}" class="vsb-item ${on ? "bg-brand-tint text-brand-dark" : "text-muted hover:bg-paper hover:text-ink"}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px]">${ICON[key]}</svg><span class="vsb-fade">${label}</span></button>`;
   };
-  return `
-  <aside class="hidden md:flex w-[244px] shrink-0 flex-col bg-white border-r border-line px-3 py-5 sticky top-0 h-screen">
-    <div class="flex items-center gap-2.5 px-2 mb-7">
+  return SIDEBAR_STYLE + `
+  <div class="hidden md:block w-[76px] shrink-0" aria-hidden="true"></div>
+  <aside class="vsb hidden md:flex flex-col bg-white border-r border-line px-3 py-5">
+    <div class="flex items-center gap-2.5 px-2 mb-7 shrink-0">
       ${vmark(34)}
-      <div>${vword({ size: "19px" })}
+      <div class="vsb-fade min-w-0">${vword({ size: "19px" })}
         <div class="text-[10px] font-mono uppercase tracking-wider text-faint leading-none mt-1">Voice engine</div></div>
     </div>
-    <nav class="space-y-1">
+    <nav class="space-y-1 overflow-y-auto scroll-thin flex-1">
       ${item("home","Home")}${item("board","Content Board")}${item("studio","Studio")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
-      ${item("brands","Brands")}${item("learn","Learn My Brand")}${item("favorites","Saved Copy")}${item("history","History")}
-      <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">Advisors</div>
+      ${item("brands","Brands")}${state.config?.social_posting?item("pages","My Pages"):""}${item("learn","Learn My Brand")}${item("favorites","Saved Copy")}${item("history","History")}
+      <div class="vsb-fade px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">Advisors</div>
       ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("plan","My Plan")}${item("gigs","Gig Diary")}
       ${(state.usage?.seats || state.usage?.is_team_member) ? item("team","Team") : ""}
     </nav>
-    <div class="mt-auto space-y-2">
-      ${usageCard()}
-      <div class="flex items-center gap-2 px-2">
+    <div class="mt-auto pt-2 space-y-2 shrink-0">
+      <div class="vsb-fade">${usageCard()}</div>
+      <div class="flex items-center gap-2 px-1">
         <button data-nav="profile" class="flex items-center gap-2 min-w-0 flex-1 text-left rounded-lg hover:bg-paper p-1 -m-1 transition" title="Account">
           <div class="w-7 h-7 rounded-full bg-brand-tint text-brand-dark grid place-items-center text-xs font-bold shrink-0">${esc((state.user?.name||"U")[0].toUpperCase())}</div>
-          <div class="min-w-0"><div class="text-xs font-semibold truncate">${esc(state.user?.name||"")}</div>
+          <div class="vsb-fade min-w-0"><div class="text-xs font-semibold truncate">${esc(state.user?.name||"")}</div>
             <div class="text-[10px] text-faint truncate">${esc(state.user?.email||"")}</div></div>
         </button>
-        <button data-logout title="Log out" class="text-faint hover:text-rose-500 shrink-0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" class="w-4 h-4"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></button>
+        <button data-logout title="Log out" class="vsb-fade text-faint hover:text-rose-500 shrink-0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" class="w-4 h-4"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></button>
       </div>
     </div>
   </aside>
@@ -697,7 +717,7 @@ function sidebar() {
       </div>
       <nav class="space-y-1">
         ${item("home","Home")}${item("board","Content Board")}${item("studio","Studio")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
-        ${item("brands","Brands")}${item("learn","Learn My Brand")}${item("favorites","Saved Copy")}${item("history","History")}
+        ${item("brands","Brands")}${state.config?.social_posting?item("pages","My Pages"):""}${item("learn","Learn My Brand")}${item("favorites","Saved Copy")}${item("history","History")}
         <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">Advisors</div>
         ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("plan","My Plan")}${item("gigs","Gig Diary")}
         ${(state.usage?.seats || state.usage?.is_team_member) ? item("team","Team") : ""}
@@ -741,6 +761,7 @@ function topbar() {
     calendar:["Content Calendar","A month of posts, tuned to the Nigerian calendar"],
     calendars:["Saved Plans","Your generated content calendars"],
     brands:["Brands","Your brand voices — injected into every generation"],
+    pages:["My Pages","Monitor engagement on the accounts you've connected"],
     learn:["Learn My Brand","Upload your material — Vertil learns your brand and breaks it down"],
     board:["Content Board","Capture ideas and move them from spark to posted"],
     writers:["Writers Hub","Fix grammar & punctuation and make any draft read smoothly"],
@@ -863,6 +884,7 @@ function homeView() {
     ["advisor", "Brand Advisor", "Grow your personal brand", "brand"],
     ["plan", "My Plan", "Track your steps and stay accountable", "gold"],
     ["gigs", "Gig Diary", "Track every gig & what you earn", "brand"],
+    ["team", "Team", "Share one brand voice across your team", "brand"],
   ];
   const toolkit = TOOLS.map(([k, t, d, c]) => `
     <button data-nav="${k}" class="text-left bg-white border border-line rounded-xl2 shadow-card p-4 flex items-start gap-3.5 hometile">
@@ -918,6 +940,7 @@ function homeView() {
     ${homeHero(name, greet, streak, summaryLine, { pct, off, left, unlimited, resets: hu.resets_in_days })}
     ${homeSuggestSection()}
     ${homePlanWidget(h.plan_progress)}
+    ${homeTeamWidget()}
     ${homeJumpBack(h.continue || [])}
     <section>
       <div class="flex items-center justify-between mb-3"><h3 class="font-display font-bold text-[17px]">Your toolkit</h3>
@@ -1124,6 +1147,39 @@ function homePlanWidget(p) {
     </div>
     <span class="text-faint shrink-0">${svgIcon('<path d="M9 6l6 6-6 6"/>', "w-4 h-4")}</span>
   </button>`;
+}
+
+function homeTeamWidget() {
+  const T = state.team;
+  if (!T) return "";
+  if (T.is_member) {
+    return `
+    <button data-nav="team" class="w-full text-left bg-white border border-line rounded-xl2 shadow-card p-4 flex items-center gap-4 hometile">
+      <span class="w-11 h-11 rounded-xl bg-brand-tint text-brand grid place-items-center shrink-0">${svgIcon(ICON.team, "w-5 h-5")}</span>
+      <div class="min-w-0 flex-1">
+        <div class="font-display font-bold text-[15px]">Team workspace</div>
+        <div class="text-xs text-muted mt-0.5">You're on ${esc(T.owner_name)}'s team — writing in their shared brand voice.</div>
+      </div>
+      <span class="text-faint shrink-0">${svgIcon('<path d="M9 6l6 6-6 6"/>', "w-4 h-4")}</span>
+    </button>`;
+  }
+  if (T.is_owner) {
+    const seats = T.seats || [], pct = Math.round(seats.length / T.seats_limit * 100);
+    return `
+    <button data-nav="team" class="w-full text-left bg-white border border-line rounded-xl2 shadow-card p-4 flex items-center gap-4 hometile">
+      <span class="w-11 h-11 rounded-xl bg-brand-tint text-brand grid place-items-center shrink-0">${svgIcon(ICON.team, "w-5 h-5")}</span>
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center justify-between gap-2">
+          <div class="font-display font-bold text-[15px]">Team workspace</div>
+          <div class="text-xs text-muted shrink-0">${seats.length}/${T.seats_limit} seats</div>
+        </div>
+        <div class="h-1.5 rounded-full bg-line overflow-hidden mt-1.5"><div class="h-full bg-brand" style="width:${pct}%"></div></div>
+        <div class="text-[11px] text-muted mt-1.5">${seats.length?"Manage your team's seats":"Invite your first teammate"}</div>
+      </div>
+      <span class="text-faint shrink-0">${svgIcon('<path d="M9 6l6 6-6 6"/>', "w-4 h-4")}</span>
+    </button>`;
+  }
+  return "";
 }
 
 async function fetchSuggestion(idx) {
@@ -2387,8 +2443,30 @@ function savedCalendarsView() {
 
 /* ============================== BRANDS ============================= */
 
+async function loadPostsWeek() {
+  if (!state.posts.weekStart) state.posts.weekStart = mondayOf(new Date());
+  const start = state.posts.weekStart, end = new Date(start); end.setDate(end.getDate() + 6);
+  state.posts.loading = true;
+  try { state.posts.items = (await api(`/api/social/history?start=${ymd(start)}&end=${ymd(end)}`)).posts; }
+  catch { state.posts.items = []; }
+  state.posts.loading = false;
+}
+
+async function loadSocialStatuses() {
+  const entries = await Promise.all(state.brands.map(async b => {
+    try { return [b.id, await api(`/api/social/status?brand_id=${b.id}`)]; }
+    catch { return [b.id, { status: "not_connected" }]; }
+  }));
+  state.social = Object.fromEntries(entries);
+}
+
 function brandsView() {
-  const cards = state.brands.map(b=>`
+  const cards = state.brands.map(b=>{
+    const s = state.social[b.id]?.status;
+    const igButton = s === "connected"
+      ? `<span class="inline-flex items-center gap-1 text-[11px] font-semibold text-brand-dark bg-brand-tint rounded-full px-2 py-1">${ic("check","w-3 h-3")} Instagram connected</span>`
+      : `<button data-connect-ig="${b.id}" class="text-[11px] font-semibold text-brand-dark border border-line rounded-full px-2.5 py-1 hover:border-brand/40">Connect Instagram</button>`;
+    return `
     <div data-card class="bg-white border border-line rounded-xl2 shadow-card p-4 transition">
       <div class="flex items-start justify-between gap-3"><div class="min-w-0">
         <div class="font-display font-bold truncate">${esc(b.name)}</div>
@@ -2397,13 +2475,119 @@ function brandsView() {
           <button data-edit="${b.id}" class="text-xs px-2.5 py-1 rounded-lg border border-line hover:border-brand/40">Edit</button>
           <button data-del="${b.id}" class="text-xs px-2.5 py-1 rounded-lg border border-line text-rose-500 hover:border-rose-300">Delete</button></div></div>
       ${b.audience?`<p class="text-xs text-muted mt-2"><span class="text-faint">Audience:</span> ${esc(b.audience)}</p>`:''}
-      ${b.personality?`<p class="text-xs text-muted mt-1"><span class="text-faint">Voice:</span> ${esc(b.personality)}</p>`:''}</div>`).join("");
+      ${b.personality?`<p class="text-xs text-muted mt-1"><span class="text-faint">Voice:</span> ${esc(b.personality)}</p>`:''}
+      ${state.config?.social_posting?`<div class="mt-3">${igButton}</div>`:''}</div>`;
+  }).join("");
   const limit = state.usage?.brands_limit, atLimit = limit != null && state.brands.length >= limit;
   return `<div class="max-w-3xl pb-24 md:pb-0">
     <div class="flex items-center justify-between mb-4">
       <p class="text-sm text-muted">Each profile is injected into every generation. ${limit?`<span class="text-faint">(${state.brands.length}/${limit})</span>`:''}</p>
       <button data-new ${atLimit?'data-locked':''} class="shrink-0 text-sm font-semibold text-white bg-brand hover:bg-brand-dark px-4 py-2 rounded-lg shadow-sm">+ New brand</button></div>
     <div class="grid sm:grid-cols-2 gap-3">${cards||`<p class="text-sm text-muted">No brands yet — create your first.</p>`}</div></div>`;
+}
+
+function pagesView() {
+  const P = state.pages;
+  if (!P) return card(`<div class="text-center py-16"><div class="w-8 h-8 mx-auto border-[3px] border-brand/25 border-t-brand rounded-full spin"></div></div>`);
+  const pages = P.pages || [];
+  if (!pages.length) return card(`<div class="text-center py-14">
+    <div class="w-12 h-12 mx-auto rounded-xl2 bg-paper text-faint grid place-items-center mb-3">${svgIcon(ICON.pages,"w-6 h-6")}</div>
+    <p class="font-display font-bold text-lg">No connected pages yet</p>
+    <p class="text-sm text-muted mt-1 max-w-md mx-auto">Connect Instagram on a brand to start tracking its engagement here.</p>
+    <button data-nav="brands" class="mt-4 text-sm font-semibold text-white bg-brand hover:bg-brand-dark px-5 py-2.5 rounded-xl">Go to Brands</button></div>`);
+  const stat = (label, val) => `<div><div class="text-[10px] uppercase tracking-wide text-faint font-semibold">${label}</div><div class="text-lg font-display font-bold">${val ?? "—"}</div></div>`;
+  const cards = pages.map(p => {
+    const s = p.stats || {};
+    return `<div class="bg-white border border-line rounded-xl2 shadow-card p-5">
+      <div class="flex items-center gap-2 mb-4">
+        <span class="w-9 h-9 rounded-lg bg-brand-tint text-brand grid place-items-center shrink-0">${svgIcon(ICON.pages,"w-4.5 h-4.5")}</span>
+        <div class="min-w-0"><div class="font-display font-bold truncate">${esc(p.brand_name)}</div><div class="text-xs text-muted capitalize">${esc(p.platform)}</div></div>
+      </div>
+      ${p.stats ? `<div class="grid grid-cols-3 gap-y-3">
+        ${stat("Followers", s.followers)}${stat("Reach", s.reach)}${stat("Impressions", s.impressions)}
+        ${stat("Likes", s.likes)}${stat("Comments", s.comments)}${stat("Saves", s.saves)}
+      </div>` : `<p class="text-xs text-muted">Stats aren't available yet — check back once the account has some activity.</p>`}
+    </div>`;
+  }).join("");
+  const tab = (k, label) => `<button data-pages-tab="${k}" class="px-3.5 py-1.5 rounded-lg text-sm font-semibold transition ${state.pagesTab===k?'bg-white shadow-sm text-ink':'text-muted hover:text-ink'}">${label}</button>`;
+  return `<div class="max-w-5xl pb-24 md:pb-0">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+      <div class="inline-flex bg-paper border border-line rounded-xl p-1">${tab("analytics","Analytics")}${tab("posts","Posts")}</div>
+      ${state.pagesTab==="analytics" ? `<button data-pages-refresh ${state.pagesLoading?'disabled':''} class="shrink-0 inline-flex items-center gap-1.5 text-xs font-semibold text-brand-dark border border-line rounded-lg px-3 py-1.5 hover:border-brand/40 disabled:opacity-50">
+        ${state.pagesLoading?'<span class="w-3.5 h-3.5 border-2 border-brand/30 border-t-brand rounded-full spin"></span> Refreshing…':ic("refresh","w-3.5 h-3.5")+' Refresh'}</button>` : ""}
+    </div>
+    ${state.pagesTab==="posts" ? postsCalendarView() : `<div class="grid sm:grid-cols-2 gap-4">${cards}</div>`}
+  </div>`;
+}
+
+function mondayOf(d) {
+  const x = new Date(d); const day = (x.getDay() + 6) % 7;
+  x.setDate(x.getDate() - day); x.setHours(0,0,0,0); return x;
+}
+function ymd(d) { return d.toISOString().slice(0,10); }
+
+const PLATFORM_GLYPH = {
+  instagram: { path: ICONP.instagram_caption, bg: "linear-gradient(135deg,#f58529,#dd2a7b,#8134af)" },
+  tiktok: { path: '<path d="M9 17.5V8.2a4.5 4.5 0 1 0 3 4.2V4h.5a4 4 0 0 0 4 4"/>', bg: "#111" },
+  facebook: { path: '<path d="M14 21v-7h2.5l.5-3H14V9c0-1 .3-1.7 1.7-1.7H17V4.6C16.7 4.5 15.7 4.5 14.6 4.5c-2.5 0-4.1 1.5-4.1 4.2V11H8v3h2.5v7h3.5Z"/>', bg: "#1877F2" },
+};
+function platformBadge(pl, size = 20) {
+  const g = PLATFORM_GLYPH[pl] || { path: ICON.pages, bg: "#0e9488" };
+  return `<span class="rounded-full shadow grid place-items-center shrink-0" title="${esc(pl)}" style="width:${size}px;height:${size}px;background:${g.bg};color:#fff">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:${Math.round(size*.55)}px;height:${Math.round(size*.55)}px">${g.path}</svg></span>`;
+}
+
+function postsCalendarView() {
+  if (!state.posts.weekStart) state.posts.weekStart = mondayOf(new Date());
+  const start = state.posts.weekStart;
+  const days = Array.from({length:7}, (_,i)=>{ const d=new Date(start); d.setDate(d.getDate()+i); return d; });
+  const end = days[6];
+  const label = `${start.toLocaleDateString(undefined,{day:"numeric",month:"short"})} – ${end.toLocaleDateString(undefined,{day:"numeric",month:"short"})}`;
+  const platforms = [...new Set((state.pages?.pages||[]).map(p=>p.platform))];
+  const byDay = {};
+  (state.posts.items||[]).forEach(p=>{ const k=ymd(new Date(p.posted_at*1000)); (byDay[k]=byDay[k]||[]).push(p); });
+
+  const postCard = p => {
+    const time = new Date(p.posted_at*1000).toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"});
+    const media = p.thumbnail
+      ? (p.media_type==="video"
+        ? `<video src="${esc(p.thumbnail)}" class="w-full aspect-square object-cover rounded-lg" muted playsinline preload="metadata"></video>`
+        : `<img src="${esc(p.thumbnail)}" class="w-full aspect-square object-cover rounded-lg"/>`)
+      : `<div class="w-full aspect-square rounded-lg bg-brand-tint grid place-items-center text-brand">${svgIcon(ICON.pages,"w-5 h-5")}</div>`;
+    return `<a href="${p.post_url||'#'}" target="${p.post_url?'_blank':'_self'}" rel="noopener" class="block bg-white border border-line rounded-xl2 shadow-card p-2 hover:border-brand/40 transition">
+      <div class="relative">${media}
+        <span class="absolute top-1.5 left-1.5">${platformBadge(p.platform)}</span>
+        ${p.status==="processing"?'<span class="absolute bottom-1.5 right-1.5 text-[9px] font-bold uppercase bg-gold/90 text-white px-1.5 py-0.5 rounded">Processing</span>':''}
+      </div>
+      <div class="text-[10px] text-faint mt-1.5">${time}</div>
+      <div class="text-[11px] text-ink/80 leading-snug line-clamp-2 mt-0.5">${esc(p.caption||"")}</div>
+    </a>`;
+  };
+
+  const cols = days.map(d=>{
+    const k = ymd(d), posts = byDay[k]||[], isToday = ymd(new Date())===k;
+    return `<div class="min-w-[150px] flex-1">
+      <div class="text-center pb-2 mb-2 border-b border-line">
+        <div class="text-[10px] uppercase tracking-wide text-faint font-semibold">${d.toLocaleDateString(undefined,{weekday:"short"})}</div>
+        <div class="text-sm font-display font-bold ${isToday?'text-brand-dark':''}">${d.getDate()}</div>
+      </div>
+      <div class="space-y-2">${posts.map(postCard).join("") || '<div class="h-16"></div>'}</div>
+    </div>`;
+  }).join("");
+
+  return `<div class="bg-white border border-line rounded-xl2 shadow-card p-4">
+    <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+      <div class="flex items-center gap-1.5">${platforms.length ? platforms.map(pl=>platformBadge(pl,28)).join("") : '<span class="text-xs text-muted">No platforms connected</span>'}</div>
+      <div class="flex items-center gap-2">
+        <button data-posts-prev class="w-7 h-7 rounded-lg border border-line hover:border-brand/40 grid place-items-center">${svgIcon('<path d="M15 6l-6 6 6 6"/>',"w-4 h-4")}</button>
+        <span class="text-sm font-semibold min-w-[130px] text-center">${label}</span>
+        <button data-posts-next class="w-7 h-7 rounded-lg border border-line hover:border-brand/40 grid place-items-center">${svgIcon('<path d="M9 6l6 6-6 6"/>',"w-4 h-4")}</button>
+        <button data-posts-today class="text-xs font-semibold text-brand-dark hover:text-brand px-2">Today</button>
+      </div>
+    </div>
+    ${state.posts.loading ? `<div class="text-center py-14"><div class="w-7 h-7 mx-auto border-[3px] border-brand/25 border-t-brand rounded-full spin"></div></div>`
+      : `<div class="flex gap-3 overflow-x-auto scroll-thin pb-1">${cols}</div>`}
+  </div>`;
 }
 
 function brandForm() {
@@ -3180,6 +3364,28 @@ function wire() {
     $$("[data-mode]").forEach(b=>b.onclick=()=>{ state.brandMode=b.dataset.mode; render(); });
     const form=$("#brandForm"); if(form) form.onsubmit=saveBrand;
     const lb=$("#learnBtn"); if(lb) lb.onclick=learnFromPosts;
+    $$("[data-connect-ig]").forEach(b=>b.onclick=async()=>{
+      b.disabled=true; b.textContent="…";
+      try {
+        const r = await api("/api/social/connect", { method: "POST", body: JSON.stringify({ brand_id: +b.dataset.connectIg }) });
+        location.href = r.access_url;
+      } catch (ex) { toast("⚠ " + ex.message); b.disabled=false; b.textContent="Connect Instagram"; }
+    });
+  }
+  if (state.view === "pages") {
+    const rb=$("[data-pages-refresh]"); if(rb) rb.onclick=async()=>{
+      state.pagesLoading = true; render();
+      state.pages = await api("/api/social/pages").catch(() => state.pages);
+      state.pagesLoading = false; render();
+    };
+    $$("[data-pages-tab]").forEach(b=>b.onclick=()=>{ state.pagesTab=b.dataset.pagesTab; render(); });
+    const shiftWeek = async (delta) => {
+      const d = new Date(state.posts.weekStart); d.setDate(d.getDate()+delta*7);
+      state.posts.weekStart = d; render(); await loadPostsWeek(); render();
+    };
+    const pp=$("[data-posts-prev]"); if(pp) pp.onclick=()=>shiftWeek(-1);
+    const pn=$("[data-posts-next]"); if(pn) pn.onclick=()=>shiftWeek(1);
+    const pt=$("[data-posts-today]"); if(pt) pt.onclick=async()=>{ state.posts.weekStart=mondayOf(new Date()); render(); await loadPostsWeek(); render(); };
   }
   if (state.view === "favorites") {
     $$("[data-del-fav]").forEach(b=>b.onclick=async()=>{ await api(`/api/favorites/${b.dataset.delFav}`,{method:"DELETE"}); state.favorites=await api("/api/favorites"); render(); });
@@ -3272,6 +3478,8 @@ async function goto(view, fromPop) {
     if (view === "advisor") state.advisorBrandHistory = await api("/api/advisor/brand/history").catch(()=>[]);
     if (view === "plan") await loadPlan();
     if (view === "team") state.team = await api("/api/team").catch(() => null);
+    if (view === "brands" && state.config?.social_posting) await loadSocialStatuses();
+    if (view === "pages" && state.config?.social_posting) { state.pages = await api("/api/social/pages").catch(() => ({ pages: [] })); await loadPostsWeek(); }
     if (view === "gigs") { state.gigEditing = null; await loadGigs(); }
     if (view === "board") { state.board.items = await api("/api/content"); state.board.justLoaded = true; }
   } catch {}
@@ -3378,19 +3586,21 @@ const PV_STYLE = `<style>
 function pvAvatar(label, size = 34, bg = PV.teal) {
   return `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${bg};color:#fff;display:flex;align-items:center;justify-content:center;font-size:${size * 0.4}px;font-weight:700;flex-shrink:0">${esc(label)}</div>`;
 }
-function pvImg(ratio = "1/1", label = "") {
+function pvImg(ratio = "1/1", label = "", imageUrl = "", videoUrl = "") {
+  if (videoUrl) return `<div style="width:100%;aspect-ratio:${ratio};flex-shrink:0;overflow:hidden;background:#000"><video src="${videoUrl}" controls playsinline style="width:100%;height:100%;object-fit:cover;display:block"></video></div>`;
+  if (imageUrl) return `<div style="width:100%;aspect-ratio:${ratio};flex-shrink:0;overflow:hidden"><img src="${imageUrl}" style="width:100%;height:100%;object-fit:cover;display:block"/></div>`;
   return `<div style="width:100%;aspect-ratio:${ratio};background:linear-gradient(135deg,${PV.tint},#cfeae6);display:flex;align-items:center;justify-content:center;position:relative;flex-shrink:0">
     <svg viewBox="0 0 24 24" width="15%" height="15%" fill="none" stroke="${PV.dark}" stroke-width="1.4" style="opacity:.55"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10.5" r="1.8"/><path d="m3 16 5.5-5 4 3.5L18 10l3 4"/></svg>
     ${label ? `<span style="position:absolute;bottom:10px;left:10px;font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:${PV.dark};background:rgba(255,255,255,.7);padding:3px 7px;border-radius:6px">${label}</span>` : ""}
   </div>`;
 }
-function pvIg(text, biz) {
+function pvIg(text, biz, imageUrl, videoUrl) {
   const nm = esc(biz || "yourbrand");
   return `<div style="${PV_WRAP}">
     <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid #f0f0f0">${pvAvatar((biz || "V").slice(0, 1).toUpperCase())}
       <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:#111">${nm}</div><div style="font-size:11px;color:#8e8e8e">Sponsored</div></div>
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#111" stroke-width="1.8"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg></div>
-    ${pvImg()}
+    ${pvImg("1/1", "", imageUrl, videoUrl)}
     <div style="display:flex;align-items:center;gap:14px;padding:10px 14px 4px">
       <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="#111" stroke-width="1.7"><path d="M20.8 8.6c0 4.8-8.8 10.4-8.8 10.4S3.2 13.4 3.2 8.6a4.8 4.8 0 0 1 8.8-2.6 4.8 4.8 0 0 1 8.8 2.6Z"/></svg>
       <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="#111" stroke-width="1.7"><path d="M21 11.5a8.5 8.5 0 0 1-12.4 7.5L3 20l1.2-5.4A8.5 8.5 0 1 1 21 11.5Z"/></svg>
@@ -3501,8 +3711,8 @@ function pvPhone(inner, width = 208) {
 function pvCardPreview(c, i) {
   const biz = (state.brands.find(b => b.id === state.activeBrandId) || {}).name || "";
   const type = c.previewType || PV_BY_CT[state.contentType] || "ig";
-  const mock = (PV_MOCK[type] || pvIg)(c.text, biz);
-  return `<div class="pv-fade" style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:6px 0 2px">
+  const mock = (PV_MOCK[type] || pvIg)(c.text, biz, c.pubImagePreviewUrl, c.pubVideoPreviewUrl);
+  return `<div class="pv-fade" data-pv-block="${i}" style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:6px 0 2px">
     <div class="flex flex-wrap justify-center gap-1.5">
       ${PV_TYPES.map(t => `<button data-pvt="${i}" data-pvtk="${t.k}" class="pv-chip text-[11px] px-2 py-1 rounded-full border ${t.k === type ? "border-brand/50 bg-brand-tint text-brand-dark font-semibold" : "border-line bg-white text-muted hover:border-brand/40"}">${t.label}</button>`).join("")}
     </div>
@@ -3527,12 +3737,26 @@ function renderCards() {
           <button data-edit-c="${i}" class="text-xs px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand/40">${c.editing?'Done':'Edit'}</button>
           <button data-star="${i}" class="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand/40">${ic("save","w-3.5 h-3.5")} Save</button>
           <button data-copy="${i}" class="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand/40">${ic("copy","w-3.5 h-3.5")} Copy</button>
+          ${state.config?.social_posting && state.social[state.activeBrandId]?.status === "connected" ? `<button data-pub="${i}" class="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand/40">${ic("team","w-3.5 h-3.5")} Publish to Instagram</button>` : ""}
         </div></div>
       ${c.preview
         ? pvCardPreview(c, i)
         : c.editing
         ? `<textarea data-ta="${i}" rows="5" class="w-full bg-white border border-line rounded-lg px-3 py-2 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-brand/30">${esc(c.text)}</textarea>`
         : `<div class="text-sm whitespace-pre-wrap leading-relaxed ${c.busy?'opacity-40':''}">${esc(c.text)}</div>`}
+      ${c.publishOpen ? `
+      <div class="mt-3 pt-3 border-t border-line">
+        <p class="text-[11px] uppercase tracking-wide text-faint font-semibold mb-1.5">Publish to Instagram</p>
+        <p class="text-xs text-muted mb-2">Instagram needs a photo or video with every post — attach one to go with this caption. Video posts as a Reel.</p>
+        <input type="file" data-pub-file="${i}" accept="image/*,video/*" class="text-xs w-full"/>
+        <img data-pub-preview="${i}" class="hidden mt-2 rounded-lg max-h-40 object-cover border border-line"/>
+        <video data-pub-preview-vid="${i}" class="hidden mt-2 rounded-lg max-h-40 border border-line" controls></video>
+        <div class="flex items-center gap-2 mt-2">
+          <button data-pub-send="${i}" ${c.publishing?'disabled':''} class="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-brand hover:bg-brand-dark rounded-lg px-3 py-1.5 disabled:opacity-50">
+            ${c.publishing?'<span class="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full spin"></span> Posting…':'Post now'}</button>
+          <button data-pub="${i}" class="text-xs text-muted hover:text-ink">Cancel</button>
+        </div>
+      </div>` : ""}
       <div class="flex flex-wrap items-center gap-1.5 mt-3 pt-2.5 border-t border-line">
         <span class="text-[10px] uppercase tracking-wide text-faint font-semibold mr-1">Refine</span>
         ${presets.map(p=>`<button data-refine="${i}" data-instr="${p.key}" class="text-[11px] px-2 py-1 rounded-md border border-line bg-white hover:border-brand/40 hover:text-brand-dark">${esc(p.label)}</button>`).join("")}
@@ -3554,6 +3778,62 @@ function renderCards() {
   $$("[data-refine-input]",out).forEach(inp=>inp.onkeydown=e=>{ if(e.key==="Enter"){ e.preventDefault(); const v=inp.value.trim(); if(v) refineCard(+inp.dataset.refineInput, v); } });
   $$("[data-pvset]",out).forEach(b=>b.onclick=()=>{ const i=+b.dataset.pvset, c=state.cards[i], on=b.dataset.pvon==="1"; if(c.preview===on)return; c.preview=on; if(on&&!c.previewType)c.previewType=PV_BY_CT[state.contentType]||"ig"; renderCards(); });
   $$("[data-pvt]",out).forEach(b=>b.onclick=()=>{ state.cards[+b.dataset.pvt].previewType=b.dataset.pvtk; renderCards(); });
+  $$("[data-pub]",out).forEach(b=>b.onclick=()=>{ const i=+b.dataset.pub; state.cards[i].publishOpen=!state.cards[i].publishOpen; renderCards(); });
+  $$("[data-pub-send]",out).forEach(b=>b.onclick=()=>publishCard(+b.dataset.pubSend));
+  $$("[data-pub-file]",out).forEach(inp=>inp.onchange=()=>{
+    const i = +inp.dataset.pubFile, c = state.cards[i], file = inp.files[0];
+    const img = $(`[data-pub-preview="${i}"]`,out), vid = $(`[data-pub-preview-vid="${i}"]`,out);
+    const refreshMock = () => {
+      const pvBlock = $(`[data-pv-block="${i}"]`, out);
+      if (pvBlock) {
+        pvBlock.outerHTML = pvCardPreview(c, i);
+        $$("[data-pvt]",out).forEach(b=>b.onclick=()=>{ state.cards[+b.dataset.pvt].previewType=b.dataset.pvtk; renderCards(); });
+      }
+    };
+    if (!file) {
+      c.pubImagePreviewUrl = null; c.pubVideoPreviewUrl = null;
+      if (img) { img.classList.add("hidden"); img.src=""; }
+      if (vid) { vid.classList.add("hidden"); vid.src=""; }
+      refreshMock();
+      return;
+    }
+    const isVideo = file.type.startsWith("video/") || /\.(mp4|mov|webm|m4v|avi|mkv)$/i.test(file.name);
+    const url = URL.createObjectURL(file);
+    if (isVideo) {
+      c.pubVideoPreviewUrl = url; c.pubImagePreviewUrl = null;
+      if (img) { img.classList.add("hidden"); img.src=""; }
+      if (vid) {
+        vid.onerror = () => toast("⚠ Your browser can't preview this video's format (codec) — it may still upload fine, but try converting to standard MP4/H.264 if publish also fails.");
+        vid.src = url; vid.load(); vid.classList.remove("hidden");
+      }
+      refreshMock();
+      return;
+    }
+    c.pubImagePreviewUrl = url; c.pubVideoPreviewUrl = null;
+    if (vid) { vid.classList.add("hidden"); vid.src=""; }
+    if (img) { img.src = url; img.classList.remove("hidden"); }
+    refreshMock();
+  });
+}
+
+async function publishCard(i) {
+  const c = state.cards[i]; if (!c || c.publishing) return;
+  const fileInput = $(`[data-pub-file="${i}"]`);
+  const file = fileInput && fileInput.files[0];
+  if (!file) return toast("⚠ Attach a photo or video first");
+  c.publishing = true; renderCards();
+  try {
+    const fd = new FormData();
+    fd.append("brand_id", state.activeBrandId);
+    fd.append("caption", c.text);
+    fd.append("media", file);
+    const res = await fetch("/api/social/publish", { method: "POST", body: fd });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(d.error || "Publish failed");
+    toast(d.processing ? d.message : "Posted to Instagram ✓");
+    c.publishOpen = false;
+  } catch (ex) { toast("⚠ " + ex.message); }
+  c.publishing = false; renderCards();
 }
 
 async function refineCard(i, instruction) {
@@ -3626,6 +3906,11 @@ function handleUpgradeReturn() {
   const p = new URLSearchParams(location.search);
   if (p.get("upgraded")==="1") { toast("Upgrade successful"); history.replaceState({}, "", "/"); }
   else if (p.get("upgraded")==="0") { toast("Payment not completed."); history.replaceState({}, "", "/"); }
+  if (p.get("social")==="instagram") {
+    toast(p.get("status")==="success" ? "Instagram connected" : "Instagram connection cancelled");
+    history.replaceState({}, "", "/");
+    state.view = "brands";
+  }
 }
 
 /* =============================== TOUR ============================== */
