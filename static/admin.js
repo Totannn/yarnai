@@ -14,7 +14,8 @@ function vmark(px = 36) {
 const state = { user: null, overview: null, users: null, applications: null, detail: null, section: "overview", q: "",
   newsletter: null, newsletterDraft: null, nlBrief: "", nlDrafting: false, nlStyle: "A", nlTestEmail: "",
   nlSchedule: [], nlSchedEditing: null, nlSchedBusy: false,
-  wpPrompt: "", wpCount: 3, wpStyle: "A", wpBusy: false };
+  wpPrompt: "", wpCount: 3, wpStyle: "A", wpBusy: false,
+  pricing: null, pricingBusy: {} };
 
 const NL_STYLES = [
   { key: "A", label: "Dark hero", blurb: "Forest hero, light body" },
@@ -80,11 +81,13 @@ async function reloadSchedule() {
 
 async function load() {
   const { start, end } = scheduleWindow();
-  const [ov, us, apps, nl, sched] = await Promise.all([
+  const [ov, us, apps, nl, sched, pricing] = await Promise.all([
     api("/api/admin/overview"), api("/api/admin/users"), api("/api/admin/applications"),
     api("/api/admin/newsletter"), api(`/api/admin/newsletter/schedule?start=${start}&end=${end}`),
+    api("/api/admin/pricing"),
   ]);
   state.overview = ov; state.users = us; state.applications = apps; state.newsletter = nl; state.nlSchedule = sched;
+  state.pricing = pricing;
 }
 
 /* ------------------------------ login ----------------------------- */
@@ -210,6 +213,7 @@ const NAV = [
   { key: "customers", label: "Customers", icon: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>' },
   { key: "applications", label: "Applications", icon: '<path d="M4 5h16v14H4z"/><path d="M4 10h4l2 3h4l2-3h4"/>' },
   { key: "newsletter", label: "Newsletter", icon: '<path d="M4 6h16v12H4z"/><path d="m4 7 8 6 8-6"/>' },
+  { key: "pricing", label: "Pricing", icon: '<path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>' },
 ];
 
 function adminSidebar() {
@@ -242,7 +246,7 @@ function renderDash() {
     ${adminSidebar()}
     <div class="flex-1 min-w-0 flex flex-col">
       ${adminTopbar()}
-      <main class="flex-1 px-5 sm:px-7 py-6 w-full max-w-[1180px]">${state.section === "customers" ? customersSection() : state.section === "applications" ? applicationsSection() : state.section === "newsletter" ? newsletterSection() : overviewSection()}</main>
+      <main class="flex-1 px-5 sm:px-7 py-6 w-full max-w-[1180px]">${state.section === "customers" ? customersSection() : state.section === "applications" ? applicationsSection() : state.section === "newsletter" ? newsletterSection() : state.section === "pricing" ? pricingSection() : overviewSection()}</main>
     </div></div>`;
   wireDash();
 }
@@ -318,6 +322,32 @@ function applicationsSection() {
         <th class="py-2 px-2 font-semibold">Niche</th><th class="py-2 px-2 font-semibold">About</th>
         <th class="py-2 px-2 font-semibold">Applied</th><th class="py-2 px-2 font-semibold">Status</th></tr></thead>
       <tbody>${list.map(appRow).join("") || `<tr><td colspan="6" class="py-4 text-muted">No applications yet.</td></tr>`}</tbody></table></div>`);
+}
+
+function pricingRow(p) {
+  const busy = state.pricingBusy[p.key];
+  return `<div class="flex items-center gap-3 py-3 border-b border-edge/60 last:border-0">
+    <div class="w-28 shrink-0">
+      <div class="text-sm font-semibold text-slate-100">${esc(p.name)}</div>
+      ${p.is_override ? `<div class="text-[10px] text-brand-bright">Custom · default ${naira(p.default_price)}</div>` : `<div class="text-[10px] text-faint">Default</div>`}
+    </div>
+    <div class="flex items-center gap-1.5">
+      <span class="text-slate-400 text-sm">₦</span>
+      <input data-price-input="${p.key}" type="number" min="0" step="500" value="${p.price}"
+        class="w-32 bg-panel border border-edge rounded-lg px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-brand/60"/>
+    </div>
+    <button data-price-save="${p.key}" ${busy?"disabled":""} class="text-xs font-semibold bg-brand text-ink rounded-lg px-3 py-1.5 hover:bg-brand-bright disabled:opacity-50">${busy?"Saving…":"Save"}</button>
+    ${p.is_override ? `<button data-price-reset="${p.key}" class="text-xs text-muted hover:text-rose-300">Reset</button>` : ""}
+  </div>`;
+}
+
+function pricingSection() {
+  const plans = state.pricing || [];
+  return card(`
+    <div class="text-[13px] font-semibold mb-1 text-white">Plan pricing</div>
+    <div class="text-[11px] text-faint mb-4">Changes apply immediately to new checkouts and upgrades. Existing subscribers keep whatever they already paid until they re-subscribe.</div>
+    ${plans.map(pricingRow).join("") || '<p class="text-xs text-muted">No plans found.</p>'}
+  `);
 }
 
 const NL_STATUS_META = {
@@ -503,6 +533,37 @@ function wireDash() {
   };
   wireRows();
   wireNewsletter();
+  wirePricing();
+}
+
+function wirePricing() {
+  if (state.section !== "pricing") return;
+  $$("[data-price-save]").forEach(b => b.onclick = async () => {
+    const key = b.dataset.priceSave;
+    const input = $(`[data-price-input="${key}"]`);
+    const price = +input.value;
+    if (!(price >= 0)) return toast("Enter a valid price.", "error");
+    state.pricingBusy[key] = true; renderDash();
+    try {
+      await api("/api/admin/pricing", { method: "POST", body: JSON.stringify({ plan: key, price }) });
+      state.pricing = await api("/api/admin/pricing");
+      toast(`${key} price updated.`);
+    } catch (ex) { toast(ex.message, "error"); }
+    state.pricingBusy[key] = false; renderDash();
+  });
+  $$("[data-price-reset]").forEach(b => b.onclick = async () => {
+    const key = b.dataset.priceReset;
+    const plan = (state.pricing || []).find(p => p.key === key);
+    if (!plan) return;
+    if (!confirm(`Reset ${plan.name} back to its default price of ${naira(plan.default_price)}?`)) return;
+    state.pricingBusy[key] = true; renderDash();
+    try {
+      await api(`/api/admin/pricing/${key}`, { method: "DELETE" });
+      state.pricing = await api("/api/admin/pricing");
+      toast(`${key} reset to default.`);
+    } catch (ex) { toast(ex.message, "error"); }
+    state.pricingBusy[key] = false; renderDash();
+  });
 }
 
 function wireNewsletter() {

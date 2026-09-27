@@ -242,6 +242,12 @@ def init_db() -> None:
                 created_at            {_REAL} NOT NULL
             )""")
         c.execute(f"""
+            CREATE TABLE IF NOT EXISTS plan_prices (
+                plan_key   TEXT PRIMARY KEY,
+                price      {_REAL} NOT NULL,
+                updated_at {_REAL} NOT NULL
+            )""")
+        c.execute(f"""
             CREATE TABLE IF NOT EXISTS post_history (
                 id         {_PK},
                 brand_id   INTEGER NOT NULL,
@@ -1056,6 +1062,26 @@ def create_post_history(brand_id: int, platform: str, media_type: str, thumbnail
                       (brand_id, platform, media_type, thumbnail, caption, post_url, status, now))
         r = c.execute("SELECT * FROM post_history WHERE id=?", (pid,)).fetchone()
     return dict(r)
+
+
+def get_plan_prices() -> dict[str, float]:
+    with _conn() as c:
+        rows = c.execute("SELECT plan_key, price FROM plan_prices").fetchall()
+    return {r["plan_key"]: r["price"] for r in rows}
+
+
+def set_plan_price(plan_key: str, price: float) -> None:
+    now = time.time()
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO plan_prices (plan_key, price, updated_at) VALUES (?,?,?) "
+            "ON CONFLICT (plan_key) DO UPDATE SET price=excluded.price, updated_at=excluded.updated_at",
+            (plan_key, price, now))
+
+
+def delete_plan_price(plan_key: str) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM plan_prices WHERE plan_key=?", (plan_key,))
 
 
 def list_post_history(user_id: int, start: float, end: float) -> list[dict]:

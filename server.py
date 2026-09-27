@@ -109,6 +109,11 @@ PLANS = {
 }
 PLAN_ORDER = ["free", "starter", "growth", "pro", "business"]
 
+
+def plan_price(key: str) -> float:
+    """Current price for a plan — an admin-set override if one exists, else the built-in default."""
+    return db.get_plan_prices().get(key, PLANS.get(key, {}).get("price", 0))
+
 # Per-million-token prices (USD) → used to compute Naira AI spend for the admin view.
 PRICES = {
     "claude-opus-4-8": (5.0, 25.0),
@@ -412,7 +417,7 @@ def config():
         "content_types": voice.list_content_types(),
         "cadences": voice.list_cadences(),
         "refine_presets": [{"key": k, "label": k.replace("_", " ").title()} for k in voice.REFINE_PRESETS],
-        "plans": [{"key": k, **PLANS[k]} for k in PLAN_ORDER],
+        "plans": [{"key": k, **PLANS[k], "price": plan_price(k)} for k in PLAN_ORDER],
         "paystack": bool(PAYSTACK_SECRET),
         "social_posting": bool(UPLOAD_POST_API_KEY),
         "google_client_id": GOOGLE_CLIENT_ID,
@@ -907,7 +912,7 @@ def _apply_paid_plan(uid, plan: str, base_url: str) -> None:
             link = (base_url or "").rstrip("/") + "/app"
             send_email(user["email"], f"Your Vertil {PLANS[plan]['name']} plan is active",
                        _receipt_email_html(user.get("name") or "there",
-                                           PLANS[plan]["name"], PLANS[plan]["price"], link))
+                                           PLANS[plan]["name"], plan_price(plan), link))
         except Exception:
             pass
 
@@ -2302,7 +2307,7 @@ def billing_init(user):
                                  f"plan already — leave that workspace first if you want your own paid plan."}), 400
     if not PAYSTACK_SECRET:
         return jsonify({"error": "Paystack not configured", "paystack": False}), 400
-    amount = PLANS[plan]["price"] * 100  # kobo
+    amount = plan_price(plan) * 100  # kobo
     callback = request.host_url.rstrip("/") + "/billing/callback"
     try:
         r = httpx.post(
@@ -2400,12 +2405,12 @@ _TYPE_LABELS = {**{k: v["label"] for k, v in voice.CONTENT_TYPES.items()},
 def admin_overview(_user):
     o = db.admin_overview()
     # estimated MRR from paid subscribers
-    plan_price = {k: PLANS[k]["price"] for k in PLANS}
+    prices = {k: plan_price(k) for k in PLANS}
     paid = 0
     mrr = 0
     plan_rows = []
     for row in o["by_plan"]:
-        price = plan_price.get(row["plan"], 0)
+        price = prices.get(row["plan"], 0)
         if price:
             paid += row["n"]
             mrr += price * row["n"]
@@ -2418,9 +2423,44 @@ def admin_overview(_user):
         **o,
         "paid_users": paid, "mrr": mrr, "arr": mrr * 12,
         "plans": sorted(plan_rows, key=lambda x: -x["count"]),
-        "all_plans": [{"key": k, "name": PLANS[k]["name"], "price": PLANS[k]["price"]} for k in PLAN_ORDER],
+        "all_plans": [{"key": k, "name": PLANS[k]["name"], "price": prices[k]} for k in PLAN_ORDER],
         "fx": NGN_PER_USD,
     })
+
+
+@app.get("/api/admin/pricing")
+@admin
+def admin_pricing(_user):
+    overrides = db.get_plan_prices()
+    return jsonify([{"key": k, "name": PLANS[k]["name"], "default_price": PLANS[k]["price"],
+                     "price": overrides.get(k, PLANS[k]["price"]),
+                     "is_override": k in overrides} for k in PLAN_ORDER])
+
+
+@app.post("/api/admin/pricing")
+@admin
+def admin_set_pricing(_user):
+    data = request.get_json(force=True) or {}
+    key = data.get("plan")
+    if key not in PLANS:
+        return jsonify({"error": "Unknown plan"}), 400
+    try:
+        price = float(data.get("price"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Price must be a number"}), 400
+    if price < 0:
+        return jsonify({"error": "Price can't be negative"}), 400
+    db.set_plan_price(key, price)
+    return jsonify({"ok": True, "key": key, "price": price})
+
+
+@app.delete("/api/admin/pricing/<key>")
+@admin
+def admin_reset_pricing(_user, key):
+    if key not in PLANS:
+        return jsonify({"error": "Unknown plan"}), 400
+    db.delete_plan_price(key)
+    return jsonify({"ok": True, "key": key, "price": PLANS[key]["price"]})
 
 
 @app.get("/api/admin/users")
