@@ -24,19 +24,24 @@ const state = {
   // accountability plan (checklist from advisor "next steps")
   plan: { items: [], progress: null, adding: false },
   team: null,
-  social: {}, // { [brandId]: {status, upload_post_username} }
+  social: {}, // { [brandId]: { [platform]: {status, upload_post_username} } }
   publish: { open: false, brandId: null, caption: "", image: null, sending: false },
-  pages: null, pagesLoading: false, pagesTab: "analytics",
+  pages: null, pagesLoading: false, pagesTab: "analytics", studioOrigin: null,
   posts: { weekStart: null, items: null, loading: false },
+  composer: null, // { open,source,editId,boardId,brandId,base,over,sel[],tab,prev,mediaUrl,mediaType,mediaFile,when,slot,custom,approval,busy }
+  connecting: null, // platform key currently being connected, for spinner state
+  queue: { items: null, weekStart: null, mode: "week", loading: false },
   // gig diary
   gigs: [], gigSummary: null, gigEditing: null,
   // content board (idea → posted)
-  board: { items: null, adding: "", editing: null, generating: false, genTone: "", genFormat: "", genMode: "copy", justLoaded: false },
+  board: { items: null, adding: "", editing: null, generating: false, genTone: "", genFormat: "", genMode: "copy", justLoaded: false,
+    pub: { open: false, imageUrl: null, videoUrl: null, busy: false } },
   // writers hub
   writers: { input: "", mode: "polish", tweak: "", brandOn: false, loading: false, result: null, original: "", diffView: false },
   // misc
   history: [], favorites: [], editing: null, brandMode: "form", extracting: false,
-  tour: null, mobileNav: false, acctMenu: false,
+  tour: null, mobileNav: false, acctMenu: false, brandSwitcherOpen: false,
+  sidebarPinned: (() => { try { return localStorage.getItem("vsbPinned") === "1"; } catch { return false; } })(),
   onboarding: null,
   learn: { files: [], text: "", note: "", url: "", loading: false, result: null, saving: false,
            pack: null, packLoading: false, checkText: "", checkResult: null, checkLoading: false },
@@ -108,6 +113,8 @@ const ICON = {
   admin: '<path d="M12 3 4 6v5c0 4.5 3.2 8.5 8 10 4.8-1.5 8-5.5 8-10V6l-8-3Z"/><path d="m9 12 2 2 4-4"/>',
   script: '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/>',
   pages: '<path d="M4 19V10M10 19V5M16 19v-7M3 19h18"/>',
+  queue: '<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18"/><path d="M8 14h8M8 17h5"/>',
+  accounts: '<circle cx="12" cy="8" r="3.2"/><path d="M4.5 20v-1a7.5 7.5 0 0 1 15 0v1"/>',
 };
 
 const ADVISOR_LABELS = { rate_advisor: "Rate Advisor", personal_brand: "Brand Advisor", script: "Script Writer", brand_learn: "Learn My Brand", content_calendar: "Content Calendar", bulk_catalog: "Bulk Catalogue", writer: "Writers Hub" };
@@ -155,6 +162,7 @@ const ICONP = {
   film: '<rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M3 9.5h18M3 14.5h18M8 4.5v15M16 4.5v15"/>',
   download: '<path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M4.5 19.5h15"/>',
   preview: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
+  send: '<path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7Z"/>',
 };
 
 function ic(name, cls = "w-4 h-4") {
@@ -174,14 +182,17 @@ function vmark(px = 36) {
     <span class="vi" style="font-size:${Math.round(px * 0.5)}px"><span class="vi-tip" style="border-bottom-color:#fff"></span><span class="vi-stem" style="background:#fff"></span></span></span>`;
 }
 
+// Guided tour. `nav` = sidebar item to spotlight; `clip` = looping preview in static/tour/.
 const TOUR_STEPS = [
-  { sel: null, title: "Welcome to Vertil", body: "Your Naija brand voice engine. Let me show you around in 30 seconds." },
-  { sel: '[data-nav="studio"]', title: "Studio", body: "Generate on-brand Naija copy — captions, WhatsApp, ads, SMS — in Pidgin, Yoruba, Igbo, Hausa and more." },
-  { sel: '[data-nav="brands"]', title: "Brands — your secret weapon", body: "Set up a brand voice once. It's injected into every generation, so the copy always sounds like YOU — not generic AI." },
-  { sel: '[data-nav="calendar"]', title: "Content Calendar", body: "Plan a whole month of posts tuned to the Nigerian calendar — Detty December, salary cycles, holidays." },
-  { sel: '[data-nav="rate"]', title: "Rate Advisor", body: "Never undercharge again — get realistic Naira rates for any gig, plus a script to quote clients with confidence." },
-  { sel: '[data-nav="gigs"]', title: "Gig Diary", body: "Log every gig and what you made. Watch your earnings add up over time." },
-  { sel: '[data-nav="pricing"]', title: "Your plan & usage", body: "Track your monthly usage here and upgrade anytime. That's it — you're all set." },
+  { title: "Welcome to Vertil 👋", body: "Your Naija brand voice engine. Here's a 60-second tour of where everything lives." },
+  { nav: "home", clip: "home", title: "Home", body: "Your daily starting point. Vertil suggests a timely post for your brand every day — tap “Write this post” to use it." },
+  { nav: "studio", clip: "studio", title: "Studio", body: "Pick one of 8 Nigerian voices and a format, add a short brief, and hit Generate. You'll get ready-to-post options in seconds." },
+  { nav: "composer-new", clip: "compose", title: "Create post", body: "Publish straight from Vertil — choose Instagram, Facebook, LinkedIn and more, preview each feed, then post now or schedule.", social: true },
+  { nav: "learn", clip: "learn", title: "Learn My Brand", body: "Paste your brand guide or past posts. Vertil reads your tone and audience so everything it writes sounds like you." },
+  { nav: "calendar", clip: "calendar", title: "Content Calendar", body: "Plan a whole month in one click — tuned to payday, Independence Day, Detty December and more." },
+  { nav: "board", clip: "board", title: "Content Board", body: "Track every idea from spark to posted: Ideas → Create → Ready to publish → Posted." },
+  { nav: "queue", clip: "queue", title: "Queue", body: "Everything you've scheduled, across every account, in one weekly view.", social: true },
+  { title: "You're all set 🎉", body: "Start with “Create your brand” on Home. You can replay this tour anytime from the account menu." },
 ];
 
 async function api(path, opts = {}) {
@@ -204,7 +215,7 @@ async function boot() {
     await loadData();
     handleUpgradeReturn();
     if (state.view === "brands" && state.config?.social_posting) await loadSocialStatuses();
-    if (state.user.onboarded) { render(); }
+    if (state.user.onboarded) { render(); setTimeout(maybeStartTour, 600); }
     else { startOnboarding(); }
   } catch {
     renderAuth();
@@ -219,7 +230,7 @@ async function loadData() {
   if (state.usage?.seats || state.usage?.is_team_member) {
     state.team = await api("/api/team").catch(() => null);
   }
-  if (state.brands.length && state.config?.social_posting) await loadSocialStatuses();
+  if (state.brands.length && state.config?.social_posting) { await loadSocialStatuses(); await loadQueueWeek(); }
 }
 
 async function refreshUsage() {
@@ -394,7 +405,7 @@ async function onGoogleCredential(resp) {
     const d = await api("/api/auth/google", { method: "POST", body: JSON.stringify({ credential: resp.credential }) });
     state.user = d.user; state.usage = d.usage;
     await loadData();
-    if (state.user.onboarded) { state.view = "home"; render(); }
+    if (state.user.onboarded) { state.view = "home"; render(); setTimeout(maybeStartTour, 600); }
     else { startOnboarding(); }
   } catch (ex) {
     const err = document.getElementById("authErr");
@@ -412,7 +423,7 @@ async function doAuth(e) {
     const d = await api(path, { method: "POST", body: JSON.stringify(fd) });
     state.user = d.user; state.usage = d.usage;
     await loadData();
-    if (state.user.onboarded) { state.view = "home"; render(); }
+    if (state.user.onboarded) { state.view = "home"; render(); setTimeout(maybeStartTour, 600); }
     else { startOnboarding(); }
   } catch (ex) {
     err.textContent = ex.message; err.classList.remove("hidden");
@@ -607,6 +618,7 @@ async function finishOnboarding(skipped) {
   await loadData();
   state.view = "home";
   render();
+  setTimeout(maybeStartTour, 500);
 }
 
 /* ============================== SHELL =============================== */
@@ -620,8 +632,10 @@ function render() {
         <main class="flex-1 px-5 sm:px-8 py-6 max-w-[1180px] w-full mx-auto">${routeView()}</main>
       </div>
     </div>
+    ${state.composer ? composerView() : ""}
     <div id="toast" class="fixed bottom-5 right-5 z-50 hidden"></div>`;
   wire();
+  if (state.composer) wireComposer();
 }
 
 // Studio workspace: Generate + the create-tools live here as sub-tabs
@@ -649,7 +663,9 @@ function routeView() {
     case "calendar": return calendarView();
     case "calendars": return savedCalendarsView();
     case "brands": return state.editing !== null ? brandForm() : brandsView();
-    case "pages": return pagesView();
+    case "pages": case "performance": return pagesView();
+    case "queue": return queueView();
+    case "accounts": return accountsView();
     case "favorites": return favoritesView();
     case "history": return historyView();
     case "pricing": return pricingView();
@@ -667,30 +683,68 @@ function routeView() {
 const SIDEBAR_STYLE = `<style>
 .vsb{position:fixed;top:0;left:0;height:100vh;width:76px;z-index:40;transition:width .2s cubic-bezier(.4,0,.2,1),box-shadow .2s ease;overflow:hidden;will-change:width}
 .vsb:hover{width:252px;box-shadow:12px 0 32px -8px rgba(15,23,20,.14),0 0 0 1px rgba(15,23,20,.05)}
+.vsb.vsb-pinned{width:252px;box-shadow:none}
 .vsb .vsb-fade{opacity:0;white-space:nowrap;transition:opacity .12s ease}
-.vsb:hover .vsb-fade{opacity:1;transition-delay:.06s}
+.vsb:hover .vsb-fade,.vsb.vsb-pinned .vsb-fade{opacity:1;transition-delay:.06s}
 .vsb-item{width:100%;display:flex;align-items:center;gap:12px;padding:9px 15px;border-radius:12px;font-size:13.5px;font-weight:500;white-space:nowrap;transition:background-color .15s ease,color .15s ease}
 .vsb-item svg{flex-shrink:0}
 </style>`;
+const PIN_ICON = '<path d="M12 2 9 9l-5 1.5L11 18l-1 4 2-1 2 1-1-4 7-7.5L15 9Z"/>';
+
+function queueBadgeCount() {
+  return (state.queue.items || []).filter(p => p.status === "approval" || p.status === "media").length;
+}
+
+function brandSwitcherHTML(fadeClass) {
+  const active = state.brands.find(b => b.id === state.activeBrandId);
+  if (!state.brands.length) return "";
+  return `<div class="relative shrink-0">
+    <button data-brand-switch class="w-full flex items-center gap-2.5 px-2.5 py-2 border border-line bg-paper rounded-xl text-left">
+      <span class="w-7 h-7 rounded-lg bg-ink text-white grid place-items-center text-xs font-bold shrink-0">${esc((active?.name || "?")[0].toUpperCase())}</span>
+      <span class="${fadeClass || ''} min-w-0 flex-1"><span class="block text-[13px] font-semibold truncate">${esc(active?.name || "Pick a brand")}</span><span class="block text-[10.5px] text-faint truncate">Brand voice${active?.industry ? " · " + esc(active.industry) : ""}</span></span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="${fadeClass || ''} w-3.5 h-3.5 text-faint shrink-0"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+    ${state.brandSwitcherOpen ? `<div data-bsw-close class="fixed inset-0 z-[5]"></div>
+    <div class="absolute left-0 top-full mt-1 w-56 bg-white border border-line rounded-xl shadow-lift z-10 py-1 max-h-64 overflow-y-auto scroll-thin">
+      ${state.brands.map(b => `<button data-brand-pick="${b.id}" class="w-full flex items-center gap-2.5 px-2.5 py-2 text-left hover:bg-paper ${b.id === state.activeBrandId ? 'bg-brand-tint' : ''}">
+        <span class="w-6 h-6 rounded-md bg-ink text-white grid place-items-center text-[10px] font-bold shrink-0">${esc(b.name[0].toUpperCase())}</span>
+        <span class="text-[13px] font-medium truncate">${esc(b.name)}</span></button>`).join("")}
+      <button data-nav="brands" class="w-full text-left px-2.5 py-2 text-[12px] font-semibold text-brand hover:bg-paper border-t border-line mt-1">Manage brands →</button>
+    </div>` : ""}
+  </div>`;
+}
 
 function sidebar() {
-  const item = (key, label) => {
+  const item = (key, label, badge) => {
     const on = state.view === key || (key === "studio" && WORKSPACE_VIEWS.includes(state.view));
     return `<button data-nav="${key}" class="vsb-item ${on ? "bg-brand-tint text-brand-dark" : "text-muted hover:bg-paper hover:text-ink"}">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px]">${ICON[key]}</svg><span class="vsb-fade">${label}</span></button>`;
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px]">${ICON[key]}</svg><span class="vsb-fade flex-1">${label}</span>${badge ? `<span class="vsb-fade text-[10px] font-bold font-mono px-1.5 py-0.5 rounded-full bg-gold-tint text-gold">${badge}</span>` : ""}</button>`;
   };
+  const grpLabel = t => `<div class="vsb-fade px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">${t}</div>`;
+  const qBadge = queueBadgeCount();
+  const publishGroup = state.config?.social_posting ? `
+      ${grpLabel("Publish")}
+      ${item("queue","Queue", qBadge || null)}${item("performance","Performance")}${item("accounts","Accounts")}` : "";
   return SIDEBAR_STYLE + `
-  <div class="hidden md:block w-[76px] shrink-0" aria-hidden="true"></div>
-  <aside class="vsb hidden md:flex flex-col bg-white border-r border-line px-3 py-5">
-    <div class="flex items-center gap-2.5 px-2 mb-7 shrink-0">
+  <div class="hidden md:block ${state.sidebarPinned ? 'w-[252px]' : 'w-[76px]'} shrink-0 transition-[width] duration-200" aria-hidden="true"></div>
+  <aside class="vsb hidden md:flex flex-col bg-white border-r border-line px-3 py-5 ${state.sidebarPinned ? 'vsb-pinned' : ''}">
+    <div class="flex items-center gap-2.5 px-2 mb-4 shrink-0">
       ${vmark(34)}
-      <div class="vsb-fade min-w-0">${vword({ size: "19px" })}
+      <div class="vsb-fade min-w-0 flex-1">${vword({ size: "19px" })}
         <div class="text-[10px] font-mono uppercase tracking-wider text-faint leading-none mt-1">Voice engine</div></div>
+      <button data-sidebar-pin title="${state.sidebarPinned ? 'Unpin sidebar' : 'Keep sidebar open'}" class="vsb-fade shrink-0 w-6 h-6 grid place-items-center rounded-md ${state.sidebarPinned ? 'text-brand bg-brand-tint' : 'text-faint hover:text-ink hover:bg-paper'}">
+        ${svgIcon(PIN_ICON, "w-3.5 h-3.5")}</button>
     </div>
+    <div class="mb-3 shrink-0">${brandSwitcherHTML("vsb-fade")}</div>
+    ${state.config?.social_posting ? `<button data-nav="composer-new" class="shrink-0 w-full flex items-center justify-center gap-2 px-3.5 py-2.5 mb-3 rounded-xl bg-brand hover:bg-brand-dark text-white text-sm font-semibold whitespace-nowrap">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-4 h-4 shrink-0"><path d="M12 5v14M5 12h14"/></svg><span class="vsb-fade">Create post</span></button>` : ""}
     <nav class="space-y-1 overflow-y-auto scroll-thin flex-1">
-      ${item("home","Home")}${item("board","Content Board")}${item("studio","Studio")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
-      ${item("brands","Brands")}${state.config?.social_posting?item("pages","My Pages"):""}${item("learn","Learn My Brand")}${item("favorites","Saved Copy")}${item("history","History")}
-      <div class="vsb-fade px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">Advisors</div>
+      ${item("home","Home")}
+      ${grpLabel("Create")}
+      ${item("studio","Studio")}${item("board","Content Board")}${item("brands","Brands")}${item("learn","Learn My Brand")}
+      ${publishGroup}
+      ${grpLabel("Plan & grow")}
+      ${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}${item("favorites","Saved Copy")}${item("history","History")}
       ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("plan","My Plan")}${item("gigs","Gig Diary")}
       ${(state.usage?.seats || state.usage?.is_team_member) ? item("team","Team") : ""}
     </nav>
@@ -711,17 +765,24 @@ function sidebar() {
   <div class="md:hidden">
     <div data-mclose class="fixed inset-0 z-40 bg-ink/40 backdrop-blur-sm"></div>
     <aside class="fixed inset-y-0 left-0 z-50 w-[272px] max-w-[82%] bg-white border-r border-line px-3 py-5 flex flex-col overflow-y-auto scroll-thin fade-up">
-      <div class="flex items-center justify-between px-2 mb-6">
+      <div class="flex items-center justify-between px-2 mb-4">
         <div class="flex items-center gap-2.5">${vmark(32)}<div>${vword({ size: "18px" })}</div></div>
         <button data-mclose class="text-faint hover:text-ink p-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" class="w-5 h-5"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       </div>
+      <div class="mb-3">${brandSwitcherHTML("")}</div>
+      ${state.config?.social_posting ? `<button data-nav="composer-new" class="w-full flex items-center justify-center gap-2 px-3.5 py-2.5 mb-3 rounded-xl bg-brand hover:bg-brand-dark text-white text-sm font-semibold">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-4 h-4"><path d="M12 5v14M5 12h14"/></svg>Create post</button>` : ""}
       <nav class="space-y-1">
-        ${item("home","Home")}${item("board","Content Board")}${item("studio","Studio")}${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}
-        ${item("brands","Brands")}${state.config?.social_posting?item("pages","My Pages"):""}${item("learn","Learn My Brand")}${item("favorites","Saved Copy")}${item("history","History")}
-        <div class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">Advisors</div>
+        ${item("home","Home")}
+        ${grpLabel("Create")}
+        ${item("studio","Studio")}${item("board","Content Board")}${item("brands","Brands")}${item("learn","Learn My Brand")}
+        ${publishGroup}
+        ${grpLabel("Plan & grow")}
+        ${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}${item("favorites","Saved Copy")}${item("history","History")}
         ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("plan","My Plan")}${item("gigs","Gig Diary")}
         ${(state.usage?.seats || state.usage?.is_team_member) ? item("team","Team") : ""}
         ${item("pricing","Plans & Pricing")}
+        <button data-tour-replay class="w-full flex items-center gap-2.5 text-left px-3 py-2 rounded-lg text-sm text-muted hover:bg-paper hover:text-ink"><span class="text-faint">${svgIcon('<circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l5.5-3.5z"/>', "w-4 h-4")}</span> Replay tour</button>
       </nav>
       <div class="mt-auto space-y-2 pt-5">
         ${usageCard()}
@@ -762,6 +823,9 @@ function topbar() {
     calendars:["Saved Plans","Your generated content calendars"],
     brands:["Brands","Your brand voices — injected into every generation"],
     pages:["My Pages","Monitor engagement on the accounts you've connected"],
+    performance:["Performance","How your posts are doing, and when to post"],
+    queue:["Queue","Everything scheduled across your accounts"],
+    accounts:["Accounts","Connect the pages Vertil can post to"],
     learn:["Learn My Brand","Upload your material — Vertil learns your brand and breaks it down"],
     board:["Content Board","Capture ideas and move them from spark to posted"],
     writers:["Writers Hub","Fix grammar & punctuation and make any draft read smoothly"],
@@ -801,6 +865,7 @@ function topbar() {
           <div class="h-px bg-line my-1"></div>
           <button data-nav="profile" class="w-full flex items-center gap-2.5 text-left px-3 py-2 rounded-lg text-sm hover:bg-paper"><span class="text-faint">${ic("settings","w-4 h-4")}</span> Account</button>
           <button data-nav="pricing" class="w-full flex items-center gap-2.5 text-left px-3 py-2 rounded-lg text-sm hover:bg-paper"><span class="text-faint">${ic("scale","w-4 h-4")}</span> Plan &amp; usage</button>
+          <button data-tour-replay class="w-full flex items-center gap-2.5 text-left px-3 py-2 rounded-lg text-sm hover:bg-paper"><span class="text-faint">${svgIcon('<circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l5.5-3.5z"/>', "w-4 h-4")}</span> Replay tour</button>
           <div class="h-px bg-line my-1"></div>
           <button data-logout class="w-full flex items-center gap-2.5 text-left px-3 py-2 rounded-lg text-sm text-rose-500 hover:bg-paper"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" class="w-4 h-4"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg> Log out</button>
         </div>` : ""}
@@ -938,6 +1003,8 @@ function homeView() {
   return `
   <div class="space-y-8 pb-10">
     ${homeHero(name, greet, streak, summaryLine, { pct, off, left, unlimited, resets: hu.resets_in_days })}
+    ${homeChecklist(h.getting_started)}
+    ${homeQueueWidgets()}
     ${homeSuggestSection()}
     ${homePlanWidget(h.plan_progress)}
     ${homeTeamWidget()}
@@ -981,6 +1048,45 @@ function homeView() {
     </section>
   </div>
   <style>.hometile{transition:box-shadow .15s,border-color .15s,transform .15s}.hometile:hover{box-shadow:var(--tw-shadow,0 6px 16px rgba(12,39,36,.08));border-color:rgba(14,148,136,.35);transform:translateY(-2px)}</style>`;
+}
+
+const CHECKLIST_KEY = () => `vchecklist_hidden_${state.user?.id || "anon"}`;
+function homeChecklist(g) {
+  if (!g) return "";
+  try { if (localStorage.getItem(CHECKLIST_KEY()) === "1") return ""; } catch {}
+  const items = [
+    ["brand", "Create your brand voice", "Tell Vertil who you are so every post sounds like you.", "brands", "Set up brand"],
+    ["generated", "Generate your first post", "Pick a voice and format in Studio, add a brief, hit Generate.", "studio", "Open Studio"],
+    ["saved", "Save a post you love", "Tap Save on any option to keep it in Saved Copy.", "studio", "Try it"],
+    ["planned", "Plan a month of content", "Build a calendar tuned to the Naija calendar in one click.", "calendar", "Plan a month"],
+  ];
+  if (state.config?.social_posting) items.push(["scheduled", "Schedule your first post", "Use Create post to publish now or pick a time.", "composer-new", "Create post"]);
+  const done = items.filter(i => g[i[0]]).length;
+  if (done === items.length) return "";
+  const next = items.find(i => !g[i[0]]);
+  const pct = Math.round(done / items.length * 100);
+  const row = ([k, t, d, nav, cta]) => {
+    const ok = !!g[k], isNext = next && next[0] === k;
+    return `<div class="flex items-center gap-3 py-3 first:pt-1 ${isNext ? "" : ""}">
+      <span class="w-7 h-7 rounded-full grid place-items-center shrink-0 ${ok ? "bg-brand text-white" : isNext ? "border-2 border-brand text-brand" : "border-2 border-line text-faint"}">
+        ${ok ? svgIcon('<path d="M5 12.5l4.2 4L19 7"/>', "w-4 h-4") : `<span class="text-[11px] font-bold">${items.findIndex(i => i[0] === k) + 1}</span>`}</span>
+      <div class="min-w-0 flex-1"><div class="text-sm font-semibold ${ok ? "text-faint line-through" : "text-ink"}">${t}</div>
+        ${ok ? "" : `<div class="text-xs text-muted mt-0.5">${d}</div>`}</div>
+      ${ok ? "" : `<button data-nav="${nav}" class="shrink-0 text-xs font-semibold rounded-lg px-3 py-1.5 ${isNext ? "text-white bg-brand hover:bg-brand-dark" : "text-brand-dark bg-brand-tint hover:bg-brand hover:text-white"} transition">${cta}</button>`}
+    </div>`;
+  };
+  return `<section class="bg-white border border-line rounded-xl2 shadow-card p-5 fade-up">
+    <div class="flex items-start justify-between gap-3">
+      <div><div class="text-[11px] font-mono uppercase tracking-wider text-brand">Getting started</div>
+        <h3 class="font-display font-bold text-[17px] mt-0.5">${done === 0 ? "Your first 5 minutes with Vertil" : `Nice — ${done} of ${items.length} done`}</h3></div>
+      <div class="flex items-center gap-3 shrink-0">
+        <button data-tour-replay class="hidden sm:inline-flex items-center gap-1.5 text-xs font-semibold text-brand-dark border border-line rounded-lg px-2.5 py-1.5 hover:border-brand/40">${svgIcon('<circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l5.5-3.5z"/>', "w-3.5 h-3.5")} Take the tour</button>
+        <button data-checklist-hide class="text-xs text-faint hover:text-ink" title="Hide checklist">Hide</button>
+      </div>
+    </div>
+    <div class="h-1.5 rounded-full bg-paper overflow-hidden mt-3"><div class="h-full bg-brand rounded-full transition-all" style="width:${pct}%"></div></div>
+    <div class="divide-y divide-line mt-2">${items.map(row).join("")}</div>
+  </section>`;
 }
 
 function homeHero(name, greet, streak, summaryLine, ring) {
@@ -1061,6 +1167,36 @@ function homeSuggestCard() {
           <button data-home-shuffle class="text-sm font-medium text-muted hover:text-ink rounded-lg px-3 py-2.5">Not today</button>
         </div>
       </div>`;
+}
+
+function homeQueueWidgets() {
+  if (!state.config?.social_posting) return "";
+  const items = state.queue.items || [];
+  const needsYou = items.filter(p => p.status === "approval" || p.status === "media").slice(0, 4);
+  const upNext = items.filter(p => p.status === "scheduled" && p.scheduled_at).sort((a, b) => a.scheduled_at - b.scheduled_at).slice(0, 3);
+  if (!needsYou.length && !upNext.length) return "";
+  const title = p => esc((p.base_caption || "").split(/[.!\n]/)[0].slice(0, 50) || "Untitled post");
+  return `<div class="grid sm:grid-cols-2 gap-4">
+    ${needsYou.length ? `<div class="bg-white border border-line rounded-xl2 shadow-card p-5">
+      <div class="flex items-center gap-2 mb-3"><span class="font-display font-bold text-[15px]">Needs you</span><span class="text-[11px] font-bold font-mono px-1.5 py-0.5 rounded-full bg-gold-tint text-gold">${needsYou.length}</span></div>
+      <div class="space-y-2">${needsYou.map(p => `
+        <div class="flex items-center gap-3 border border-line rounded-xl p-3">
+          <div class="flex gap-1 shrink-0">${p.platforms.map(pl => platformBadge(pl, 18)).join("")}</div>
+          <div class="min-w-0 flex-1"><div class="text-[13px] font-semibold truncate">${title(p)}</div>
+            <div class="text-xs text-muted">${p.scheduled_at ? slotLabel(p.scheduled_at) : "—"} · <span class="${QUEUE_STATUS_META[p.status].c} font-semibold">${QUEUE_STATUS_META[p.status].label}</span></div></div>
+          <button data-home-queue-open="${p.id}" class="text-xs font-semibold text-brand-dark bg-brand-tint hover:bg-brand hover:text-white rounded-lg px-3 py-1.5 shrink-0">${p.status === "media" ? "Add media" : "Review"}</button>
+        </div>`).join("")}</div>
+    </div>` : ""}
+    ${upNext.length ? `<div class="bg-white border border-line rounded-xl2 shadow-card p-5">
+      <div class="flex items-center justify-between mb-1"><span class="font-display font-bold text-[15px]">Up next</span><button data-nav="queue" class="text-xs font-semibold text-brand hover:text-brand-dark">Open queue →</button></div>
+      <div class="divide-y divide-line">${upNext.map(p => `
+        <button data-home-queue-open="${p.id}" class="w-full flex items-center gap-3 py-2.5 text-left">
+          <div class="w-14 shrink-0"><div class="text-[10px] font-mono uppercase text-faint">${new Date(p.scheduled_at * 1000).toLocaleDateString(undefined, { weekday: 'short' })}</div><div class="text-[13px] font-bold">${new Date(p.scheduled_at * 1000).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</div></div>
+          <div class="min-w-0 flex-1 text-[13.5px] font-medium truncate">${title(p)}</div>
+          <div class="flex gap-1 shrink-0">${p.platforms.map(pl => platformBadge(pl, 16)).join("")}</div>
+        </button>`).join("")}</div>
+    </div>` : ""}
+  </div>`;
 }
 
 function homeSuggestSection() {
@@ -1560,6 +1696,23 @@ async function writerToBoard() {
   } catch (ex) { toast("⚠ " + ex.message); }
 }
 
+async function studioCardToBoard(i, btn) {
+  const c = state.cards[i]; if (!c) return;
+  if (btn) { btn.disabled = true; btn.textContent = "…"; }
+  try {
+    if (state.studioOrigin?.type === "board") {
+      await api(`/api/content/${state.studioOrigin.id}`, { method: "POST", body: JSON.stringify({ content: c.text, status: "to_post" }) });
+      toast("Saved back to your Content Board card");
+    } else {
+      const title = state.studioOrigin?.title || ((c.text || "").split("\n")[0] || "Studio draft").trim().slice(0, 120) || "Studio draft";
+      const item = await api("/api/content", { method: "POST", body: JSON.stringify({ title, brand_id: state.activeBrandId }) });
+      await api(`/api/content/${item.id}`, { method: "POST", body: JSON.stringify({ content: c.text, status: "create" }) });
+      toast("Added to Content Board");
+    }
+  } catch (ex) { toast("⚠ " + ex.message); }
+  if (btn) { btn.disabled = false; renderCards(); }
+}
+
 /* ============================ CONTENT BOARD =========================== */
 /* Idea Vault + pipeline: capture an idea, then move it Idea → Writing →
    To shoot → To post → Posted so nothing gets lost. Tap a card to edit it
@@ -1568,7 +1721,7 @@ async function writerToBoard() {
 const BOARD_COLS = [
   { k: "idea", label: "Ideas", hint: "Capture the spark", accent: "#8b5cf6", emoji: "💡" },
   { k: "create", label: "Create", hint: "Write the content here", accent: "#0e9488", emoji: "✍️" },
-  { k: "to_post", label: "To post", hint: "Ready to publish", accent: "#3b82f6", emoji: "📤" },
+  { k: "to_post", label: "Ready to publish", hint: "Attach media and send it", accent: "#3b82f6", emoji: "📤" },
   { k: "posted", label: "Posted", hint: "Done — nice one!", accent: "#22c55e", emoji: "✅" },
 ];
 const BOARD_META = Object.fromEntries(BOARD_COLS.map(c => [c.k, c]));
@@ -1654,7 +1807,26 @@ function boardView() {
     <div class="flex flex-col md:flex-row gap-3 md:gap-2.5 md:overflow-x-auto scroll-thin md:pb-2">
       ${BOARD_COLS.map(col => boardColumn(col, byStatus[col.k])).join("")}
     </div>`}
+    ${boardQueueMirror()}
     ${editing ? boardEditor(editing) : ""}
+  </div>`;
+}
+
+// Read-only mirror of what's actually scheduled — the real record lives in Queue,
+// this just keeps it visible from the Board so nothing feels lost once it leaves
+// the "Ready to publish" column.
+function boardQueueMirror() {
+  if (!state.config?.social_posting) return "";
+  const items = (state.queue.items || []).filter(p => p.status === "scheduled" || p.status === "approval" || p.status === "media");
+  if (!items.length) return "";
+  return `<div class="mt-4">
+    <div class="flex items-center gap-2 mb-2">
+      <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+      <span class="text-xs font-bold uppercase tracking-wide text-muted">In the queue</span>
+      <span class="text-xs text-faint font-mono">${items.length}</span>
+      <button data-nav="queue" class="ml-auto text-xs font-semibold text-brand hover:text-brand-dark">Open queue →</button>
+    </div>
+    <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">${items.map(queuePostCard).join("")}</div>
   </div>`;
 }
 
@@ -1777,6 +1949,7 @@ function boardEditor(it) {
       </div>
 
       <div class="flex items-center gap-2">
+        ${state.config?.social_posting && hasContent ? `<button data-bpublish="${it.id}" class="flex-1 inline-flex items-center justify-center gap-2 text-sm font-semibold text-white bg-brand hover:bg-brand-dark rounded-xl py-3 transition">${ic("send","w-4 h-4")} Publish</button>` : ""}
         <button data-bstudio="${it.id}" class="flex-1 inline-flex items-center justify-center gap-2 text-sm font-semibold text-brand-dark bg-brand-tint hover:bg-brand hover:text-white rounded-xl py-3 transition">Open in full Studio ↗</button>
         <button data-bdel2="${it.id}" title="Delete" class="w-11 h-11 grid place-items-center rounded-xl border border-line text-faint hover:text-rose-500 hover:border-rose-300">${ic("trash","w-4 h-4")}</button>
       </div>
@@ -1876,6 +2049,7 @@ function writeFromBoard(id) {
   state.brief = it.title + (it.notes ? "\n\n" + it.notes : "");
   if (boardStatus(it) === "idea") { it.status = "create"; api(`/api/content/${id}`, { method: "POST", body: JSON.stringify({ status: "create" }) }).catch(() => {}); }
   state.board.editing = null;
+  state.studioOrigin = { type: "board", id, title: it.title };
   toast("Idea sent to Studio — pick a voice & format");
   goto("studio");
 }
@@ -1886,7 +2060,7 @@ function wireBoard() {
   const inp = $("#boardInput"); if (inp) inp.oninput = () => state.board.adding = inp.value;
   $$("[data-bnode]").forEach(b => b.onclick = () => { const c = $("#boardcol-" + b.dataset.bnode); if (c) c.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" }); });
   $$("[data-drag]").forEach(el => {
-    el.onclick = () => { if (boardSuppressClick) return; state.board.editing = +el.dataset.drag; state.board.genTone = ""; state.board.genFormat = ""; render(); };
+    el.onclick = () => { if (boardSuppressClick) return; state.board.editing = +el.dataset.drag; state.board.genTone = ""; state.board.genFormat = ""; state.board.pub = { open: false, imageUrl: null, videoUrl: null, busy: false }; render(); };
     el.onpointerdown = e => beginBoardDrag(e, el);
     el.onmouseenter = () => showBoardPreview(el);
     el.onmouseleave = hideBoardPreview;
@@ -1907,6 +2081,10 @@ function wireBoard() {
   const rc = $("[data-brclear]"); if (rc) rc.onclick = () => setBoardReminder(state.board.editing, null);
   const bs = $("[data-bstudio]"); if (bs) bs.onclick = () => writeFromBoard(+bs.dataset.bstudio);
   const bd2 = $("[data-bdel2]"); if (bd2) bd2.onclick = () => { if (confirm("Delete this idea?")) deleteBoardItem(+bd2.dataset.bdel2); };
+  const bpub = $("[data-bpublish]"); if (bpub) bpub.onclick = () => {
+    const it = (state.board.items || []).find(x => x.id === +bpub.dataset.bpublish); if (!it) return;
+    openComposer({ boardId: it.id, brandId: it.brand_id, base: it.content, source: "From Content Board" });
+  };
   state.board.justLoaded = false;  // entrance animation plays once, not on every re-render
 }
 
@@ -2274,9 +2452,21 @@ async function saveLearnedBrand() {
 
 /* ============================== STUDIO ============================== */
 
+function studioOriginBanner() {
+  const o = state.studioOrigin; if (!o) return "";
+  const back = o.type === "board" ? "board" : "calendar";
+  const label = o.type === "board" ? "Writing for your Content Board card" : "Writing from your Content Calendar";
+  return `<div class="lg:col-span-2 flex items-center gap-2.5 bg-brand-tint border border-brand/20 rounded-xl px-4 py-2.5 text-sm">
+    <span class="text-brand shrink-0">${ic("board","w-4 h-4")}</span>
+    <span class="min-w-0 truncate"><b class="text-brand-dark">${esc(label)}</b>${o.title?` — <span class="text-ink/70">${esc(o.title)}</span>`:''}</span>
+    <button data-nav="${back}" class="ml-auto shrink-0 text-xs font-semibold text-brand-dark hover:text-brand-dark/70">← Back to ${back === "board" ? "Board" : "Calendar"}</button>
+  </div>`;
+}
+
 function studioView() {
   return `
   <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,400px)_minmax(0,1fr)] gap-6 pb-10 md:pb-0">
+    ${studioOriginBanner()}
     <section class="space-y-4 min-w-0">
       ${brandPicker()}
       ${card(`<span class="text-[13px] font-semibold">Tone &amp; language</span>
@@ -2427,7 +2617,10 @@ function calPostCard(p,i,abbr) {
     <div class="flex items-center gap-1.5 flex-wrap mt-auto pt-1">
       <span class="inline-flex items-center gap-1 text-[11px] bg-paper border border-line rounded-md px-1.5 py-0.5">${ic(ct.key||p.content_type,"w-3 h-3")} ${esc(ct.label)}</span>
       <span class="text-[11px] bg-paper border border-line rounded-md px-1.5 py-0.5">${esc(tone.label)}</span></div>
-    <button data-write="${i}" class="mt-1 w-full inline-flex items-center justify-center gap-1.5 text-sm font-semibold text-brand-dark bg-brand-tint hover:bg-brand hover:text-white transition rounded-lg py-2">${ic("pencil","w-4 h-4")} Write this post</button></div>`;
+    <div class="flex gap-1.5 mt-1">
+      <button data-write="${i}" class="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-semibold text-brand-dark bg-brand-tint hover:bg-brand hover:text-white transition rounded-lg py-2">${ic("pencil","w-4 h-4")} Write this post</button>
+      <button data-cal-to-board="${i}" title="Queue on Content Board without writing it yet" class="shrink-0 inline-flex items-center justify-center gap-1.5 text-sm font-semibold text-brand-dark border border-line hover:border-brand/40 transition rounded-lg px-3">${ic("board","w-4 h-4")}</button>
+    </div></div>`;
 }
 
 function savedCalendarsView() {
@@ -2462,10 +2655,8 @@ async function loadSocialStatuses() {
 
 function brandsView() {
   const cards = state.brands.map(b=>{
-    const s = state.social[b.id]?.status;
-    const igButton = s === "connected"
-      ? `<span class="inline-flex items-center gap-1 text-[11px] font-semibold text-brand-dark bg-brand-tint rounded-full px-2 py-1">${ic("check","w-3 h-3")} Instagram connected</span>`
-      : `<button data-connect-ig="${b.id}" class="text-[11px] font-semibold text-brand-dark border border-line rounded-full px-2.5 py-1 hover:border-brand/40">Connect Instagram</button>`;
+    const conn = state.social[b.id] || {};
+    const connectedCount = PLATFORM_ORDER.filter(p => conn[p]?.status === "connected").length;
     return `
     <div data-card class="bg-white border border-line rounded-xl2 shadow-card p-4 transition">
       <div class="flex items-start justify-between gap-3"><div class="min-w-0">
@@ -2476,7 +2667,7 @@ function brandsView() {
           <button data-del="${b.id}" class="text-xs px-2.5 py-1 rounded-lg border border-line text-rose-500 hover:border-rose-300">Delete</button></div></div>
       ${b.audience?`<p class="text-xs text-muted mt-2"><span class="text-faint">Audience:</span> ${esc(b.audience)}</p>`:''}
       ${b.personality?`<p class="text-xs text-muted mt-1"><span class="text-faint">Voice:</span> ${esc(b.personality)}</p>`:''}
-      ${state.config?.social_posting?`<div class="mt-3">${igButton}</div>`:''}</div>`;
+      ${state.config?.social_posting?`<button data-manage-accounts="${b.id}" class="mt-3 text-[11px] font-semibold text-brand-dark hover:text-brand">${connectedCount ? `${connectedCount} account${connectedCount>1?'s':''} connected` : 'Connect accounts'} →</button>`:''}</div>`;
   }).join("");
   const limit = state.usage?.brands_limit, atLimit = limit != null && state.brands.length >= limit;
   return `<div class="max-w-3xl pb-24 md:pb-0">
@@ -2510,12 +2701,33 @@ function pagesView() {
     </div>`;
   }).join("");
   const tab = (k, label) => `<button data-pages-tab="${k}" class="px-3.5 py-1.5 rounded-lg text-sm font-semibold transition ${state.pagesTab===k?'bg-white shadow-sm text-ink':'text-muted hover:text-ink'}">${label}</button>`;
+
+  // Aggregate real numbers across every connected page — no fabricated deltas or
+  // heatmap: Upload-Post's hour-by-hour activity data only exists for TikTok, so a
+  // "best times" grid for the rest would just be invented. The Composer's slot
+  // suggestions stay heuristic instead of pretending to be data-driven here.
+  const withStats = pages.filter(p => p.stats);
+  const sum = key => withStats.reduce((n, p) => n + (p.stats[key] || 0), 0);
+  const totalReach = sum("reach") || sum("views") || sum("impressions");
+  const totalEngage = sum("likes") + sum("comments") + sum("shares") + sum("saves");
+  const engageRate = totalReach ? ((totalEngage / totalReach) * 100).toFixed(1) + "%" : "—";
+  const kpi = (label, val) => `<div class="bg-white border border-line rounded-xl2 shadow-card p-4">
+    <div class="text-[10.5px] font-semibold uppercase tracking-wide text-faint">${label}</div>
+    <div class="font-display font-extrabold text-2xl mt-1">${val}</div></div>`;
+  const kpiRow = state.pagesTab === "analytics" ? `<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+    ${kpi("Reach", totalReach.toLocaleString())}
+    ${kpi("Engagement rate", engageRate)}
+    ${kpi("Followers", sum("followers").toLocaleString())}
+    ${kpi("Connected accounts", pages.length)}
+  </div>` : "";
+
   return `<div class="max-w-5xl pb-24 md:pb-0">
     <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
       <div class="inline-flex bg-paper border border-line rounded-xl p-1">${tab("analytics","Analytics")}${tab("posts","Posts")}</div>
       ${state.pagesTab==="analytics" ? `<button data-pages-refresh ${state.pagesLoading?'disabled':''} class="shrink-0 inline-flex items-center gap-1.5 text-xs font-semibold text-brand-dark border border-line rounded-lg px-3 py-1.5 hover:border-brand/40 disabled:opacity-50">
         ${state.pagesLoading?'<span class="w-3.5 h-3.5 border-2 border-brand/30 border-t-brand rounded-full spin"></span> Refreshing…':ic("refresh","w-3.5 h-3.5")+' Refresh'}</button>` : ""}
     </div>
+    ${kpiRow}
     ${state.pagesTab==="posts" ? postsCalendarView() : `<div class="grid sm:grid-cols-2 gap-4">${cards}</div>`}
   </div>`;
 }
@@ -2530,11 +2742,443 @@ const PLATFORM_GLYPH = {
   instagram: { path: ICONP.instagram_caption, bg: "linear-gradient(135deg,#f58529,#dd2a7b,#8134af)" },
   tiktok: { path: '<path d="M9 17.5V8.2a4.5 4.5 0 1 0 3 4.2V4h.5a4 4 0 0 0 4 4"/>', bg: "#111" },
   facebook: { path: '<path d="M14 21v-7h2.5l.5-3H14V9c0-1 .3-1.7 1.7-1.7H17V4.6C16.7 4.5 15.7 4.5 14.6 4.5c-2.5 0-4.1 1.5-4.1 4.2V11H8v3h2.5v7h3.5Z"/>', bg: "#1877F2" },
+  x: { path: '<path d="M4 4l16 16M20 4 4 20"/>', bg: "#111" },
+  linkedin: { path: '<rect x="3.5" y="9" width="17" height="12" rx="2"/><path d="M8 9V6.5A2.5 2.5 0 0 1 10.5 4h3A2.5 2.5 0 0 1 16 6.5V9"/>', bg: "#0A66C2" },
+  youtube: { path: '<rect x="3" y="6" width="18" height="12" rx="3"/><path d="M11 9.5v5l4-2.5z" fill="currentColor" stroke="none"/>', bg: "#FF0000" },
 };
 function platformBadge(pl, size = 20) {
   const g = PLATFORM_GLYPH[pl] || { path: ICON.pages, bg: "#0e9488" };
   return `<span class="rounded-full shadow grid place-items-center shrink-0" title="${esc(pl)}" style="width:${size}px;height:${size}px;background:${g.bg};color:#fff">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:${Math.round(size*.55)}px;height:${Math.round(size*.55)}px">${g.path}</svg></span>`;
+}
+
+// Platforms Vertil can actually publish to (WhatsApp Channel isn't offered — our
+// publishing provider, Upload-Post, doesn't support it).
+const PLATFORM_ORDER = ["instagram", "facebook", "tiktok", "x", "linkedin", "youtube"];
+const PLATFORM_META = {
+  instagram: { label: "Instagram", needs: "media", limit: 2200 },
+  facebook:  { label: "Facebook", needs: null, limit: 63206 },
+  tiktok:    { label: "TikTok", needs: "video", limit: 2200 },
+  x:         { label: "X", needs: null, limit: 280 },
+  linkedin:  { label: "LinkedIn", needs: null, limit: 3000 },
+  youtube:   { label: "YouTube Shorts", needs: "video", limit: 5000 },
+};
+const PLATFORM_REQ = {
+  instagram: "Needs a business or creator account",
+  facebook: "Posts to your Facebook Page",
+  tiktok: "Needs a TikTok business account",
+  x: "Posts from your X account",
+  linkedin: "Posts to your company page",
+  youtube: "Uploads vertical video as a Short",
+};
+function pvX(text, biz) {
+  return `<div style="${PV_WRAP}">
+    <div style="display:flex;align-items:center;gap:10px;padding:12px 14px">${pvAvatar((biz || "V").slice(0, 1).toUpperCase(), 34)}
+      <div><div style="font-size:13px;font-weight:700;color:#111">${esc(biz || "Your business")}</div><div style="font-size:11px;color:#8e8e8e">@${esc((biz||"yourbrand").replace(/\s+/g,"").toLowerCase())}</div></div></div>
+    <div style="padding:0 14px 14px;font-size:14px;line-height:1.5;color:#111;white-space:pre-wrap">${esc(text)}</div>
+    <div style="padding:0 14px 14px;font-size:11px;color:#8e8e8e">2h · ${text.length}/280</div>
+  </div>`;
+}
+function composerPreview(platform, text, biz, mediaUrl, mediaType) {
+  if (platform === "instagram") return pvIg(text, biz, mediaType === "photo" ? mediaUrl : null, mediaType === "video" ? mediaUrl : null);
+  if (platform === "tiktok" || platform === "youtube") return pvTiktok(text, biz);
+  if (platform === "facebook" || platform === "linkedin") return pvLinkedin(text, biz);
+  if (platform === "x") return pvX(text, biz);
+  return pvIg(text, biz);
+}
+
+/* ============================== COMPOSER ============================= */
+/* One shared "create/edit post" modal, opened from Studio, Content Board,
+   Home, and the Queue. Replaces the old per-screen inline publish panels. */
+
+function suggestedSlots() {
+  const now = new Date();
+  const mk = (daysAhead, h, m, why) => { const d = new Date(now); d.setDate(d.getDate() + daysAhead); d.setHours(h, m, 0, 0); return { at: d.getTime() / 1000, why }; };
+  const toSat = (6 - now.getDay() + 7) % 7 || 7;
+  return [mk(1, 9, 0, "Tomorrow morning"), mk(0, 19, 0, "This evening"), mk(toSat, 11, 0, "Weekend browsing")];
+}
+function slotLabel(atEpoch) {
+  const d = new Date(atEpoch * 1000);
+  return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }) + " · " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+function capFor(c, k) { return (c.over[k] ?? "").trim() ? c.over[k] : c.base; }
+
+function openComposer(opts = {}) {
+  const brandId = opts.brandId ?? state.activeBrandId;
+  if (!brandId) return toast("⚠ Pick or create a brand first");
+  const connStatus = state.social[brandId] || {};
+  let sel = (opts.sel || ["instagram", "facebook"]).filter(p => connStatus[p]?.status === "connected");
+  if (!sel.length) sel = PLATFORM_ORDER.filter(p => connStatus[p]?.status === "connected").slice(0, 1);
+  state.composer = {
+    open: true, source: opts.source || null, editId: opts.editId || null, boardId: opts.boardId || null,
+    brandId, base: opts.base || "", over: opts.over || {}, sel, tab: "all", prev: sel[0] || "instagram",
+    mediaUrl: opts.mediaUrl || null, mediaType: opts.mediaType || null, mediaFile: opts.mediaFile || null,
+    when: opts.when || "schedule", slot: opts.slot || suggestedSlots()[0],
+    approval: opts.approval || false, busy: false,
+  };
+  render();
+}
+function closeComposer() { state.composer = null; render(); }
+
+function composerWarnings(c) {
+  const w = [];
+  c.sel.forEach(k => {
+    const m = PLATFORM_META[k];
+    if (m.needs === "media" && !c.mediaUrl) w.push({ platform: k, text: m.label + " needs a photo or video.", media: true });
+    else if (m.needs === "video" && c.mediaType !== "video") w.push({ platform: k, text: m.label + " needs a video.", media: true });
+    const n = capFor(c, k).length;
+    if (n > m.limit) w.push({ platform: k, text: `Too long for ${m.label} (${n}/${m.limit}).`, hard: true });
+  });
+  return w;
+}
+
+async function connectPlatformPopup(brandId, platform, onDone) {
+  try {
+    const r = await api("/api/social/connect", { method: "POST", body: JSON.stringify({ brand_id: brandId, platform }) });
+    state.connecting = platform; render();
+    const popup = window.open(r.access_url, "_blank", "width=520,height=760");
+    const poll = setInterval(async () => {
+      if (!popup || popup.closed) {
+        clearInterval(poll);
+        const status = await api(`/api/social/status?brand_id=${brandId}`).catch(() => null);
+        if (status) state.social[brandId] = status;
+        state.connecting = null;
+        const connected = status?.[platform]?.status === "connected";
+        toast(connected ? PLATFORM_META[platform].label + " connected" : "Connection window closed — try again if it didn't finish.");
+        if (onDone) onDone(connected);
+        render();
+      }
+    }, 800);
+  } catch (ex) { toast("⚠ " + ex.message); }
+}
+function composerConnect(platform) {
+  const c = state.composer; if (!c) return;
+  connectPlatformPopup(c.brandId, platform, connected => {
+    if (connected) { if (!c.sel.includes(platform)) c.sel.push(platform); c.prev = platform; }
+  });
+}
+
+async function composerAdapt(platform) {
+  const c = state.composer; if (!c) return;
+  const m = PLATFORM_META[platform];
+  const btn = $(`[data-comp-adapt="${platform}"]`); if (btn) { btn.disabled = true; btn.textContent = "Rewriting…"; }
+  try {
+    const d = await api("/api/refine", { method: "POST", body: JSON.stringify({
+      text: capFor(c, platform), brand_id: c.brandId, tone: state.tone,
+      instruction: `Rewrite this specifically for ${m.label} — match its typical style and stay comfortably under its ${m.limit}-character limit.`,
+    })});
+    c.over[platform] = d.text; c.tab = platform; render();
+  } catch (ex) { toast("⚠ " + ex.message); render(); }
+}
+
+async function composerSubmit(asDraft) {
+  const c = state.composer; if (!c || c.busy) return;
+  if (!asDraft) {
+    if (!c.sel.length) return;
+    const w = composerWarnings(c);
+    if (w.some(x => x.hard)) return toast("⚠ " + w.find(x => x.hard).text);
+    if (c.when === "now" && w.length) return toast("⚠ " + w[0].text);
+  }
+  c.busy = true; render();
+  try {
+    let d;
+    if (c.editId) {
+      d = await api(`/api/queue/${c.editId}`, { method: "PUT", body: JSON.stringify({
+        base_caption: c.base, overrides: c.over, platforms: c.sel,
+        scheduled_at: c.when === "schedule" ? c.slot.at : null,
+        status: asDraft ? "draft" : (c.approval ? "approval" : "scheduled"),
+        approval_required: c.approval,
+      })});
+    } else {
+      const fd = new FormData();
+      fd.append("brand_id", c.brandId); fd.append("caption", c.base);
+      fd.append("platforms", JSON.stringify(c.sel)); fd.append("overrides", JSON.stringify(c.over));
+      fd.append("when", c.when); fd.append("approval", c.approval ? "true" : "false");
+      if (asDraft) fd.append("draft", "true");
+      if (c.when === "schedule" && c.slot) fd.append("scheduled_at", c.slot.at);
+      if (c.mediaFile) fd.append("media", c.mediaFile);
+      const res = await fetch("/api/queue", { method: "POST", body: fd });
+      d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || "Couldn't save this post");
+    }
+    toast(d.message || (asDraft ? "Draft saved — find it in Queue" : c.when === "now" ? "Posted" : c.approval ? "Sent for approval" : "Scheduled"));
+    if (c.boardId) state.board.items = (state.board.items || []).filter(x => x.id !== c.boardId);
+    state.composer = null;
+    if (!asDraft) await goto("queue"); else render();
+  } catch (ex) { toast("⚠ " + ex.message); c.busy = false; render(); }
+}
+
+function composerView() {
+  const c = state.composer; if (!c) return "";
+  const brand = state.brands.find(b => b.id === c.brandId) || {};
+  const conn = state.social[c.brandId] || {};
+  const w = composerWarnings(c);
+  const activeTab = c.tab === "all" ? (c.sel[0] || "instagram") : c.tab;
+  const text = capFor(c, activeTab);
+  const hasHard = w.some(x => x.hard);
+  const summary = c.sel.length ? `${c.sel.map(k => PLATFORM_META[k].label).join(", ")} · ${c.when === "now" ? "Post now" : slotLabel(c.slot.at)}${w.length ? ` · ${w.length} issue${w.length > 1 ? "s" : ""}` : ""}` : "Pick a platform to continue";
+  const ctaLabel = !c.sel.length ? "Pick a platform" : c.when === "now" ? `Post to ${c.sel.length} platform${c.sel.length > 1 ? "s" : ""}` : c.approval ? "Send for approval" : "Schedule";
+  const ctaDisabled = !c.sel.length || hasHard || (c.when === "now" && w.length > 0) || c.busy;
+
+  const platformPill = k => {
+    const isSel = c.sel.includes(k), isConn = conn[k]?.status === "connected", isConnecting = state.connecting === k;
+    if (!isConn) return `<button data-comp-connect="${k}" ${isConnecting ? "disabled" : ""} class="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border border-dashed border-line text-muted hover:border-brand/40 disabled:opacity-60">
+      ${platformBadge(k, 20)} ${PLATFORM_META[k].label} <span class="text-brand">${isConnecting ? "Connecting…" : "Connect"}</span></button>`;
+    return `<button data-comp-pl="${k}" class="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border ${isSel ? "border-brand bg-brand-tint text-brand-dark" : "border-line text-ink hover:border-brand/40"}">
+      ${platformBadge(k, 20)} ${PLATFORM_META[k].label}</button>`;
+  };
+  const capTab = k => `<button data-comp-tab="${k}" class="shrink-0 px-3 py-2 text-sm font-semibold border-b-2 -mb-px ${c.tab === k ? "border-brand text-brand-dark" : "border-transparent text-muted hover:text-ink"}">${k === "all" ? "All platforms" : PLATFORM_META[k].label}${c.over[k] ? ' <span class="inline-block w-1.5 h-1.5 rounded-full bg-gold ml-0.5"></span>' : ""}</button>`;
+
+  return `<div class="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+    <div class="absolute inset-0 bg-ink/45 backdrop-blur-sm" data-comp-close></div>
+    <div class="relative bg-white w-full sm:max-w-4xl sm:max-h-[90vh] rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden fade-up">
+      <div class="flex items-center gap-3 px-5 py-4 border-b border-line shrink-0">
+        <span class="font-display font-bold text-lg">${c.editId ? "Edit post" : "Create post"}</span>
+        ${c.source ? `<span class="text-xs font-semibold text-brand-dark bg-brand-tint rounded-full px-2.5 py-1">${esc(c.source)}</span>` : ""}
+        <button data-comp-close class="ml-auto text-muted hover:text-ink text-sm font-semibold">Close ✕</button>
+      </div>
+      <div class="flex-1 overflow-y-auto scroll-thin flex flex-col md:flex-row">
+        <div class="flex-1 min-w-0 p-5 space-y-4">
+          <div>
+            <div class="text-xs font-semibold text-muted mb-2">Post to<span class="text-faint font-normal"> — ${esc(brand.name || "")}</span></div>
+            <div class="flex flex-wrap gap-1.5">${PLATFORM_ORDER.map(platformPill).join("")}</div>
+          </div>
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <span class="text-xs font-semibold text-muted">Caption</span>
+              <span class="text-[11px] text-faint">Edit once, or tailor each platform</span>
+            </div>
+            <div class="flex gap-1 border-b border-line overflow-x-auto scroll-thin">${capTab("all")}${c.sel.map(capTab).join("")}</div>
+            <textarea id="compCaption" rows="6" placeholder="Write a caption, or generate one in Studio" class="w-full mt-2 bg-paper border border-line rounded-lg px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-brand/30">${esc(text)}</textarea>
+            <div class="flex items-center justify-between mt-1 flex-wrap gap-1.5">
+              <span class="text-[11px] font-mono text-faint">${text.length} characters</span>
+              ${c.tab !== "all" ? `<div class="flex gap-3">
+                <button data-comp-adapt="${c.tab}" class="text-xs font-semibold text-brand hover:text-brand-dark">${ic("spark", "w-3 h-3 inline -mt-0.5")} Rewrite for ${PLATFORM_META[c.tab].label}</button>
+                ${c.over[c.tab] ? `<button data-comp-clear-override="${c.tab}" class="text-xs font-semibold text-muted hover:text-ink">Use shared caption</button>` : ""}
+              </div>` : ""}
+            </div>
+          </div>
+          <div>
+            <div class="text-xs font-semibold text-muted mb-2">Media</div>
+            ${c.mediaUrl ? `<div class="flex items-center gap-3 bg-paper border border-line rounded-lg p-2">
+              <span class="w-9 h-9 rounded-md ${c.mediaType === 'video' ? 'bg-ink' : ''} grid place-items-center shrink-0 overflow-hidden">
+                ${c.mediaType === 'video' ? svgIcon('<path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>', "w-4 h-4 text-white") : `<img src="${esc(c.mediaUrl)}" class="w-full h-full object-cover"/>`}
+              </span>
+              <span class="text-xs font-semibold flex-1 min-w-0 truncate">${c.mediaType === 'video' ? 'Video attached' : 'Photo attached'}</span>
+              <button data-comp-remove-media class="text-xs font-semibold text-rose-500 hover:text-rose-600">Remove</button>
+            </div>` : `<div class="flex gap-2">
+              <button data-comp-add="photo" class="flex-1 text-xs font-semibold text-brand-dark border-[1.5px] border-dashed border-line rounded-lg py-2.5 hover:border-brand/40">+ Add photo</button>
+              <button data-comp-add="video" class="flex-1 text-xs font-semibold text-brand-dark border-[1.5px] border-dashed border-line rounded-lg py-2.5 hover:border-brand/40">+ Add video</button>
+            </div>`}
+            <input type="file" id="compFile" accept="image/*" class="hidden"/>
+          </div>
+          ${w.length ? `<div class="space-y-1.5">${w.map(x => `<div class="flex items-center gap-2 text-xs bg-gold-tint text-gold border border-gold/25 rounded-lg px-3 py-2">
+            <span class="shrink-0">⚠</span><span class="flex-1">${esc(x.text)}</span>
+            ${x.hard ? `<button data-comp-adapt="${x.platform}" class="font-semibold shrink-0 whitespace-nowrap">Rewrite for ${PLATFORM_META[x.platform].label}</button>` : ''}
+          </div>`).join("")}</div>` : ""}
+          <div>
+            <div class="text-xs font-semibold text-muted mb-2">When</div>
+            <div class="inline-flex bg-paper border border-line rounded-lg p-1 mb-2">
+              <button data-comp-when="now" class="px-3 py-1.5 text-sm font-semibold rounded-md ${c.when === 'now' ? 'bg-white shadow-sm text-ink' : 'text-muted'}">Post now</button>
+              <button data-comp-when="schedule" class="px-3 py-1.5 text-sm font-semibold rounded-md ${c.when === 'schedule' ? 'bg-white shadow-sm text-ink' : 'text-muted'}">Schedule</button>
+            </div>
+            ${c.when === 'schedule' ? `<div class="grid sm:grid-cols-3 gap-2">${suggestedSlots().map((s, i) => `
+              <button data-comp-slot="${i}" class="text-left border rounded-lg p-2.5 ${Math.abs(c.slot.at - s.at) < 60 ? 'border-brand bg-brand-tint ring-1 ring-brand' : 'border-line hover:border-brand/40'}">
+                <div class="text-xs font-semibold">${slotLabel(s.at)}</div><div class="text-[11px] text-muted mt-0.5">${esc(s.why)}</div></button>`).join("")}
+              <label class="text-left border border-line rounded-lg p-2.5 cursor-pointer hover:border-brand/40 block">
+                <div class="text-xs font-semibold mb-1">Pick a time</div>
+                <input type="datetime-local" id="compCustom" value="${toLocalInput(c.slot.at)}" class="text-xs bg-transparent outline-none w-full"/></label>
+            </div>` : ""}
+          </div>
+          <label class="flex items-center gap-2.5 bg-paper border border-line rounded-lg p-3 cursor-pointer">
+            <input type="checkbox" id="compApproval" ${c.approval ? "checked" : ""} class="w-4 h-4 accent-brand"/>
+            <span class="text-xs text-ink/80">Get approval before it goes out — someone on your team reviews it first.</span>
+          </label>
+        </div>
+        <div class="w-full md:w-[320px] shrink-0 bg-paper border-t md:border-t-0 md:border-l border-line p-5">
+          <div class="flex items-center justify-between mb-3">
+            <span class="text-[11px] font-semibold uppercase tracking-wide text-faint">Preview</span>
+            <div class="flex gap-1">${c.sel.map(k => `<button data-comp-prev="${k}" class="${c.prev === k ? '' : 'opacity-40'}">${platformBadge(k, 22)}</button>`).join("")}</div>
+          </div>
+          <div class="flex justify-center">${c.sel.length ? pvPhone(composerPreview(c.prev, capFor(c, c.prev), brand.name, c.mediaUrl, c.mediaType), 220) : `<div class="text-xs text-faint text-center py-10">Pick a platform to preview</div>`}</div>
+        </div>
+      </div>
+      <div class="flex items-center gap-3 px-5 py-3.5 border-t border-line shrink-0 flex-wrap">
+        <button data-comp-draft class="text-sm font-semibold text-brand-dark border border-line rounded-xl px-4 py-2.5 hover:border-brand/40">Save draft</button>
+        <span class="text-xs text-muted flex-1 min-w-0 truncate">${esc(summary)}</span>
+        <button data-comp-submit ${ctaDisabled ? "disabled" : ""} class="text-sm font-semibold text-white bg-brand hover:bg-brand-dark rounded-xl px-5 py-2.5 disabled:opacity-50 min-w-[120px]">
+          ${c.busy ? '<span class="w-4 h-4 border-2 border-white/40 border-t-white rounded-full spin inline-block"></span>' : ctaLabel}</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function wireComposer() {
+  const c = state.composer; if (!c) return;
+  $$("[data-comp-close]").forEach(b => b.onclick = closeComposer);
+  $$("[data-comp-pl]").forEach(b => b.onclick = () => {
+    const k = b.dataset.compPl;
+    c.sel = c.sel.includes(k) ? c.sel.filter(x => x !== k) : [...c.sel, k];
+    if (!c.sel.includes(c.prev)) c.prev = c.sel[0] || c.prev;
+    if (c.tab !== "all" && !c.sel.includes(c.tab)) c.tab = "all";
+    render();
+  });
+  $$("[data-comp-connect]").forEach(b => b.onclick = () => composerConnect(b.dataset.compConnect));
+  $$("[data-comp-tab]").forEach(b => b.onclick = () => { c.tab = b.dataset.compTab; render(); });
+  const ta = $("#compCaption");
+  if (ta) ta.oninput = () => { if (c.tab === "all") c.base = ta.value; else c.over[c.tab] = ta.value; };
+  $$("[data-comp-adapt]").forEach(b => b.onclick = () => composerAdapt(b.dataset.compAdapt));
+  $$("[data-comp-clear-override]").forEach(b => b.onclick = () => { delete c.over[b.dataset.compClearOverride]; render(); });
+  $$("[data-comp-add]").forEach(b => b.onclick = () => {
+    const f = $("#compFile"); if (!f) return;
+    f.accept = b.dataset.compAdd === "video" ? "video/*" : "image/*";
+    f.click();
+  });
+  const fi = $("#compFile");
+  if (fi) fi.onchange = () => {
+    const file = fi.files[0]; if (!file) return;
+    c.mediaFile = file; c.mediaType = file.type.startsWith("video/") ? "video" : "photo";
+    c.mediaUrl = URL.createObjectURL(file);
+    render();
+  };
+  const rm = $("[data-comp-remove-media]"); if (rm) rm.onclick = () => { c.mediaFile = null; c.mediaUrl = null; c.mediaType = null; render(); };
+  $$("[data-comp-when]").forEach(b => b.onclick = () => { c.when = b.dataset.compWhen; render(); });
+  $$("[data-comp-slot]").forEach(b => b.onclick = () => { c.slot = suggestedSlots()[+b.dataset.compSlot]; render(); });
+  const cc = $("#compCustom"); if (cc) cc.onchange = () => { c.slot = { at: new Date(cc.value).getTime() / 1000, why: "Custom time" }; render(); };
+  $$("[data-comp-prev]").forEach(b => b.onclick = () => { c.prev = b.dataset.compPrev; render(); });
+  const ap = $("#compApproval"); if (ap) ap.onchange = () => c.approval = ap.checked;
+  const draft = $("[data-comp-draft]"); if (draft) draft.onclick = () => composerSubmit(true);
+  const submit = $("[data-comp-submit]"); if (submit) submit.onclick = () => composerSubmit(false);
+}
+
+/* ================================ QUEUE =============================== */
+
+async function loadQueueWeek() {
+  state.queue.loading = true;
+  try { state.queue.items = (await api("/api/queue")).posts; }
+  catch { state.queue.items = []; }
+  state.queue.loading = false;
+}
+
+function openQueuePost(id) {
+  const p = (state.queue.items || []).find(x => x.id === id); if (!p) return;
+  openComposer({
+    editId: p.id, brandId: p.brand_id, base: p.base_caption, over: p.overrides, sel: p.platforms,
+    mediaUrl: p.media_path, mediaType: p.media_type,
+    when: p.scheduled_at ? "schedule" : "now",
+    slot: p.scheduled_at ? { at: p.scheduled_at, why: "" } : suggestedSlots()[0],
+    approval: !!p.approval_required, source: "Editing scheduled post",
+  });
+}
+
+const QUEUE_STATUS_META = {
+  scheduled: { label: "Scheduled", bg: "bg-brand-tint", c: "text-brand-dark" },
+  approval: { label: "Needs approval", bg: "bg-gold-tint", c: "text-gold" },
+  media: { label: "Needs media", bg: "bg-rose-50", c: "text-rose-600" },
+  posted: { label: "Posted", bg: "bg-emerald-50", c: "text-emerald-600" },
+  draft: { label: "Draft", bg: "bg-paper", c: "text-muted" },
+};
+function queueStatusPill(st) {
+  const m = QUEUE_STATUS_META[st] || { label: st, bg: "bg-paper", c: "text-muted" };
+  return `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded-full ${m.bg} ${m.c}">${m.label}</span>`;
+}
+function queuePostCard(p) {
+  const title = (p.base_caption || "").split(/[.!\n]/)[0].slice(0, 60) || "Untitled post";
+  const time = p.scheduled_at ? new Date(p.scheduled_at * 1000).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "Now";
+  return `<button data-queue-open="${p.id}" class="w-full text-left bg-white border border-line rounded-xl p-2.5 flex flex-col gap-1.5 hover:border-brand/40 transition">
+    <div class="flex items-center gap-1"><span class="font-mono text-[10.5px] font-bold">${time}</span><span class="flex-1"></span><div class="flex gap-1">${p.platforms.map(pl => platformBadge(pl, 16)).join("")}</div></div>
+    <div class="text-[12.5px] font-semibold leading-snug line-clamp-2">${esc(title)}</div>
+    ${queueStatusPill(p.status)}
+  </button>`;
+}
+
+function queueView() {
+  const Q = state.queue;
+  if (Q.items === null) return card(`<div class="text-center py-16"><div class="w-8 h-8 mx-auto border-[3px] border-brand/25 border-t-brand rounded-full spin"></div></div>`);
+  if (!Q.weekStart) Q.weekStart = mondayOf(new Date());
+  const start = Q.weekStart;
+  const days = Array.from({ length: 7 }, (_, i) => { const d = new Date(start); d.setDate(d.getDate() + i); return d; });
+  const end = days[6];
+  const label = `${start.toLocaleDateString(undefined, { day: "numeric", month: "short" })} – ${end.toLocaleDateString(undefined, { day: "numeric", month: "short" })}`;
+  const byDay = {};
+  (Q.items || []).filter(p => p.scheduled_at).forEach(p => { const k = ymd(new Date(p.scheduled_at * 1000)); (byDay[k] = byDay[k] || []).push(p); });
+  const stCounts = {};
+  (Q.items || []).forEach(p => { stCounts[p.status] = (stCounts[p.status] || 0) + 1; });
+
+  const cols = days.map(d => {
+    const k = ymd(d), posts = byDay[k] || [], isToday = ymd(new Date()) === k;
+    return `<div class="flex flex-col gap-2 min-w-[140px]">
+      <div class="text-center pb-2 border-b border-line">
+        <div class="text-[10px] uppercase tracking-wide text-faint font-semibold">${d.toLocaleDateString(undefined, { weekday: "short" })}</div>
+        <div class="text-sm font-display font-bold ${isToday ? 'text-brand-dark' : ''}">${d.getDate()}</div>
+      </div>
+      ${posts.map(queuePostCard).join("")}
+      <button data-queue-ghost="${Math.floor(d.getTime() / 1000)}" class="text-left border border-dashed border-line rounded-xl p-2.5 hover:border-brand/40">
+        <div class="text-[10px] font-bold uppercase text-brand">+ Schedule</div></button>
+    </div>`;
+  }).join("");
+
+  const listView = `<div class="space-y-4">${days.map(d => {
+    const k = ymd(d), posts = byDay[k] || [];
+    if (!posts.length) return "";
+    return `<div><div class="text-xs font-bold uppercase tracking-wide text-muted mb-2">${d.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })}</div>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">${posts.map(queuePostCard).join("")}</div></div>`;
+  }).join("") || `<p class="text-sm text-muted">Nothing scheduled this week.</p>`}</div>`;
+
+  return `<div class="pb-24 md:pb-0">
+    <div class="flex flex-wrap items-center gap-3 mb-4">
+      <div class="flex items-center gap-2">
+        <button data-queue-prev class="w-7 h-7 rounded-lg border border-line hover:border-brand/40 grid place-items-center">${svgIcon('<path d="M15 6l-6 6 6 6"/>', "w-4 h-4")}</button>
+        <span class="text-sm font-semibold min-w-[130px] text-center">${label}</span>
+        <button data-queue-next class="w-7 h-7 rounded-lg border border-line hover:border-brand/40 grid place-items-center">${svgIcon('<path d="M9 6l6 6-6 6"/>', "w-4 h-4")}</button>
+      </div>
+      <div class="inline-flex bg-paper border border-line rounded-lg p-1">
+        <button data-queue-mode="week" class="px-3 py-1.5 text-xs font-semibold rounded-md ${Q.mode === 'week' ? 'bg-white shadow-sm' : 'text-muted'}">Week</button>
+        <button data-queue-mode="list" class="px-3 py-1.5 text-xs font-semibold rounded-md ${Q.mode === 'list' ? 'bg-white shadow-sm' : 'text-muted'}">List</button>
+      </div>
+      <div class="flex gap-1.5 flex-wrap">
+        ${Object.entries(stCounts).map(([st, n]) => `<span class="text-xs px-2.5 py-1 rounded-full ${QUEUE_STATUS_META[st]?.bg || 'bg-paper'} ${QUEUE_STATUS_META[st]?.c || 'text-muted'} font-semibold">${n} ${(QUEUE_STATUS_META[st]?.label || st).toLowerCase()}</span>`).join("")}
+      </div>
+      <button data-nav="accounts" class="ml-auto text-xs font-semibold text-brand-dark border border-line rounded-lg px-3 py-1.5 hover:border-brand/40">Manage accounts</button>
+    </div>
+    ${Q.mode === 'week' ? `<div class="bg-white border border-line rounded-xl2 shadow-card p-4 overflow-x-auto"><div class="flex gap-3">${cols}</div></div>` : listView}
+    ${(() => { const drafts = (Q.items || []).filter(p => p.status === "draft"); return drafts.length ? `
+    <div class="mt-4">
+      <div class="text-xs font-bold uppercase tracking-wide text-muted mb-2">Drafts</div>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">${drafts.map(queuePostCard).join("")}</div>
+    </div>` : ""; })()}
+  </div>`;
+}
+
+/* =============================== ACCOUNTS ============================== */
+
+function accountsView() {
+  if (!state.brands.length) return card(`<div class="text-center py-14">
+    <p class="font-display font-bold text-lg">No brand yet</p>
+    <p class="text-sm text-muted mt-1">Create a brand first, then connect its social accounts here.</p>
+    <button data-nav="brands" class="mt-4 text-sm font-semibold text-white bg-brand hover:bg-brand-dark px-5 py-2.5 rounded-xl">Go to Brands</button></div>`);
+  const brand = state.brands.find(b => b.id === state.activeBrandId) || state.brands[0];
+  const conn = state.social[brand.id] || {};
+  const rows = PLATFORM_ORDER.map(k => {
+    const c = conn[k] || { status: "not_connected" };
+    const isConnecting = state.connecting === k;
+    const chip = c.status === "connected"
+      ? `<span class="flex items-center gap-2"><span class="text-xs font-semibold text-emerald-600 bg-emerald-50 rounded-full px-3 py-1.5">Connected</span>
+          <button data-acct-disconnect="${k}" class="text-xs text-faint hover:text-rose-500">Disconnect</button></span>`
+      : isConnecting
+      ? `<span class="text-xs font-semibold text-muted inline-flex items-center gap-1.5"><span class="w-3 h-3 border-2 border-brand/30 border-t-brand rounded-full spin"></span> Connecting…</span>`
+      : `<button data-acct-connect="${k}" class="text-xs font-semibold text-white bg-brand hover:bg-brand-dark rounded-lg px-3.5 py-2">Connect</button>`;
+    return `<div class="flex items-center gap-3 py-3.5 border-b border-line last:border-0">
+      ${platformBadge(k, 36)}
+      <div class="min-w-0 flex-1"><div class="text-sm font-semibold">${PLATFORM_META[k].label}</div>
+        <div class="text-xs text-muted">${c.status === "connected" ? "Connected" : PLATFORM_REQ[k] || ""}</div></div>
+      ${chip}
+    </div>`;
+  }).join("");
+  return `<div class="max-w-2xl pb-24 md:pb-0">
+    <p class="text-sm text-muted mb-4">Accounts belong to <b>${esc(brand.name)}</b> — switch brands in the sidebar to manage a different brand's accounts.</p>
+    <div class="bg-white border border-line rounded-xl2 shadow-card px-5">${rows}</div>
+  </div>`;
 }
 
 function postsCalendarView() {
@@ -3269,18 +3913,34 @@ async function saveGig(e) {
 /* ============================== WIRING ============================= */
 
 function wire() {
-  $$("[data-nav]").forEach(b => b.onclick = () => goto(b.dataset.nav));
+  $$("[data-nav]").forEach(b => b.onclick = () => {
+    if (b.dataset.nav === "composer-new") { state.mobileNav = false; return openComposer({}); }
+    goto(b.dataset.nav);
+  });
   $$("[data-logout]").forEach(b => b.onclick = logout);
   const mt = $("[data-mtoggle]"); if (mt) mt.onclick = () => { state.mobileNav = !state.mobileNav; render(); };
   $$("[data-mclose]").forEach(b => b.onclick = () => { state.mobileNav = false; render(); });
   const acct = $("[data-acct]"); if (acct) acct.onclick = () => { state.acctMenu = !state.acctMenu; render(); };
   $$("[data-acctclose]").forEach(b => b.onclick = () => { state.acctMenu = false; render(); });
+  $$("[data-tour-replay]").forEach(b => b.onclick = () => startTour());
+  const bsw = $("[data-brand-switch]"); if (bsw) bsw.onclick = () => { state.brandSwitcherOpen = !state.brandSwitcherOpen; render(); };
+  $$("[data-brand-pick]").forEach(b => b.onclick = () => { state.activeBrandId = +b.dataset.brandPick; state.brandSwitcherOpen = false; render(); });
+  $$("[data-bsw-close]").forEach(b => b.onclick = () => { state.brandSwitcherOpen = false; render(); });
+  $$("[data-queue-open]").forEach(b => b.onclick = () => openQueuePost(+b.dataset.queueOpen));
+  const pinBtn = $("[data-sidebar-pin]"); if (pinBtn) pinBtn.onclick = () => {
+    state.sidebarPinned = !state.sidebarPinned;
+    try { localStorage.setItem("vsbPinned", state.sidebarPinned ? "1" : "0"); } catch {}
+    render();
+  };
+  const vsbEl = $(".vsb"); if (vsbEl) vsbEl.onmouseleave = () => { if (state.brandSwitcherOpen) { state.brandSwitcherOpen = false; render(); } };
 
   if (state.view === "home") {
+    $$("[data-checklist-hide]").forEach(b => b.onclick = () => { try { localStorage.setItem(CHECKLIST_KEY(), "1"); } catch {} render(); toast("Checklist hidden — replay the tour anytime from the account menu"); });
     $$("[data-home-shuffle]").forEach(b => b.onclick = () => { state.suggestIdx = (state.suggestIdx || 0) + 1; refreshSuggestion(); });
     const ws = $("[data-home-suggest]"); if (ws) ws.onclick = applySuggestion;
     const rs = $("[data-home-resume]"); if (rs) rs.onclick = resumeDraft;
     $$("[data-home-brand]").forEach(b => b.onclick = () => { const br = state.brands.find(x => x.id === +b.dataset.homeBrand); if (br) state.editing = br; goto("brands"); });
+    $$("[data-home-queue-open]").forEach(b => b.onclick = () => openQueuePost(+b.dataset.homeQueueOpen));
     if (state.home) fetchSuggestion(state.suggestIdx || 0);  // load today's bespoke idea
   }
 
@@ -3348,6 +4008,7 @@ function wire() {
     $$("[data-cal-layout]").forEach(b=>b.onclick=()=>{state.calLayout=b.dataset.calLayout;render();});
     const cd=$("[data-cal-doc]"); if(cd) cd.onclick=()=>{ const c=state.calendar; downloadDoc(`Vertil ${c.month} ${c.year} Plan.doc`, `${c.month} ${c.year} Content Plan`, calendarDocHTML(c)); toast("Calendar downloaded"); };
     $$("[data-write]").forEach(b=>b.onclick=()=>writeFromCalendar(state.calendar.posts[+b.dataset.write]));
+    $$("[data-cal-to-board]").forEach(b=>b.onclick=()=>sendCalendarPostToBoard(state.calendar.posts[+b.dataset.calToBoard], b));
   }
   if (state.view === "calendars") {
     $$("[data-open-cal]").forEach(b=>b.onclick=async()=>{ const cal=await api(`/api/calendar/${b.dataset.openCal}`); state.calendar=cal; state.view="calendar"; render(); });
@@ -3364,15 +4025,9 @@ function wire() {
     $$("[data-mode]").forEach(b=>b.onclick=()=>{ state.brandMode=b.dataset.mode; render(); });
     const form=$("#brandForm"); if(form) form.onsubmit=saveBrand;
     const lb=$("#learnBtn"); if(lb) lb.onclick=learnFromPosts;
-    $$("[data-connect-ig]").forEach(b=>b.onclick=async()=>{
-      b.disabled=true; b.textContent="…";
-      try {
-        const r = await api("/api/social/connect", { method: "POST", body: JSON.stringify({ brand_id: +b.dataset.connectIg }) });
-        location.href = r.access_url;
-      } catch (ex) { toast("⚠ " + ex.message); b.disabled=false; b.textContent="Connect Instagram"; }
-    });
+    $$("[data-manage-accounts]").forEach(b=>b.onclick=()=>{ state.activeBrandId=+b.dataset.manageAccounts; goto("accounts"); });
   }
-  if (state.view === "pages") {
+  if (state.view === "pages" || state.view === "performance") {
     const rb=$("[data-pages-refresh]"); if(rb) rb.onclick=async()=>{
       state.pagesLoading = true; render();
       state.pages = await api("/api/social/pages").catch(() => state.pages);
@@ -3386,6 +4041,31 @@ function wire() {
     const pp=$("[data-posts-prev]"); if(pp) pp.onclick=()=>shiftWeek(-1);
     const pn=$("[data-posts-next]"); if(pn) pn.onclick=()=>shiftWeek(1);
     const pt=$("[data-posts-today]"); if(pt) pt.onclick=async()=>{ state.posts.weekStart=mondayOf(new Date()); render(); await loadPostsWeek(); render(); };
+  }
+  if (state.view === "queue") {
+    const shiftQWeek = async (delta) => {
+      const d = new Date(state.queue.weekStart); d.setDate(d.getDate()+delta*7);
+      state.queue.weekStart = d; render();
+    };
+    const qp=$("[data-queue-prev]"); if(qp) qp.onclick=()=>shiftQWeek(-1);
+    const qn=$("[data-queue-next]"); if(qn) qn.onclick=()=>shiftQWeek(1);
+    $$("[data-queue-mode]").forEach(b=>b.onclick=()=>{ state.queue.mode=b.dataset.queueMode; render(); });
+    $$("[data-queue-ghost]").forEach(b=>b.onclick=()=>{
+      const at = +b.dataset.queueGhost;
+      openComposer({ when: "schedule", slot: { at: at + 9*3600, why: "" } });
+    });
+  }
+  if (state.view === "accounts") {
+    const brand = state.brands.find(b => b.id === state.activeBrandId) || state.brands[0];
+    $$("[data-acct-connect]").forEach(b => b.onclick = () => brand && connectPlatformPopup(brand.id, b.dataset.acctConnect));
+    $$("[data-acct-disconnect]").forEach(b => b.onclick = async () => {
+      if (!brand || !confirm(`Disconnect ${PLATFORM_META[b.dataset.acctDisconnect].label}? You'll need to reconnect to publish there again.`)) return;
+      try {
+        await api("/api/social/disconnect", { method: "POST", body: JSON.stringify({ brand_id: brand.id, platform: b.dataset.acctDisconnect }) });
+        state.social[brand.id] = await api(`/api/social/status?brand_id=${brand.id}`);
+        render();
+      } catch (ex) { toast("⚠ " + ex.message); }
+    });
   }
   if (state.view === "favorites") {
     $$("[data-del-fav]").forEach(b=>b.onclick=async()=>{ await api(`/api/favorites/${b.dataset.delFav}`,{method:"DELETE"}); state.favorites=await api("/api/favorites"); render(); });
@@ -3469,6 +4149,7 @@ async function goto(view, fromPop) {
   state.editing = null;
   state.mobileNav = false;
   state.acctMenu = false;
+  if (view !== "studio") state.studioOrigin = null;
   state.view = view;
   try {
     if (view === "home") state.home = await api("/api/home");
@@ -3479,7 +4160,9 @@ async function goto(view, fromPop) {
     if (view === "plan") await loadPlan();
     if (view === "team") state.team = await api("/api/team").catch(() => null);
     if (view === "brands" && state.config?.social_posting) await loadSocialStatuses();
-    if (view === "pages" && state.config?.social_posting) { state.pages = await api("/api/social/pages").catch(() => ({ pages: [] })); await loadPostsWeek(); }
+    if ((view === "pages" || view === "performance") && state.config?.social_posting) { state.pages = await api("/api/social/pages").catch(() => ({ pages: [] })); await loadPostsWeek(); }
+    if (view === "queue") await loadQueueWeek();
+    if (view === "accounts") await loadSocialStatuses();
     if (view === "gigs") { state.gigEditing = null; await loadGigs(); }
     if (view === "board") { state.board.items = await api("/api/content"); state.board.justLoaded = true; }
   } catch {}
@@ -3734,29 +4417,17 @@ function renderCards() {
             <button data-pvset="${i}" data-pvon="0" class="text-xs px-2.5 py-1 rounded-md transition ${!c.preview?'bg-brand-tint text-brand-dark font-semibold':'text-muted hover:text-brand-dark'}">Text</button>
             <button data-pvset="${i}" data-pvon="1" class="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md transition ${c.preview?'bg-brand-tint text-brand-dark font-semibold':'text-muted hover:text-brand-dark'}">${ic("preview","w-3.5 h-3.5")} Preview</button>
           </div>
+          ${state.config?.social_posting ? `<button data-comp-open="${i}" class="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-brand hover:bg-brand-dark rounded-lg px-3 py-1.5">${ic("send","w-3.5 h-3.5")} Publish</button>` : ""}
           <button data-edit-c="${i}" class="text-xs px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand/40">${c.editing?'Done':'Edit'}</button>
           <button data-star="${i}" class="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand/40">${ic("save","w-3.5 h-3.5")} Save</button>
           <button data-copy="${i}" class="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand/40">${ic("copy","w-3.5 h-3.5")} Copy</button>
-          ${state.config?.social_posting && state.social[state.activeBrandId]?.status === "connected" ? `<button data-pub="${i}" class="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand/40">${ic("team","w-3.5 h-3.5")} Publish to Instagram</button>` : ""}
+          <button data-board="${i}" class="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand/40">${ic("board","w-3.5 h-3.5")} Add to Board</button>
         </div></div>
       ${c.preview
         ? pvCardPreview(c, i)
         : c.editing
         ? `<textarea data-ta="${i}" rows="5" class="w-full bg-white border border-line rounded-lg px-3 py-2 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-brand/30">${esc(c.text)}</textarea>`
         : `<div class="text-sm whitespace-pre-wrap leading-relaxed ${c.busy?'opacity-40':''}">${esc(c.text)}</div>`}
-      ${c.publishOpen ? `
-      <div class="mt-3 pt-3 border-t border-line">
-        <p class="text-[11px] uppercase tracking-wide text-faint font-semibold mb-1.5">Publish to Instagram</p>
-        <p class="text-xs text-muted mb-2">Instagram needs a photo or video with every post — attach one to go with this caption. Video posts as a Reel.</p>
-        <input type="file" data-pub-file="${i}" accept="image/*,video/*" class="text-xs w-full"/>
-        <img data-pub-preview="${i}" class="hidden mt-2 rounded-lg max-h-40 object-cover border border-line"/>
-        <video data-pub-preview-vid="${i}" class="hidden mt-2 rounded-lg max-h-40 border border-line" controls></video>
-        <div class="flex items-center gap-2 mt-2">
-          <button data-pub-send="${i}" ${c.publishing?'disabled':''} class="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-brand hover:bg-brand-dark rounded-lg px-3 py-1.5 disabled:opacity-50">
-            ${c.publishing?'<span class="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full spin"></span> Posting…':'Post now'}</button>
-          <button data-pub="${i}" class="text-xs text-muted hover:text-ink">Cancel</button>
-        </div>
-      </div>` : ""}
       <div class="flex flex-wrap items-center gap-1.5 mt-3 pt-2.5 border-t border-line">
         <span class="text-[10px] uppercase tracking-wide text-faint font-semibold mr-1">Refine</span>
         ${presets.map(p=>`<button data-refine="${i}" data-instr="${p.key}" class="text-[11px] px-2 py-1 rounded-md border border-line bg-white hover:border-brand/40 hover:text-brand-dark">${esc(p.label)}</button>`).join("")}
@@ -3772,68 +4443,17 @@ function renderCards() {
   $$("[data-edit-c]",out).forEach(b=>b.onclick=()=>{ const i=+b.dataset.editC; const ta=$(`[data-ta="${i}"]`,out); if(state.cards[i].editing && ta) state.cards[i].text=ta.value; state.cards[i].editing=!state.cards[i].editing; renderCards(); });
   $$("[data-ta]",out).forEach(t=>t.oninput=()=>state.cards[+t.dataset.ta].text=t.value);
   $$("[data-star]",out).forEach(b=>b.onclick=()=>saveFavorite(+b.dataset.star));
+  $$("[data-board]",out).forEach(b=>b.onclick=()=>studioCardToBoard(+b.dataset.board, b));
   $$("[data-fb]",out).forEach(b=>b.onclick=()=>sendFeedback(+b.dataset.i, b.dataset.fb, b));
   $$("[data-refine]",out).forEach(b=>b.onclick=()=>refineCard(+b.dataset.refine, b.dataset.instr));
   $$("[data-refine-send]",out).forEach(b=>b.onclick=()=>{ const i=+b.dataset.refineSend, inp=$(`[data-refine-input="${i}"]`,out), v=(inp&&inp.value||"").trim(); if(v) refineCard(i, v); });
   $$("[data-refine-input]",out).forEach(inp=>inp.onkeydown=e=>{ if(e.key==="Enter"){ e.preventDefault(); const v=inp.value.trim(); if(v) refineCard(+inp.dataset.refineInput, v); } });
   $$("[data-pvset]",out).forEach(b=>b.onclick=()=>{ const i=+b.dataset.pvset, c=state.cards[i], on=b.dataset.pvon==="1"; if(c.preview===on)return; c.preview=on; if(on&&!c.previewType)c.previewType=PV_BY_CT[state.contentType]||"ig"; renderCards(); });
   $$("[data-pvt]",out).forEach(b=>b.onclick=()=>{ state.cards[+b.dataset.pvt].previewType=b.dataset.pvtk; renderCards(); });
-  $$("[data-pub]",out).forEach(b=>b.onclick=()=>{ const i=+b.dataset.pub; state.cards[i].publishOpen=!state.cards[i].publishOpen; renderCards(); });
-  $$("[data-pub-send]",out).forEach(b=>b.onclick=()=>publishCard(+b.dataset.pubSend));
-  $$("[data-pub-file]",out).forEach(inp=>inp.onchange=()=>{
-    const i = +inp.dataset.pubFile, c = state.cards[i], file = inp.files[0];
-    const img = $(`[data-pub-preview="${i}"]`,out), vid = $(`[data-pub-preview-vid="${i}"]`,out);
-    const refreshMock = () => {
-      const pvBlock = $(`[data-pv-block="${i}"]`, out);
-      if (pvBlock) {
-        pvBlock.outerHTML = pvCardPreview(c, i);
-        $$("[data-pvt]",out).forEach(b=>b.onclick=()=>{ state.cards[+b.dataset.pvt].previewType=b.dataset.pvtk; renderCards(); });
-      }
-    };
-    if (!file) {
-      c.pubImagePreviewUrl = null; c.pubVideoPreviewUrl = null;
-      if (img) { img.classList.add("hidden"); img.src=""; }
-      if (vid) { vid.classList.add("hidden"); vid.src=""; }
-      refreshMock();
-      return;
-    }
-    const isVideo = file.type.startsWith("video/") || /\.(mp4|mov|webm|m4v|avi|mkv)$/i.test(file.name);
-    const url = URL.createObjectURL(file);
-    if (isVideo) {
-      c.pubVideoPreviewUrl = url; c.pubImagePreviewUrl = null;
-      if (img) { img.classList.add("hidden"); img.src=""; }
-      if (vid) {
-        vid.onerror = () => toast("⚠ Your browser can't preview this video's format (codec) — it may still upload fine, but try converting to standard MP4/H.264 if publish also fails.");
-        vid.src = url; vid.load(); vid.classList.remove("hidden");
-      }
-      refreshMock();
-      return;
-    }
-    c.pubImagePreviewUrl = url; c.pubVideoPreviewUrl = null;
-    if (vid) { vid.classList.add("hidden"); vid.src=""; }
-    if (img) { img.src = url; img.classList.remove("hidden"); }
-    refreshMock();
+  $$("[data-comp-open]",out).forEach(b=>b.onclick=()=>{
+    const i = +b.dataset.compOpen, c = state.cards[i];
+    openComposer({ base: c.text, source: `From Studio · Option ${i+1}` });
   });
-}
-
-async function publishCard(i) {
-  const c = state.cards[i]; if (!c || c.publishing) return;
-  const fileInput = $(`[data-pub-file="${i}"]`);
-  const file = fileInput && fileInput.files[0];
-  if (!file) return toast("⚠ Attach a photo or video first");
-  c.publishing = true; renderCards();
-  try {
-    const fd = new FormData();
-    fd.append("brand_id", state.activeBrandId);
-    fd.append("caption", c.text);
-    fd.append("media", file);
-    const res = await fetch("/api/social/publish", { method: "POST", body: fd });
-    const d = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(d.error || "Publish failed");
-    toast(d.processing ? d.message : "Posted to Instagram ✓");
-    c.publishOpen = false;
-  } catch (ex) { toast("⚠ " + ex.message); }
-  c.publishing = false; renderCards();
 }
 
 async function refineCard(i, instruction) {
@@ -3877,8 +4497,21 @@ function writeFromCalendar(post) {
   if (!post) return;
   state.contentType = post.content_type; state.tone = post.tone;
   state.brief = [post.theme, post.hook?`Hook idea: "${post.hook}"`:"", post.occasion?`Occasion: ${post.occasion}`:""].filter(Boolean).join(". ");
+  state.studioOrigin = { type: "calendar", title: post.theme };
   state.view = "studio"; state.cards = null; render();
   setTimeout(generate, 60);
+}
+
+async function sendCalendarPostToBoard(post, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = "…"; }
+  try {
+    const title = post.theme || "Calendar idea";
+    const notes = [post.hook ? `Hook: "${post.hook}"` : "", post.occasion ? `Occasion: ${post.occasion}` : ""].filter(Boolean).join("\n");
+    const item = await api("/api/content", { method: "POST", body: JSON.stringify({ title, brand_id: state.activeBrandId }) });
+    if (notes) await api(`/api/content/${item.id}`, { method: "POST", body: JSON.stringify({ notes }) });
+    toast("Added to Content Board");
+  } catch (ex) { toast("⚠ " + ex.message); }
+  if (btn) { btn.disabled = false; btn.innerHTML = ic("board","w-4 h-4") + " Sent ✓"; }
 }
 
 /* ============================ BILLING ============================== */
@@ -3915,11 +4548,23 @@ function handleUpgradeReturn() {
 
 /* =============================== TOUR ============================== */
 
+// Tour "seen" flag is per user + device (localStorage), so it shows once after
+// onboarding and never blocks anything server-side.
+const TOUR_KEY = () => `vtour_done_${state.user?.id || "anon"}`;
+function tourSeen() { try { return localStorage.getItem(TOUR_KEY()) === "1"; } catch { return true; } }
+function markTourSeen() { try { localStorage.setItem(TOUR_KEY(), "1"); } catch {} }
+
 function maybeStartTour() {
-  if (state.user && !state.user.onboarded && !state.tour) startTour();
+  if (state.user && state.user.onboarded && !state.tour && !tourSeen()) startTour();
 }
 
-function startTour() {
+function tourSteps() {
+  return TOUR_STEPS.filter(s => !s.social || state.config?.social_posting);
+}
+
+async function startTour() {
+  state.mobileNav = false; state.acctMenu = false;
+  if (state.view !== "home") await goto("home"); else render();
   state.tour = { step: 0 };
   window.addEventListener("resize", onTourResize);
   renderTourStep();
@@ -3927,57 +4572,77 @@ function startTour() {
 
 function onTourResize() { if (state.tour) renderTourStep(); }
 
+function tourTarget(step) {
+  if (!step.nav) return null;
+  const desktop = window.innerWidth >= 768;
+  if (desktop) return document.querySelector(`aside.vsb [data-nav="${step.nav}"]`);
+  // On phones the sidebar is behind the menu button — point there instead.
+  return document.querySelector("[data-mtoggle]");
+}
+
 function renderTourStep() {
-  const step = TOUR_STEPS[state.tour.step];
-  const n = state.tour.step, last = n === TOUR_STEPS.length - 1;
+  const steps = tourSteps();
+  const n = state.tour.step, step = steps[n], last = n === steps.length - 1;
   let el = document.getElementById("tourOverlay");
   if (!el) { el = document.createElement("div"); el.id = "tourOverlay"; el.style.cssText = "position:fixed;inset:0;z-index:60;"; document.body.appendChild(el); }
 
   const desktop = window.innerWidth >= 768;
-  const target = (desktop && step.sel) ? document.querySelector("aside " + step.sel) : null;
+  const target = tourTarget(step);
+  const W = Math.min(desktop ? 360 : 340, window.innerWidth - 24);
 
-  let spot, bubblePos = null;  // bubblePos null = center via flex wrapper (mobile)
+  let spot, bubbleStyle;
   if (target) {
     const r = target.getBoundingClientRect(), pad = 6;
-    spot = `<div style="position:fixed;left:${r.left-pad}px;top:${r.top-pad}px;width:${r.width+pad*2}px;height:${r.height+pad*2}px;border-radius:12px;box-shadow:0 0 0 9999px rgba(16,24,40,.62);transition:all .2s ease;"></div>`;
-    const bx = Math.min(r.right + 16, window.innerWidth - 336);
-    bubblePos = `position:fixed;left:${bx}px;top:${Math.max(12, r.top - 6)}px;width:320px;max-width:90vw;`;
+    spot = `<div style="position:fixed;left:${r.left - pad}px;top:${r.top - pad}px;width:${r.width + pad * 2}px;height:${r.height + pad * 2}px;border-radius:12px;box-shadow:0 0 0 9999px rgba(12,39,36,.66);outline:2px solid #2dd4bf;outline-offset:2px;transition:all .25s ease;pointer-events:none;"></div>`;
+    if (desktop) {
+      const left = Math.min(r.right + 18, window.innerWidth - W - 12);
+      const top = Math.max(12, Math.min(r.top - 40, window.innerHeight - 470));
+      bubbleStyle = `position:fixed;left:${left}px;top:${top}px;width:${W}px;`;
+    } else {
+      bubbleStyle = `position:fixed;left:12px;right:12px;bottom:12px;margin:0 auto;max-width:${W}px;`;
+    }
   } else {
-    spot = `<div style="position:fixed;inset:0;background:rgba(16,24,40,.62);"></div>`;
+    spot = `<div style="position:fixed;inset:0;background:rgba(12,39,36,.66);"></div>`;
+    bubbleStyle = null;  // centred via a flex wrapper (a transform here would fight .fade-up)
   }
 
-  const inner = `
-      <div class="flex items-center justify-between mb-1.5">
-        <div class="flex gap-1">${TOUR_STEPS.map((_,i)=>`<span class="w-1.5 h-1.5 rounded-full ${i===n?'bg-brand':'bg-line'}"></span>`).join("")}</div>
-        <button id="tourSkip" class="text-[11px] text-muted hover:text-ink">Skip</button>
+  const where = step.nav && !desktop
+    ? `<div class="flex items-center gap-1.5 text-[11px] font-semibold text-brand-dark bg-brand-tint rounded-lg px-2.5 py-1.5 mt-2.5">${svgIcon('<path d="M4 7h16M4 12h16M4 17h16"/>', "w-3.5 h-3.5")} Find it in the menu</div>` : "";
+  const clip = step.clip
+    ? `<div class="rounded-xl overflow-hidden bg-forest mb-3 aspect-[16/10]"><video src="/static/tour/${step.clip}.mp4" autoplay muted loop playsinline preload="auto" class="w-full h-full object-cover block"></video></div>`
+    : `<div class="mb-3 grid place-items-center rounded-xl bg-forest text-white py-7">${vmark(54)}</div>`;
+
+  const open = bubbleStyle
+    ? `<div style="${bubbleStyle}z-index:2;" class="bg-white rounded-xl2 shadow-lift p-4 fade-up" role="dialog" aria-label="Vertil tour">`
+    : `<div style="position:fixed;inset:0;z-index:2;display:flex;align-items:center;justify-content:center;padding:12px;">
+       <div style="width:${W}px;max-width:100%;" class="bg-white rounded-xl2 shadow-lift p-4 fade-up" role="dialog" aria-label="Vertil tour">`;
+  const close = bubbleStyle ? `</div>` : `</div></div>`;
+  el.innerHTML = `${spot}
+    ${open}
+      ${clip}
+      <div class="flex items-center justify-between mb-1">
+        <span class="text-[10.5px] font-mono uppercase tracking-wider text-faint">${n === 0 || last ? "Vertil tour" : `Step ${n} of ${steps.length - 2}`}</span>
+        <button id="tourSkip" class="text-xs text-muted hover:text-ink">${last ? "" : "Skip tour"}</button>
       </div>
-      <div class="font-display font-extrabold text-base">${esc(step.title)}</div>
-      <p class="text-sm text-muted mt-1 leading-relaxed">${esc(step.body)}</p>
+      <div class="font-display font-extrabold text-[17px] leading-snug">${esc(step.title)}</div>
+      <p class="text-sm text-muted mt-1 leading-relaxed">${esc(step.body)}</p>${where}
       <div class="flex items-center gap-2 mt-3.5">
-        ${n>0?`<button id="tourBack" class="text-sm px-3 py-1.5 rounded-lg border border-line hover:bg-paper">Back</button>`:''}
-        <button id="tourNext" class="ml-auto text-sm font-semibold text-white bg-brand hover:bg-brand-dark px-4 py-1.5 rounded-lg shadow-sm">${last?'Finish':'Next'}</button>
-      </div>`;
+        <div class="flex gap-1">${steps.map((_, i) => `<span class="h-1.5 rounded-full transition-all ${i === n ? "w-4 bg-brand" : "w-1.5 bg-line"}"></span>`).join("")}</div>
+        ${n > 0 ? `<button id="tourBack" class="ml-auto text-sm px-3 py-1.5 rounded-lg border border-line hover:bg-paper">Back</button>` : ""}
+        <button id="tourNext" class="${n > 0 ? "" : "ml-auto "}text-sm font-semibold text-white bg-brand hover:bg-brand-dark px-4 py-1.5 rounded-lg shadow-sm">${n === 0 ? "Show me around" : last ? "Let's go" : "Next"}</button>
+      </div>
+    ${close}`;
 
-  const bubble = bubblePos
-    ? `<div style="${bubblePos}z-index:2;" class="bg-white rounded-xl2 shadow-lift p-4 fade-up">${inner}</div>`
-    : `<div style="position:fixed;inset:0;z-index:2;display:flex;align-items:center;justify-content:center;padding:16px;">
-         <div style="width:320px;max-width:100%;" class="bg-white rounded-xl2 shadow-lift p-4 fade-up">${inner}</div></div>`;
-
-  el.innerHTML = `${spot}${bubble}`;
-
-  el.querySelector("#tourSkip").onclick = endTour;
+  const skip = el.querySelector("#tourSkip"); if (skip && !last) skip.onclick = endTour;
   el.querySelector("#tourNext").onclick = () => { if (last) endTour(); else { state.tour.step++; renderTourStep(); } };
   const back = el.querySelector("#tourBack"); if (back) back.onclick = () => { state.tour.step--; renderTourStep(); };
 }
 
-async function endTour() {
+function endTour() {
   const el = document.getElementById("tourOverlay"); if (el) el.remove();
   window.removeEventListener("resize", onTourResize);
   state.tour = null;
-  if (state.user && !state.user.onboarded) {
-    state.user.onboarded = 1;
-    try { await api("/api/onboarded", { method: "POST" }); } catch {}
-  }
+  markTourSeen();
 }
 
 /* ============================== UTILS ============================== */

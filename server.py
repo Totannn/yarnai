@@ -509,6 +509,7 @@ def home(user):
         "recent": recent, "continue": cont,
         "gig": {"earned": db.gig_summary(user["id"])["earned"], "count": db.gig_summary(user["id"])["count"]},
         "plan_progress": db.plan_progress(user["id"]),
+        "getting_started": db.getting_started(user["id"]),
     })
 
 
@@ -1125,6 +1126,20 @@ def _upload_post_username(brand_id: int) -> str:
     return f"vertil-brand-{brand_id}"
 
 
+# Media rule per platform: "required" = photo or video, "required_video" = video only,
+# "optional" = can post text-only. WhatsApp Channel isn't offered — Upload-Post (our
+# publishing provider) doesn't support it, so it's left out rather than built broken.
+PLATFORM_INFO = {
+    "instagram": "required", "facebook": "optional", "tiktok": "required_video",
+    "x": "optional", "linkedin": "optional", "youtube": "required_video",
+}
+PLATFORM_ORDER = ["instagram", "facebook", "tiktok", "x", "linkedin", "youtube"]
+PLATFORM_TITLE_FIELD = {"instagram": "instagram_title", "facebook": "facebook_title", "tiktok": "tiktok_title",
+                        "x": "x_title", "linkedin": "linkedin_title", "youtube": "youtube_title"}
+PLATFORM_LABEL = {"instagram": "Instagram", "facebook": "Facebook", "tiktok": "TikTok",
+                  "x": "X", "linkedin": "LinkedIn", "youtube": "YouTube Shorts"}
+
+
 @app.post("/api/social/connect")
 @auth
 def social_connect(user):
@@ -1134,6 +1149,9 @@ def social_connect(user):
         return jsonify({"error": "Social posting isn't configured yet."}), 400
     data = request.get_json(force=True) or {}
     brand_id = data.get("brand_id")
+    platform = data.get("platform", "instagram")
+    if platform not in PLATFORM_INFO:
+        return jsonify({"error": "Unknown platform"}), 400
     brand = db.get_brand(user["id"], brand_id) if brand_id else None
     if not brand:
         return jsonify({"error": "Brand not found"}), 404
@@ -1145,9 +1163,9 @@ def social_connect(user):
         r = httpx.post(f"{UPLOAD_POST_BASE}/uploadposts/users/generate-jwt", headers=headers,
                         json={
                             "username": username,
-                            "redirect_url": f"{APP_BASE_URL}/api/social/callback?brand_id={brand_id}",
-                            "platforms": ["instagram"],
-                            "connect_title": f"Connect Instagram for {brand.get('name') or 'your brand'}",
+                            "redirect_url": f"{APP_BASE_URL}/api/social/callback?brand_id={brand_id}&platform={platform}",
+                            "platforms": [platform],
+                            "connect_title": f"Connect {PLATFORM_LABEL[platform]} for {brand.get('name') or 'your brand'}",
                             "show_calendar": False,
                         }, timeout=20)
         out = r.json()
@@ -1155,8 +1173,8 @@ def social_connect(user):
         return jsonify({"error": f"Upload-Post error: {exc}"}), 502
     access_url = out.get("access_url")
     if not access_url:
-        return jsonify({"error": out.get("message") or "Could not start the Instagram connect flow."}), 502
-    db.create_social_connection(brand_id, "instagram", username)
+        return jsonify({"error": out.get("message") or f"Could not start the {PLATFORM_LABEL[platform]} connect flow."}), 502
+    db.create_social_connection(brand_id, platform, username)
     return jsonify({"access_url": access_url})
 
 
@@ -1164,10 +1182,11 @@ def social_connect(user):
 @auth
 def social_callback(user):
     brand_id = request.args.get("brand_id", type=int)
+    platform = request.args.get("platform", "instagram")
     status = request.args.get("connect_status", "success")
     if brand_id and db.get_brand(user["id"], brand_id):
-        db.set_social_connection_status(brand_id, "instagram", "connected" if status == "success" else "pending")
-    return redirect(f"{APP_BASE_URL}/app?social=instagram&status={status}")
+        db.set_social_connection_status(brand_id, platform, "connected" if status == "success" else "pending")
+    return redirect(f"{APP_BASE_URL}/app?social={platform}&status={status}")
 
 
 @app.get("/api/social/status")
@@ -1176,8 +1195,55 @@ def social_status(user):
     brand_id = request.args.get("brand_id", type=int)
     if not brand_id or not db.get_brand(user["id"], brand_id):
         return jsonify({"error": "Brand not found"}), 404
-    conn = db.get_social_connection(brand_id, "instagram")
-    return jsonify(conn or {"status": "not_connected"})
+    out = {}
+    for platform in PLATFORM_ORDER:
+        conn = db.get_social_connection(brand_id, platform)
+        out[platform] = conn or {"status": "not_connected"}
+    return jsonify(out)
+
+
+@app.post("/api/social/disconnect")
+@auth
+def social_disconnect(user):
+    if db.get_org_owner(user["id"]):
+        return jsonify(_TEAM_BRAND_ERR), 403
+    data = request.get_json(force=True) or {}
+    brand_id = data.get("brand_id")
+    platform = data.get("platform")
+    if not db.get_brand(user["id"], brand_id):
+        return jsonify({"error": "Brand not found"}), 404
+    db.delete_social_connection(brand_id, platform)
+    return jsonify({"ok": True})
+
+
+def _upload_post_publish(username: str, platforms: list, base_caption: str, overrides: dict,
+                         media_bytes: bytes | None, media_filename: str | None, media_mimetype: str | None,
+                         is_video: bool) -> tuple[dict, list]:
+    """Returns (upload_post_response_json, platforms_skipped_for_missing_media)."""
+    if media_bytes:
+        eligible = [p for p in platforms if PLATFORM_INFO.get(p) != "required_video" or is_video]
+    else:
+        eligible = [p for p in platforms if PLATFORM_INFO.get(p) == "optional"]
+    skipped = [p for p in platforms if p not in eligible]
+    if not eligible:
+        return {"success": False, "message": "No selected platform can publish with the media provided."}, skipped
+    headers = {"Authorization": f"Apikey {UPLOAD_POST_API_KEY}"}
+    form = [("user", username), ("title", base_caption)]
+    for p in eligible:
+        form.append(("platform[]", p))
+        if overrides.get(p):
+            form.append((PLATFORM_TITLE_FIELD[p], overrides[p]))
+    if media_bytes:
+        if is_video:
+            form.append(("media_type", "REELS"))
+            r = httpx.post(f"{UPLOAD_POST_BASE}/upload", headers=headers, data=form,
+                           files={"video": (media_filename, media_bytes, media_mimetype)}, timeout=180)
+        else:
+            r = httpx.post(f"{UPLOAD_POST_BASE}/upload_photos", headers=headers, data=form,
+                           files={"photos[]": (media_filename, media_bytes, media_mimetype)}, timeout=60)
+    else:
+        r = httpx.post(f"{UPLOAD_POST_BASE}/upload_text", headers=headers, data=form, timeout=30)
+    return r.json(), skipped
 
 
 @app.post("/api/social/publish")
@@ -1187,61 +1253,68 @@ def social_publish(user):
         return jsonify({"error": "Social posting isn't configured yet."}), 400
     brand_id = request.form.get("brand_id", type=int)
     caption = (request.form.get("caption") or "").strip()
+    platforms = json.loads(request.form.get("platforms") or "[]") or ["instagram"]
+    overrides = json.loads(request.form.get("overrides") or "{}")
+    platforms = [p for p in platforms if p in PLATFORM_INFO]
     brand = db.get_brand(user["id"], brand_id) if brand_id else None
     if not brand:
         return jsonify({"error": "Brand not found"}), 404
-    conn = db.get_social_connection(brand_id, "instagram")
-    if not conn or conn.get("status") != "connected":
-        return jsonify({"error": "Instagram isn't connected for this brand yet."}), 400
+    if not platforms:
+        return jsonify({"error": "Pick at least one platform."}), 400
+    connected = []
+    for p in platforms:
+        conn = db.get_social_connection(brand_id, p)
+        if conn and conn.get("status") == "connected":
+            connected.append(p)
+    if not connected:
+        return jsonify({"error": "None of the selected platforms are connected for this brand yet."}), 400
+    username = db.get_social_connection(brand_id, connected[0])["upload_post_username"]
     media = request.files.get("media")
-    if not media or not media.filename:
-        return jsonify({"error": "Attach a photo or video — Instagram posts need media."}), 400
-    if not caption:
-        return jsonify({"error": "Add a caption before publishing."}), 400
-    is_video = (media.mimetype or "").startswith("video/")
-    media_bytes = media.stream.read()
-    headers = {"Authorization": f"Apikey {UPLOAD_POST_API_KEY}"}
-    common = {"user": conn["upload_post_username"], "platform[]": "instagram", "title": caption}
+    media_bytes = media.stream.read() if media and media.filename else None
+    is_video = bool(media) and (media.mimetype or "").startswith("video/")
+    if not caption and not media_bytes:
+        return jsonify({"error": "Add a caption or attach media before publishing."}), 400
     try:
-        if is_video:
-            r = httpx.post(
-                f"{UPLOAD_POST_BASE}/upload",
-                headers=headers,
-                data={**common, "media_type": "REELS"},
-                files={"video": (media.filename, media_bytes, media.mimetype)},
-                timeout=180,
-            )
-        else:
-            r = httpx.post(
-                f"{UPLOAD_POST_BASE}/upload_photos",
-                headers=headers,
-                data=common,
-                files={"photos[]": (media.filename, media_bytes, media.mimetype)},
-                timeout=60,
-            )
-        out = r.json()
+        out, skipped = _upload_post_publish(username, connected, caption, overrides, media_bytes,
+                                            media.filename if media else None,
+                                            media.mimetype if media else None, is_video)
     except Exception as exc:
         return jsonify({"error": f"Upload-Post error: {exc}"}), 502
-    result = (out.get("results") or {}).get("instagram") or {}
 
     def _save_thumbnail() -> str | None:
+        if not media_bytes:
+            return None
         ext = os.path.splitext(secure_filename(media.filename))[1] or (".mp4" if is_video else ".jpg")
         fname = f"{brand_id}_{int(time.time())}{ext}"
         (POST_MEDIA_DIR / fname).write_bytes(media_bytes)
         return f"/static/post_media/{fname}"
 
-    if out.get("success") and result.get("success"):
+    results = out.get("results") or {}
+    media_type = "video" if is_video else ("photo" if media_bytes else None)
+    if out.get("success") and results:
         thumb = _save_thumbnail()
-        db.create_post_history(brand_id, "instagram", "video" if is_video else "photo", thumb,
-                               caption, result.get("url"), "published")
-        return jsonify({"ok": True, "url": result.get("url")})
-    if out.get("success") and out.get("request_id") and not out.get("results"):
+        post_urls = {}
+        any_ok = False
+        for p in connected:
+            res = results.get(p) or {}
+            if res.get("success"):
+                any_ok = True
+                post_urls[p] = res.get("url")
+                db.create_post_history(brand_id, p, media_type, thumb, caption, res.get("url"), "published")
+        if any_ok:
+            msg = "Posted to " + ", ".join(PLATFORM_LABEL[p] for p in post_urls)
+            if skipped:
+                msg += " — skipped " + ", ".join(PLATFORM_LABEL[p] for p in skipped) + " (needs different media)"
+            return jsonify({"ok": True, "urls": post_urls, "message": msg})
+        first_err = next((r.get("error") for r in results.values() if r.get("error")), None)
+        return jsonify({"error": first_err or "Publish failed."}), 502
+    if out.get("success") and out.get("request_id") and not results:
         thumb = _save_thumbnail()
-        db.create_post_history(brand_id, "instagram", "video" if is_video else "photo", thumb,
-                               caption, None, "processing")
+        for p in connected:
+            db.create_post_history(brand_id, p, media_type, thumb, caption, None, "processing")
         return jsonify({"ok": True, "processing": True,
-                        "message": "Submitted — Instagram is still processing it, check your account in a minute."})
-    return jsonify({"error": result.get("error") or out.get("message") or "Publish failed."}), 502
+                        "message": "Submitted — still processing, check your accounts in a minute."})
+    return jsonify({"error": out.get("message") or "Publish failed."}), 502
 
 
 @app.get("/api/social/pages")
@@ -1252,17 +1325,24 @@ def social_pages(user):
     headers = {"Authorization": f"Apikey {UPLOAD_POST_API_KEY}"}
     pages = []
     for b in db.list_brands(user["id"]):
-        conn = db.get_social_connection(b["id"], "instagram")
-        if not conn or conn.get("status") != "connected":
+        connected_platforms = []
+        username = None
+        for p in PLATFORM_ORDER:
+            conn = db.get_social_connection(b["id"], p)
+            if conn and conn.get("status") == "connected":
+                connected_platforms.append(p)
+                username = conn["upload_post_username"]
+        if not connected_platforms:
             continue
-        page = {"brand_id": b["id"], "brand_name": b["name"], "platform": "instagram", "stats": None}
+        stats = {}
         try:
-            r = httpx.get(f"{UPLOAD_POST_BASE}/analytics/{conn['upload_post_username']}",
-                          headers=headers, params={"platforms": "instagram"}, timeout=20)
-            page["stats"] = (r.json() or {}).get("instagram")
+            r = httpx.get(f"{UPLOAD_POST_BASE}/analytics/{username}",
+                          headers=headers, params={"platforms": ",".join(connected_platforms)}, timeout=20)
+            stats = r.json() or {}
         except Exception:
             pass
-        pages.append(page)
+        for p in connected_platforms:
+            pages.append({"brand_id": b["id"], "brand_name": b["name"], "platform": p, "stats": stats.get(p)})
     return jsonify({"pages": pages})
 
 
@@ -1275,6 +1355,182 @@ def social_history(user):
     except ValueError:
         return jsonify({"error": "start and end must be YYYY-MM-DD"}), 400
     return jsonify({"posts": db.list_post_history(user["id"], start, end)})
+
+
+def _queue_warnings(platforms: list, overrides: dict, base_caption: str, has_media: bool, is_video: bool) -> list:
+    LIMITS = {"instagram": 2200, "facebook": 63206, "tiktok": 2200, "x": 280, "linkedin": 3000, "youtube": 5000}
+    warnings = []
+    for p in platforms:
+        need = PLATFORM_INFO.get(p)
+        if need == "required" and not has_media:
+            warnings.append({"platform": p, "text": f"{PLATFORM_LABEL[p]} needs a photo or video.", "media": True})
+        elif need == "required_video" and not is_video:
+            warnings.append({"platform": p, "text": f"{PLATFORM_LABEL[p]} needs a video.", "media": True})
+        text = overrides.get(p) or base_caption
+        limit = LIMITS.get(p, 999999)
+        if len(text) > limit:
+            warnings.append({"platform": p, "text": f"Too long for {PLATFORM_LABEL[p]} ({len(text)}/{limit}).", "hard": True})
+    return warnings
+
+
+def _save_queue_media(brand_id, media):
+    if not media or not media.filename:
+        return None, None
+    media_bytes = media.stream.read()
+    is_video = (media.mimetype or "").startswith("video/")
+    ext = os.path.splitext(secure_filename(media.filename))[1] or (".mp4" if is_video else ".jpg")
+    fname = f"q{brand_id}_{int(time.time())}{ext}"
+    (POST_MEDIA_DIR / fname).write_bytes(media_bytes)
+    return f"/static/post_media/{fname}", ("video" if is_video else "photo")
+
+
+@app.post("/api/queue")
+@auth
+def queue_create(user):
+    brand_id = request.form.get("brand_id", type=int)
+    brand = db.get_brand(user["id"], brand_id) if brand_id else None
+    if not brand:
+        return jsonify({"error": "Brand not found"}), 404
+    platforms = [p for p in json.loads(request.form.get("platforms") or "[]") if p in PLATFORM_INFO]
+    is_draft = request.form.get("draft") == "true"
+    if not platforms and not is_draft:
+        return jsonify({"error": "Pick at least one platform."}), 400
+    base_caption = (request.form.get("caption") or "").strip()
+    overrides = json.loads(request.form.get("overrides") or "{}")
+    when = request.form.get("when", "schedule")
+    approval_required = request.form.get("approval") == "true"
+    scheduled_at = request.form.get("scheduled_at", type=float)
+    media = request.files.get("media")
+    media_path, media_type = _save_queue_media(brand_id, media)
+    is_video = media_type == "video"
+    w = _queue_warnings(platforms, overrides, base_caption, bool(media_path), is_video)
+
+    if is_draft:
+        item = db.create_queued_post(brand_id, base_caption, overrides, platforms, media_path, media_type,
+                                     scheduled_at, "draft", approval_required)
+        return jsonify({"ok": True, "post": item, "message": "Draft saved — find it in Queue"})
+
+    if any(x.get("hard") for x in w):
+        return jsonify({"error": "Fix the issues before publishing.", "warnings": w}), 400
+
+    if when == "now":
+        if any(x.get("media") for x in w):
+            return jsonify({"error": "Add the media a selected platform needs before posting now.", "warnings": w}), 400
+        connected = [p for p in platforms if (db.get_social_connection(brand_id, p) or {}).get("status") == "connected"]
+        if not connected:
+            return jsonify({"error": "None of the selected platforms are connected yet."}), 400
+        username = db.get_social_connection(brand_id, connected[0])["upload_post_username"]
+        media_bytes = None
+        if media_path:
+            media_bytes = (POST_MEDIA_DIR / os.path.basename(media_path)).read_bytes()
+        try:
+            out, skipped = _upload_post_publish(username, connected, base_caption, overrides, media_bytes,
+                                                os.path.basename(media_path) if media_path else None,
+                                                "video/mp4" if is_video else "image/jpeg", is_video)
+        except Exception as exc:
+            return jsonify({"error": f"Upload-Post error: {exc}"}), 502
+        results = out.get("results") or {}
+        post_urls = {}
+        for p in connected:
+            res = results.get(p) or {}
+            if res.get("success"):
+                post_urls[p] = res.get("url")
+                db.create_post_history(brand_id, p, media_type, media_path, base_caption, res.get("url"), "published")
+        if not post_urls and not (out.get("success") and out.get("request_id")):
+            first_err = next((r.get("error") for r in results.values() if r.get("error")), None)
+            return jsonify({"error": first_err or out.get("message") or "Publish failed."}), 502
+        item = db.create_queued_post(brand_id, base_caption, overrides, connected, media_path, media_type,
+                                     None, "posted", False)
+        db.update_queued_post(user["id"], item["id"], post_urls=post_urls)
+        names = ", ".join(PLATFORM_LABEL[p] for p in (post_urls or connected))
+        return jsonify({"ok": True, "post": item, "message": f"Posted to {names}"})
+
+    status = "approval" if approval_required else ("media" if any(x.get("media") for x in w) else "scheduled")
+    item = db.create_queued_post(brand_id, base_caption, overrides, platforms, media_path, media_type,
+                                 scheduled_at, status, approval_required)
+    return jsonify({"ok": True, "post": item})
+
+
+@app.get("/api/queue")
+@auth
+def queue_list(user):
+    start = request.args.get("start", type=float)
+    end = request.args.get("end", type=float)
+    return jsonify({"posts": db.list_queued_posts(user["id"], start, end)})
+
+
+@app.put("/api/queue/<int:post_id>")
+@auth
+def queue_update(user, post_id):
+    data = request.get_json(force=True) or {}
+    fields = {k: data[k] for k in ("base_caption", "overrides", "platforms", "scheduled_at", "status",
+                                    "approval_required") if k in data}
+    item = db.update_queued_post(user["id"], post_id, **fields)
+    if not item:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify(item)
+
+
+@app.delete("/api/queue/<int:post_id>")
+@auth
+def queue_delete(user, post_id):
+    db.delete_queued_post(user["id"], post_id)
+    return jsonify({"ok": True})
+
+
+def _run_scheduled_posts(now: float | None = None) -> str:
+    now = now if now is not None else time.time()
+    due = db.due_queued_posts(now)
+    sent, failed = 0, 0
+    for post in due:
+        conn_map = {}
+        connected = []
+        for p in post["platforms"]:
+            conn = db.get_social_connection(post["brand_id"], p)
+            if conn and conn.get("status") == "connected":
+                connected.append(p)
+                conn_map[p] = conn
+        if not connected:
+            db.set_queued_post_status(post["id"], status="draft", error="No connected platform")
+            failed += 1
+            continue
+        username = conn_map[connected[0]]["upload_post_username"]
+        media_bytes = None
+        media_name = None
+        mime = None
+        if post.get("media_path"):
+            p_path = POST_MEDIA_DIR / os.path.basename(post["media_path"])
+            if p_path.exists():
+                media_bytes = p_path.read_bytes()
+                media_name = p_path.name
+                mime = "video/mp4" if post.get("media_type") == "video" else "image/jpeg"
+        try:
+            out, _ = _upload_post_publish(username, connected, post["base_caption"] or "", post["overrides"],
+                                          media_bytes, media_name, mime, post.get("media_type") == "video")
+            results = out.get("results") or {}
+            post_urls = {}
+            for p in connected:
+                res = results.get(p) or {}
+                if res.get("success"):
+                    post_urls[p] = res.get("url")
+                    db.create_post_history(post["brand_id"], p, post.get("media_type"), post.get("media_path"),
+                                           post["base_caption"], res.get("url"), "published")
+            if post_urls:
+                db.set_queued_post_status(post["id"], status="posted", post_urls=post_urls)
+                sent += 1
+            else:
+                err = next((r.get("error") for r in results.values() if r.get("error")), None) or out.get("message")
+                db.set_queued_post_status(post["id"], status="draft", error=err or "Publish failed")
+                failed += 1
+        except Exception as exc:
+            db.set_queued_post_status(post["id"], status="draft", error=str(exc))
+            failed += 1
+    return f"scheduled posts: {sent} sent, {failed} failed, {len(due)} due"
+
+
+@app.cli.command("send-scheduled-posts")
+def _send_scheduled_posts_cli():
+    print(f"[Vertil] {_run_scheduled_posts()}")
 
 
 @app.post("/api/brands/from-posts")

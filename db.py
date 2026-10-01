@@ -248,6 +248,23 @@ def init_db() -> None:
                 updated_at {_REAL} NOT NULL
             )""")
         c.execute(f"""
+            CREATE TABLE IF NOT EXISTS queued_posts (
+                id            {_PK},
+                brand_id      INTEGER NOT NULL,
+                base_caption  TEXT,
+                overrides     TEXT,
+                platforms     TEXT NOT NULL,
+                media_path    TEXT,
+                media_type    TEXT,
+                scheduled_at  {_REAL},
+                status        TEXT NOT NULL DEFAULT 'scheduled',
+                approval_required INTEGER NOT NULL DEFAULT 0,
+                post_urls     TEXT,
+                error         TEXT,
+                created_at    {_REAL} NOT NULL,
+                updated_at    {_REAL} NOT NULL
+            )""")
+        c.execute(f"""
             CREATE TABLE IF NOT EXISTS post_history (
                 id         {_PK},
                 brand_id   INTEGER NOT NULL,
@@ -1084,6 +1101,110 @@ def delete_plan_price(plan_key: str) -> None:
         c.execute("DELETE FROM plan_prices WHERE plan_key=?", (plan_key,))
 
 
+def _row_to_queued_post(r) -> dict:
+    d = dict(r)
+    d["overrides"] = json.loads(d["overrides"]) if d.get("overrides") else {}
+    d["platforms"] = json.loads(d["platforms"]) if d.get("platforms") else []
+    d["post_urls"] = json.loads(d["post_urls"]) if d.get("post_urls") else {}
+    return d
+
+
+def create_queued_post(brand_id: int, base_caption: str, overrides: dict, platforms: list,
+                       media_path: str | None, media_type: str | None, scheduled_at: float | None,
+                       status: str, approval_required: bool) -> dict:
+    now = time.time()
+    with _conn() as c:
+        pid = _insert(c, "INSERT INTO queued_posts (brand_id, base_caption, overrides, platforms, media_path, "
+                         "media_type, scheduled_at, status, approval_required, post_urls, created_at, updated_at) "
+                         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                      (brand_id, base_caption, json.dumps(overrides), json.dumps(platforms), media_path, media_type,
+                       scheduled_at, status, 1 if approval_required else 0, json.dumps({}), now, now))
+        r = c.execute("SELECT * FROM queued_posts WHERE id=?", (pid,)).fetchone()
+    return _row_to_queued_post(r)
+
+
+def update_queued_post(user_id: int, post_id: int, **fields) -> dict | None:
+    allowed = {"base_caption", "overrides", "platforms", "media_path", "media_type",
+              "scheduled_at", "status", "approval_required", "post_urls", "error"}
+    sets, params = [], []
+    for k, v in fields.items():
+        if k not in allowed or v is None and k not in ("media_path", "media_type", "scheduled_at", "error"):
+            continue
+        if k in ("overrides", "platforms", "post_urls"):
+            v = json.dumps(v)
+        if k == "approval_required":
+            v = 1 if v else 0
+        sets.append(f"{k}=?"); params.append(v)
+    if not sets:
+        return get_queued_post(user_id, post_id)
+    sets.append("updated_at=?"); params.append(time.time())
+    with _conn() as c:
+        owner = c.execute(
+            "SELECT qp.id FROM queued_posts qp JOIN brands b ON b.id=qp.brand_id WHERE qp.id=? AND b.user_id=?",
+            (post_id, user_id)).fetchone()
+        if not owner:
+            return None
+        params.append(post_id)
+        c.execute(f"UPDATE queued_posts SET {', '.join(sets)} WHERE id=?", params)
+        r = c.execute("SELECT * FROM queued_posts WHERE id=?", (post_id,)).fetchone()
+    return _row_to_queued_post(r) if r else None
+
+
+def get_queued_post(user_id: int, post_id: int) -> dict | None:
+    with _conn() as c:
+        r = c.execute(
+            "SELECT qp.* FROM queued_posts qp JOIN brands b ON b.id=qp.brand_id WHERE qp.id=? AND b.user_id=?",
+            (post_id, user_id)).fetchone()
+    return _row_to_queued_post(r) if r else None
+
+
+def list_queued_posts(user_id: int, start: float | None = None, end: float | None = None) -> list[dict]:
+    with _conn() as c:
+        seat = c.execute("SELECT owner_id FROM org_seats WHERE member_id=? AND status='active'",
+                         (user_id,)).fetchone()
+        owner_id = seat["owner_id"] if seat else user_id
+        sql = "SELECT qp.*, b.name AS brand_name FROM queued_posts qp JOIN brands b ON b.id=qp.brand_id WHERE b.user_id=?"
+        params = [owner_id]
+        if start is not None:
+            sql += " AND (qp.scheduled_at IS NULL OR qp.scheduled_at >= ?)"; params.append(start)
+        if end is not None:
+            sql += " AND (qp.scheduled_at IS NULL OR qp.scheduled_at <= ?)"; params.append(end)
+        sql += " ORDER BY COALESCE(qp.scheduled_at, qp.created_at)"
+        rows = c.execute(sql, params).fetchall()
+    return [_row_to_queued_post(r) for r in rows]
+
+
+def due_queued_posts(now: float) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute("SELECT * FROM queued_posts WHERE status='scheduled' AND scheduled_at IS NOT NULL "
+                         "AND scheduled_at <= ?", (now,)).fetchall()
+    return [_row_to_queued_post(r) for r in rows]
+
+
+def delete_queued_post(user_id: int, post_id: int) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM queued_posts WHERE id=? AND brand_id IN "
+                 "(SELECT id FROM brands WHERE user_id=?)", (post_id, user_id))
+
+
+def set_queued_post_status(post_id: int, **fields) -> None:
+    """System-level update (no owning-user check) — used by the scheduled-post worker."""
+    allowed = {"status", "post_urls", "error"}
+    sets, params = [], []
+    for k, v in fields.items():
+        if k not in allowed:
+            continue
+        if k == "post_urls":
+            v = json.dumps(v)
+        sets.append(f"{k}=?"); params.append(v)
+    if not sets:
+        return
+    sets.append("updated_at=?"); params.append(time.time())
+    params.append(post_id)
+    with _conn() as c:
+        c.execute(f"UPDATE queued_posts SET {', '.join(sets)} WHERE id=?", params)
+
+
 def list_post_history(user_id: int, start: float, end: float) -> list[dict]:
     with _conn() as c:
         seat = c.execute("SELECT owner_id FROM org_seats WHERE member_id=? AND status='active'",
@@ -1117,6 +1238,20 @@ def team_monthly_generation_count(owner_id: int) -> int:
 
 
 # ------------------------------- home/dashboard --------------------------- #
+
+def getting_started(user_id: int) -> dict:
+    """Which first-run milestones this user has hit (Home checklist)."""
+    with _conn() as c:
+        one = lambda sql: c.execute(sql, (user_id,)).fetchone()["n"] > 0
+        return {
+            "brand": one("SELECT COUNT(*) AS n FROM brands WHERE user_id=?"),
+            "generated": one("SELECT COUNT(*) AS n FROM generations WHERE user_id=?"),
+            "saved": one("SELECT COUNT(*) AS n FROM favorites WHERE user_id=?"),
+            "planned": one("SELECT COUNT(*) AS n FROM calendars WHERE user_id=?"),
+            "scheduled": one("SELECT COUNT(*) AS n FROM queued_posts q JOIN brands b ON b.id=q.brand_id "
+                             "WHERE b.user_id=? AND q.status <> 'draft'"),
+        }
+
 
 def home_overview(user_id: int) -> dict:
     """Everything the Home dashboard needs, in one shot, for one user."""
