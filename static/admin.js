@@ -45,6 +45,8 @@ async function api(path, opts = {}) {
 }
 
 function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+// Calendar dates in the admin's own timezone (toISOString would shift WAT midnight to the previous UTC day).
+const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const naira = n => "₦" + Math.round(n || 0).toLocaleString();
 function fmtDate(epoch) {
   if (!epoch) return "—";
@@ -104,7 +106,7 @@ async function boot() {
 
 function scheduleWindow() {
   const start = new Date(); const end = new Date(start.getTime() + 13 * 86400000);
-  return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+  return { start: ymd(start), end: ymd(end) };
 }
 async function reloadSchedule() {
   const { start, end } = scheduleWindow();
@@ -523,24 +525,35 @@ function newsletterDayCard(dateStr, it, isToday) {
   </button>`;
 }
 
+// Drafted, unapproved issues from today onwards — what "Mark all ready" will approve.
+function readyCandidates() {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const todayStr = ymd(today);
+  return (state.nlSchedule || []).filter(it => it.status === "draft" && it.subject && it.body_html && it.send_date >= todayStr);
+}
+
 function newsletterCalendar() {
   const byDate = {};
   (state.nlSchedule || []).forEach(it => byDate[it.send_date] = it);
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const todayStr = today.toISOString().slice(0, 10);
+  const todayStr = ymd(today);
   const week = offset => {
     const out = [];
-    for (let i = 0; i < 7; i++) out.push(new Date(today.getTime() + (offset * 7 + i) * 86400000).toISOString().slice(0, 10));
+    for (let i = 0; i < 7; i++) out.push(ymd(new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset * 7 + i)));
     return out;
   };
   const weekGrid = days => `<div class="grid grid-cols-7 gap-2">${days.map(ds => newsletterDayCard(ds, byDate[ds], ds === todayStr)).join("")}</div>`;
   const plannedCount = (state.nlSchedule || []).filter(it => it.status === "ready" || it.status === "sent").length;
+  const approvable = readyCandidates();
   return card(`<div class="flex items-center justify-between mb-3 flex-wrap gap-1.5">
       <div class="flex items-center gap-2">
         <div class="text-[13px] font-semibold text-white">Calendar</div>
         ${plannedCount ? `<span class="text-[10px] font-bold bg-brand/20 text-brand-bright rounded-full px-2 py-0.5">${plannedCount} planned</span>` : ""}
       </div>
-      <div class="text-[11px] text-faint">Auto-sends at 11:00 WAT on days marked <span class="text-emerald-300 font-semibold">Ready</span></div></div>
+      <div class="flex items-center gap-3 flex-wrap">
+        <div class="text-[11px] text-faint">Auto-sends at 11:00 WAT on days marked <span class="text-emerald-300 font-semibold">Ready</span></div>
+        ${approvable.length ? `<button id="markAllReady" class="text-xs font-semibold bg-emerald-500/90 text-ink rounded-lg px-3 py-1.5 hover:bg-emerald-400 shadow-[0_0_14px_rgba(52,211,153,.3)]">Mark all ready (${approvable.length})</button>` : ""}
+      </div></div>
     <div class="space-y-2">${weekGrid(week(0))}</div>
     <div class="h-px bg-edge/60 my-3"></div>
     <div class="space-y-2">${weekGrid(week(1))}</div>`);
@@ -949,6 +962,18 @@ function wireNewsletter() {
       toast(`Drafted ${r.created.length} issue${r.created.length===1?"":"s"} — review them below and mark each Ready.`);
     } catch (ex) { toast(ex.message, "error"); }
     state.wpBusy = false; renderDash();
+  };
+
+  const markAll = $("#markAllReady");
+  if (markAll) markAll.onclick = async () => {
+    const items = readyCandidates();
+    const list = items.map(it => `• ${new Date(it.send_date + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}: ${it.subject}`).join("\n");
+    if (!confirm(`Mark ${items.length} issue${items.length > 1 ? "s" : ""} ready? Each will send automatically at 11:00 WAT on its date.\n\n${list}`)) return;
+    try {
+      const r = await api("/api/admin/newsletter/schedule/mark-ready", { method: "POST", body: JSON.stringify({ ids: items.map(it => it.id) }) });
+      await reloadSchedule(); renderDash();
+      toast(`Marked ${r.marked} ready.${r.skipped.length ? ` Skipped ${r.skipped.length} (${r.skipped[0].reason}).` : ""}`);
+    } catch (ex) { toast(ex.message, "error"); }
   };
 
   $$("[data-sched-new]").forEach(b => b.onclick = () => {

@@ -3539,6 +3539,27 @@ def newsletter_schedule_update(_user, sid):
     return jsonify(item)
 
 
+@app.post("/api/admin/newsletter/schedule/mark-ready")
+@admin
+def newsletter_schedule_mark_ready(_user):
+    """Bulk-approve drafted issues so they auto-send on their dates."""
+    ids = [int(i) for i in ((request.get_json(force=True) or {}).get("ids") or [])][:60]
+    today = time.strftime("%Y-%m-%d")
+    marked, skipped = [], []
+    for sid in ids:
+        it = db.get_scheduled_newsletter(sid)
+        if not it or it.get("status") != "draft":
+            continue
+        if it["send_date"] < today:
+            skipped.append({"id": sid, "send_date": it["send_date"], "reason": "date has passed"})
+        elif not (it.get("subject") and it.get("body_html")):
+            skipped.append({"id": sid, "send_date": it["send_date"], "reason": "not drafted yet"})
+        else:
+            db.update_scheduled_newsletter(sid, status="ready")
+            marked.append(sid)
+    return jsonify({"marked": len(marked), "ids": marked, "skipped": skipped})
+
+
 @app.delete("/api/admin/newsletter/schedule/<int:sid>")
 @admin
 def newsletter_schedule_delete(_user, sid):
