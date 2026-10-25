@@ -3291,7 +3291,10 @@ def admin_users(_user):
 @app.get("/api/admin/applications")
 @admin
 def admin_applications(_user):
-    return jsonify(db.list_applications())
+    rows = db.list_applications()
+    for r in rows:
+        r["ai_review"] = _json_from(r.get("ai_review") or "") or None
+    return jsonify(rows)
 
 
 @app.post("/api/admin/applications/<int:app_id>/status")
@@ -3302,6 +3305,68 @@ def admin_application_status(_user, app_id):
         return jsonify({"error": "bad status"}), 400
     db.set_application_status(app_id, status)
     return jsonify({"ok": True})
+
+
+_APP_STATUSES = ("new", "contacted", "accepted", "rejected")
+
+
+@app.post("/api/admin/applications/bulk-status")
+@admin
+def admin_application_bulk_status(_user):
+    d = request.get_json(force=True) or {}
+    status = d.get("status")
+    if status not in _APP_STATUSES:
+        return jsonify({"error": "bad status"}), 400
+    ids = [int(i) for i in (d.get("ids") or [])][:200]
+    for i in ids:
+        db.set_application_status(i, status)
+    return jsonify({"ok": True, "updated": len(ids)})
+
+
+@app.post("/api/admin/applications/<int:app_id>/notes")
+@admin
+def admin_application_notes(_user, app_id):
+    if not db.get_application(app_id):
+        return jsonify({"error": "Not found"}), 404
+    notes = str((request.get_json(force=True) or {}).get("notes") or "")[:4000]
+    db.update_application(app_id, admin_notes=notes)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/admin/applications/<int:app_id>/review")
+@admin
+def admin_application_review(_user, app_id):
+    """AI screening for a Creator Initiative applicant. Advisory only."""
+    a = db.get_application(app_id)
+    if not a:
+        return jsonify({"error": "Not found"}), 404
+    if not LIVE:
+        return jsonify({"error": "AI isn't configured — set ANTHROPIC_API_KEY."}), 400
+    system = ("You help the Vertil team screen applicants to the Vertil Creator Initiative: a free community of Nigerian "
+              "creators, sellers and small-business owners who make content with Vertil, swap ideas and can get featured. "
+              "Judge only from what the applicant wrote; never invent follower counts or facts. Be fair and kind; a short "
+              "application is not a bad one, it just needs questions. Reply with JSON only.")
+    profile = {k: a.get(k) or "" for k in ("name", "niche", "handle", "note")}
+    usr = ("Applicant (JSON):\n" + json.dumps(profile) + "\n\nReturn JSON: {\"fit\": \"strong\"|\"possible\"|\"unclear\", "
+           "\"score\": 0-100, \"summary\": one or two sentences, \"strengths\": [up to 3 short points], "
+           "\"concerns\": [up to 3 short points], \"questions\": [2-3 questions to ask them], "
+           "\"reply\": a warm WhatsApp message (under 70 words, plain text, Nigerian-friendly English, first name only, "
+           "signed '— Vertil team') that moves them forward: welcome them if strong, ask the questions if possible/unclear}")
+    try:
+        text, _, _ = _complete(system, usr, 2500)
+    except Exception as exc:
+        return jsonify({"error": f"Review failed: {exc}"}), 500
+    rev = _json_from(text)
+    if not isinstance(rev, dict) or not rev.get("summary"):
+        return jsonify({"error": "The reviewer couldn't finish. Try again."}), 502
+    rev["fit"] = rev.get("fit") if rev.get("fit") in ("strong", "possible", "unclear") else "unclear"
+    try:
+        rev["score"] = max(0, min(100, int(rev.get("score", 0))))
+    except (TypeError, ValueError):
+        rev["score"] = 0
+    rev["reviewed_at"] = time.time()
+    db.update_application(app_id, ai_review=json.dumps(rev))
+    return jsonify(rev)
 
 
 @app.get("/api/admin/users/<int:uid>")

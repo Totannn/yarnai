@@ -26,7 +26,8 @@ const state = { user: null, overview: null, users: null, applications: null, det
   aTab: store.get("aTab", "growth"), chartView: store.get("chartView", {}), ovMetric: store.get("ovMetric", "generations"),
   seg: "all", planFilter: "all", sort: store.get("sort", { key: "created_at", dir: -1 }), custView: store.get("custView", "table"),
   density: store.get("density", "comfy"), selected: new Set(),
-  appFilter: "all", appQ: "", appView: store.get("appView", "table"),
+  appFilter: "all", appQ: "", appView: store.get("appView", "table"), appDetail: null, appSel: new Set(), appNiche: "all",
+  appSort: store.get("appSort", "newest"), appTpl: null, appTplText: null, appReviewing: false,
   agents: null, agentOpen: null, agentDetail: null, agentBusy: {}, agentSel: new Set(), agentFilter: "pending", analystChat: [], askBusy: false,
   lastLoaded: null };
 
@@ -243,7 +244,8 @@ function renderDash() {
       ${adminTopbar()}
       <main class="flex-1 px-5 sm:px-7 py-6 w-full max-w-[1320px]">${body}</main>
     </div></div>
-    ${state.detail ? customerDrawer() : ""}`;
+    ${state.detail ? customerDrawer() : ""}
+    ${state.appDetail && S === "applications" ? applicantDrawer() : ""}`;
   mountCharts();
   wireDash();
 }
@@ -411,40 +413,6 @@ function customerDrawer() {
 }
 
 /* ---------------------------- applications ------------------------- */
-
-const APP_STATUSES = ["new", "contacted", "accepted", "rejected"];
-function applicationsSection() {
-  const all = state.applications || [];
-  const q = state.appQ.toLowerCase().trim();
-  const list = all.filter(a => (state.appFilter === "all" || (a.status || "new") === state.appFilter)
-    && (!q || [a.name, a.email, a.handle, a.niche, a.note, a.phone].some(x => (x || "").toLowerCase().includes(q))));
-  const count = s => all.filter(a => (a.status || "new") === s).length;
-  const board = `<div class="grid md:grid-cols-4 gap-3">${APP_STATUSES.map(s => {
-    const col = list.filter(a => (a.status || "new") === s);
-    return `<div class="glass rounded-2xl p-3 min-h-[200px]"><div class="flex items-center justify-between mb-2"><span class="text-[12px] font-semibold capitalize text-white">${s}</span><span class="chip chip-flat">${col.length}</span></div>
-      <div class="space-y-2">${col.map(a => `<div class="rounded-xl bg-paper/70 border border-edge p-3">
-        <div class="text-[12.5px] font-semibold text-slate-100">${esc(a.name)}</div>
-        <div class="text-[11px] text-faint">${esc(a.niche || "—")}${a.handle ? " · " + esc(a.handle) : ""}</div>
-        ${a.note ? `<div class="text-[11px] text-muted mt-1.5 line-clamp-3">${esc(a.note)}</div>` : ""}
-        <div class="flex items-center gap-2 mt-2"><a href="${waHref(a.phone)}" target="_blank" rel="noopener" class="text-[11px] text-brand-bright">WhatsApp</a>
-          <select data-appstatus="${a.id}" class="input ml-auto !py-1 capitalize">${APP_STATUSES.map(x => `<option value="${x}" ${(a.status || "new") === x ? "selected" : ""}>${x}</option>`).join("")}</select></div>
-      </div>`).join("") || '<div class="text-[11px] text-faint py-4 text-center">Empty</div>'}</div></div>`;
-  }).join("")}</div>`;
-  const table = card(`<div class="overflow-x-auto scroll-thin"><table class="w-full text-xs">
-      <thead><tr class="text-faint text-left border-b border-edge">
-        <th class="py-2 pr-3 font-semibold">Applicant</th><th class="py-2 px-2 font-semibold">Phone / WhatsApp</th>
-        <th class="py-2 px-2 font-semibold">Niche</th><th class="py-2 px-2 font-semibold">About</th>
-        <th class="py-2 px-2 font-semibold">Applied</th><th class="py-2 px-2 font-semibold">Status</th></tr></thead>
-      <tbody>${list.map(appRow).join("") || `<tr><td colspan="6" class="py-6 text-center text-muted">No applications match.</td></tr>`}</tbody></table></div>`);
-  return `
-    <div class="flex items-center gap-2 flex-wrap mb-3">
-      ${["all", ...APP_STATUSES].map(s => `<button data-appf="${s}" class="seg capitalize ${state.appFilter === s ? "on" : ""}">${s} <span class="opacity-60">${s === "all" ? all.length : count(s)}</span></button>`).join("")}
-      <input id="appSearch" value="${esc(state.appQ)}" placeholder="Search applicants…" class="input w-56 ml-auto"/>
-      <div class="seg-group"><button data-aview="table" class="seg ${state.appView === "table" ? "on" : ""}">Table</button><button data-aview="board" class="seg ${state.appView === "board" ? "on" : ""}">Board</button></div>
-      <button id="appExport" class="seg">⤓ CSV</button>
-    </div>
-    ${state.appView === "board" ? board : table}`;
-}
 
 /* ------------------------------ pricing ---------------------------- */
 
@@ -656,19 +624,6 @@ function newsletterSection() {
   `;
 }
 
-function appRow(a) {
-  const wa = (a.phone || "").replace(/[^\d]/g, "").replace(/^0/, "234");
-  const statuses = ["new", "contacted", "accepted", "rejected"];
-  return `<tr class="border-b border-edge/60 hover:bg-edge/40 align-top">
-    <td class="py-2 pr-3"><div class="font-semibold text-slate-100">${esc(a.name)}</div>
-      <div class="text-faint">${esc(a.email || "")}${a.handle ? " · " + esc(a.handle) : ""}</div></td>
-    <td class="py-2 px-2 whitespace-nowrap"><a href="https://wa.me/${wa}" target="_blank" rel="noopener" class="text-brand-bright hover:underline">${esc(a.phone)}</a></td>
-    <td class="py-2 px-2 text-slate-300 whitespace-nowrap">${esc(a.niche || "—")}</td>
-    <td class="py-2 px-2 text-muted"><div class="max-w-[260px] truncate" title="${esc(a.note || "")}">${esc(a.note || "—")}</div></td>
-    <td class="py-2 px-2 text-muted whitespace-nowrap">${fmtDate(a.created_at)}</td>
-    <td class="py-2 px-2"><select data-appstatus="${a.id}" class="bg-paper border border-edge rounded-lg px-2 py-1 text-xs text-slate-100 outline-none focus:border-brand/60 capitalize">
-      ${statuses.map(s => `<option value="${s}" ${(a.status || "new") === s ? "selected" : ""}>${s}</option>`).join("")}</select></td></tr>`;
-}
 
 /* ------------------------------ wiring ----------------------------- */
 
@@ -762,19 +717,6 @@ function wireUserSelect() {
   $$("[data-usel]").forEach(c => c.onchange = () => {
     const id = +c.dataset.usel; c.checked ? state.selected.add(id) : state.selected.delete(id); renderDash();
   });
-}
-
-function wireApplications() {
-  if (state.section !== "applications") return;
-  $$("[data-appf]").forEach(b => b.onclick = () => { state.appFilter = b.dataset.appf; renderDash(); });
-  $$("[data-aview]").forEach(b => b.onclick = () => { state.appView = b.dataset.aview; store.set("appView", state.appView); renderDash(); });
-  const s = $("#appSearch"); if (s) s.oninput = () => {
-    state.appQ = s.value; renderDash();
-    const s2 = $("#appSearch"); s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length);
-  };
-  const ex = $("#appExport"); if (ex) ex.onclick = () => downloadCSV("vertil-applications", (state.applications || []).map(a => ({
-    name: a.name, email: a.email, phone: a.phone, handle: a.handle, niche: a.niche, status: a.status || "new", note: a.note,
-    applied: new Date(a.created_at * 1000).toISOString() })));
 }
 
 function wirePricing() {

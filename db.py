@@ -305,6 +305,10 @@ def init_db() -> None:
         _add_col(c, "content_items", "reminder_at", f"{_REAL}")
         _add_col(c, "content_items", "reminded", "INTEGER NOT NULL DEFAULT 0")
         _add_col(c, "users", "notify_stage", "INTEGER NOT NULL DEFAULT 1")
+        # Creator Initiative review workflow
+        _add_col(c, "applications", "admin_notes", "TEXT DEFAULT ''")
+        _add_col(c, "applications", "ai_review", "TEXT DEFAULT ''")
+        _add_col(c, "applications", "status_changed_at", f"{_REAL}")
         # migrations (idempotent on both backends)
         for tbl in ("brands", "generations", "calendars"):
             _add_col(c, tbl, "user_id", "INTEGER")
@@ -695,7 +699,22 @@ def application_count() -> int:
 
 def set_application_status(app_id: int, status: str) -> None:
     with _conn() as c:
-        c.execute("UPDATE applications SET status=? WHERE id=?", (status, app_id))
+        c.execute("UPDATE applications SET status=?, status_changed_at=? WHERE id=?", (status, time.time(), app_id))
+
+
+def get_application(app_id: int) -> dict | None:
+    with _conn() as c:
+        r = c.execute("SELECT * FROM applications WHERE id=?", (app_id,)).fetchone()
+    return dict(r) if r else None
+
+
+def update_application(app_id: int, **fields) -> None:
+    allowed = {k: v for k, v in fields.items() if k in ("admin_notes", "ai_review")}
+    if not allowed:
+        return
+    sets = ", ".join(f"{k}=?" for k in allowed)
+    with _conn() as c:
+        c.execute(f"UPDATE applications SET {sets} WHERE id=?", (*allowed.values(), app_id))
 
 
 # --------------------- content board (idea → posted) ---------------------- #
