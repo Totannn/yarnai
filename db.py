@@ -320,6 +320,49 @@ def init_db() -> None:
         _add_col(c, "generations", "cost", f"{_REAL} DEFAULT 0")
         _add_col(c, "generations", "model", "TEXT DEFAULT ''")
         _add_col(c, "generations", "full_json", "TEXT DEFAULT ''")
+        # Flyer Maker: brand logo + palette, and saved designs
+        _add_col(c, "brands", "logo", "TEXT DEFAULT ''")
+        _add_col(c, "brands", "colors", "TEXT DEFAULT ''")
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS designs (
+                id         {_PK},
+                user_id    INTEGER NOT NULL,
+                brand_id   INTEGER,
+                title      TEXT DEFAULT '',
+                kind       TEXT DEFAULT '',
+                data       TEXT DEFAULT '',
+                image      TEXT DEFAULT '',
+                created_at {_REAL} NOT NULL,
+                updated_at {_REAL} NOT NULL
+            )""")
+        # Admin agents: each run produces drafts (emails, findings) a human reviews
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS agent_runs (
+                id         {_PK},
+                agent      TEXT NOT NULL,
+                status     TEXT NOT NULL DEFAULT 'done',
+                summary    TEXT DEFAULT '',
+                report     TEXT DEFAULT '',
+                created_by INTEGER,
+                created_at {_REAL} NOT NULL
+            )""")
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS agent_items (
+                id         {_PK},
+                run_id     INTEGER NOT NULL,
+                agent      TEXT NOT NULL,
+                user_id    INTEGER,
+                email      TEXT DEFAULT '',
+                name       TEXT DEFAULT '',
+                title      TEXT DEFAULT '',
+                reason     TEXT DEFAULT '',
+                subject    TEXT DEFAULT '',
+                body_html  TEXT DEFAULT '',
+                severity   TEXT DEFAULT '',
+                status     TEXT NOT NULL DEFAULT 'pending',
+                created_at {_REAL} NOT NULL,
+                sent_at    {_REAL}
+            )""")
 
 
 # ------------------------------- users ------------------------------------ #
@@ -435,6 +478,66 @@ def update_brand(user_id: int, brand_id: int, data: dict) -> dict | None:
             (*[row[k] for k in _BRAND_FIELDS], brand_id, user_id),
         )
     return get_brand(user_id, brand_id)
+
+
+def set_brand_style(user_id: int, brand_id: int, logo: str | None = None,
+                    colors: str | None = None) -> dict | None:
+    """Update a brand's logo and/or palette. Owner only (WHERE user_id)."""
+    sets, args = [], []
+    if logo is not None:
+        sets.append("logo=?"); args.append(logo)
+    if colors is not None:
+        sets.append("colors=?"); args.append(colors)
+    if sets:
+        with _conn() as c:
+            c.execute(f"UPDATE brands SET {', '.join(sets)} WHERE id=? AND user_id=?", (*args, brand_id, user_id))
+    return get_brand(user_id, brand_id)
+
+
+# ------------------------------- designs (Flyer Maker) -------------------- #
+
+def save_design(user_id: int, design_id: int | None, brand_id: int | None, title: str,
+                kind: str, data: str, image: str | None) -> dict | None:
+    now = time.time()
+    with _conn() as c:
+        if design_id:
+            row = c.execute("SELECT id FROM designs WHERE id=? AND user_id=?", (design_id, user_id)).fetchone()
+            if not row:
+                return None
+            if image is not None:
+                c.execute("UPDATE designs SET brand_id=?, title=?, kind=?, data=?, image=?, updated_at=? "
+                          "WHERE id=? AND user_id=?", (brand_id, title, kind, data, image, now, design_id, user_id))
+            else:
+                c.execute("UPDATE designs SET brand_id=?, title=?, kind=?, data=?, updated_at=? "
+                          "WHERE id=? AND user_id=?", (brand_id, title, kind, data, now, design_id, user_id))
+        else:
+            design_id = _insert(c, "INSERT INTO designs (user_id, brand_id, title, kind, data, image, created_at, updated_at) "
+                                   "VALUES (?,?,?,?,?,?,?,?)", (user_id, brand_id, title, kind, data, image or "", now, now))
+        r = c.execute("SELECT * FROM designs WHERE id=? AND user_id=?", (design_id, user_id)).fetchone()
+    return dict(r) if r else None
+
+
+def list_designs(user_id: int) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute("SELECT d.*, b.name AS brand_name FROM designs d LEFT JOIN brands b ON b.id=d.brand_id "
+                         "WHERE d.user_id=? ORDER BY d.updated_at DESC", (user_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_design(user_id: int, design_id: int) -> dict | None:
+    with _conn() as c:
+        r = c.execute("SELECT * FROM designs WHERE id=? AND user_id=?", (design_id, user_id)).fetchone()
+    return dict(r) if r else None
+
+
+def delete_design(user_id: int, design_id: int) -> str | None:
+    """Delete a design; returns its image path so the caller can remove the file."""
+    with _conn() as c:
+        r = c.execute("SELECT image FROM designs WHERE id=? AND user_id=?", (design_id, user_id)).fetchone()
+        if not r:
+            return None
+        c.execute("DELETE FROM designs WHERE id=? AND user_id=?", (design_id, user_id))
+    return r["image"] or ""
 
 
 def get_brand(user_id: int, brand_id: int) -> dict | None:
@@ -1518,3 +1621,295 @@ def mark_scheduled_newsletter_sent(nid: int, sent_count: int, ok: bool = True) -
     with _conn() as c:
         c.execute("UPDATE newsletter_schedule SET status=?, sent_count=?, sent_at=? WHERE id=?",
                   ("sent" if ok else "failed", sent_count, time.time(), nid))
+
+
+# ------------------------------ admin analytics ---------------------------- #
+# Everything is computed in Python from raw rows so it behaves the same on
+# SQLite and Postgres. Times are bucketed in WAT (UTC+1).
+
+_WAT = 3600
+
+
+def _day(ts: float) -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime(ts + _WAT))
+
+
+def admin_analytics(days: int, free_limit: int = 10) -> dict:
+    now = time.time()
+    start = now - days * 86400
+    prev_start = start - days * 86400
+    since = min(prev_start, now - 63 * 86400)  # also covers the 8-week cohort window
+    with _conn() as c:
+        users = [dict(r) for r in c.execute(
+            "SELECT id, name, email, plan, created_at, onboarded, suspended, is_admin, last_reengage_at "
+            "FROM users").fetchall()]
+        gens = [dict(r) for r in c.execute(
+            "SELECT user_id, content_type, tone, model, cost, input_tokens, output_tokens, created_at "
+            "FROM generations WHERE created_at>=?", (since,)).fetchall()]
+        last_gen = {r["user_id"]: r["t"] for r in c.execute(
+            "SELECT user_id, MAX(created_at) AS t, COUNT(*) AS n FROM generations GROUP BY user_id").fetchall()}
+        gen_counts = {r["user_id"]: r["n"] for r in c.execute(
+            "SELECT user_id, COUNT(*) AS n FROM generations GROUP BY user_id").fetchall()}
+        month_start = time.mktime(time.gmtime(now)[:2] + (1, 0, 0, 0, 0, 0, 0))
+        month_gens = {r["user_id"]: r["n"] for r in c.execute(
+            "SELECT user_id, COUNT(*) AS n FROM generations WHERE created_at>=? GROUP BY user_id",
+            (month_start,)).fetchall()}
+        brand_users = {r["user_id"] for r in c.execute("SELECT DISTINCT user_id FROM brands").fetchall()}
+        brands_rows = [dict(r) for r in c.execute("SELECT created_at FROM brands WHERE created_at>=?", (prev_start,)).fetchall()]
+        queued = [dict(r) for r in c.execute(
+            "SELECT status, platforms, created_at, scheduled_at FROM queued_posts").fetchall()]
+        history = [dict(r) for r in c.execute("SELECT platform, status, posted_at FROM post_history").fetchall()]
+        conns = [dict(r) for r in c.execute("SELECT platform, status FROM social_connections").fetchall()]
+        favs = c.execute("SELECT COUNT(*) AS n FROM favorites WHERE created_at>=?", (start,)).fetchone()["n"]
+        cals = c.execute("SELECT COUNT(*) AS n FROM calendars WHERE created_at>=?", (start,)).fetchone()["n"]
+        recent = [dict(r) for r in c.execute(
+            "SELECT g.content_type, g.tone, g.cost, g.created_at, u.name, u.email, u.plan "
+            "FROM generations g LEFT JOIN users u ON u.id=g.user_id ORDER BY g.created_at DESC LIMIT 12").fetchall()]
+
+    days_list = [_day(start + i * 86400 + 1) for i in range(days)]
+    if days_list[-1] != _day(now):
+        days_list = days_list[1:] + [_day(now)]
+    idx = {d: i for i, d in enumerate(days_list)}
+    z = lambda: [0] * len(days_list)
+    signups, gen_n, cost, brand_n = z(), z(), z(), z()
+    active = [set() for _ in days_list]
+    for u in users:
+        d = idx.get(_day(u["created_at"]))
+        if d is not None and u["created_at"] >= start - 86400:
+            signups[d] += 1
+    types, tones, models = {}, {}, {}
+    heat = [[0] * 24 for _ in range(7)]
+    type_daily = {}
+    cur = {"gens": 0, "cost": 0.0, "tokens": 0, "active": set(), "signups": 0}
+    prev = {"gens": 0, "cost": 0.0, "active": set(), "signups": 0}
+    for g in gens:
+        t = g["created_at"]
+        if t >= start:
+            d = idx.get(_day(t))
+            if d is not None:
+                gen_n[d] += 1
+                cost[d] += g["cost"] or 0
+                active[d].add(g["user_id"])
+                type_daily.setdefault(g["content_type"], z())[d] += 1
+            cur["gens"] += 1
+            cur["cost"] += g["cost"] or 0
+            cur["tokens"] += (g["input_tokens"] or 0) + (g["output_tokens"] or 0)
+            cur["active"].add(g["user_id"])
+            types[g["content_type"]] = types.get(g["content_type"], 0) + 1
+            tones[g["tone"] or "—"] = tones.get(g["tone"] or "—", 0) + 1
+            m = models.setdefault(g["model"] or "(demo)", {"n": 0, "cost": 0.0})
+            m["n"] += 1
+            m["cost"] += g["cost"] or 0
+            lt = time.gmtime(t + _WAT)
+            heat[lt.tm_wday][lt.tm_hour] += 1
+        elif t >= prev_start:
+            prev["gens"] += 1
+            prev["cost"] += g["cost"] or 0
+            prev["active"].add(g["user_id"])
+    for b in brands_rows:
+        d = idx.get(_day(b["created_at"]))
+        if d is not None and b["created_at"] >= start - 86400:
+            brand_n[d] += 1
+    for u in users:
+        if u["created_at"] >= start:
+            cur["signups"] += 1
+        elif u["created_at"] >= prev_start:
+            prev["signups"] += 1
+
+    # funnel for people who signed up in the window
+    cohort = [u for u in users if u["created_at"] >= start]
+    funnel = [
+        ("Signed up", len(cohort)),
+        ("Onboarded", sum(1 for u in cohort if u["onboarded"])),
+        ("Created a brand", sum(1 for u in cohort if u["id"] in brand_users)),
+        ("First generation", sum(1 for u in cohort if gen_counts.get(u["id"], 0) >= 1)),
+        ("Activated (5+ gens)", sum(1 for u in cohort if gen_counts.get(u["id"], 0) >= 5)),
+        ("Paid", sum(1 for u in cohort if u["plan"] != "free")),
+    ]
+
+    # weekly signup cohorts x weeks since signup (share of cohort that generated that week)
+    wk = 7 * 86400
+    cohorts = []
+    for k in range(7, -1, -1):
+        c0 = now - (k + 1) * wk
+        members = [u["id"] for u in users if c0 <= u["created_at"] < c0 + wk]
+        row = {"label": _day(c0), "size": len(members), "weeks": []}
+        mset = set(members)
+        for w in range(0, k + 1):
+            ws, we = c0 + w * wk, c0 + (w + 1) * wk
+            act = {g["user_id"] for g in gens if ws <= g["created_at"] < we and g["user_id"] in mset}
+            row["weeks"].append(round(100 * len(act) / len(members)) if members else None)
+        cohorts.append(row)
+
+    # publishing
+    q_status, q_platforms = {}, {}
+    for q in queued:
+        q_status[q["status"]] = q_status.get(q["status"], 0) + 1
+        try:
+            for pf in json.loads(q["platforms"] or "[]"):
+                q_platforms[pf] = q_platforms.get(pf, 0) + 1
+        except (TypeError, ValueError):
+            pass
+    published = {}
+    for h in history:
+        if (h["status"] or "") == "published":
+            published[h["platform"]] = published.get(h["platform"], 0) + 1
+    connected = {}
+    for cn in conns:
+        if cn["status"] == "connected":
+            connected[cn["platform"]] = connected.get(cn["platform"], 0) + 1
+
+    # segments
+    at_risk, near_limit, never = [], [], []
+    for u in users:
+        if u["suspended"] or u["is_admin"]:
+            continue
+        lg = last_gen.get(u["id"])
+        row = {"id": u["id"], "name": u["name"], "email": u["email"], "plan": u["plan"],
+               "last_active": lg, "gens": gen_counts.get(u["id"], 0), "month_gens": month_gens.get(u["id"], 0),
+               "created_at": u["created_at"]}
+        if u["plan"] != "free" and (not lg or lg < now - 14 * 86400):
+            at_risk.append(row)
+        if u["plan"] == "free" and month_gens.get(u["id"], 0) >= max(1, int(free_limit * 0.7)):
+            near_limit.append(row)
+        if not lg and u["created_at"] < now - 86400:
+            never.append(row)
+
+    top = sorted(({"id": u["id"], "name": u["name"], "email": u["email"], "plan": u["plan"],
+                   "gens": sum(1 for g in gens if g["user_id"] == u["id"] and g["created_at"] >= start),
+                   "cost": round(sum((g["cost"] or 0) for g in gens if g["user_id"] == u["id"] and g["created_at"] >= start), 2)}
+                  for u in users), key=lambda r: -r["gens"])[:10]
+
+    return {
+        "days": days, "labels": days_list,
+        "series": {"signups": signups, "generations": gen_n, "cost": [round(x, 2) for x in cost],
+                   "active": [len(s_) for s_ in active], "brands": brand_n},
+        "totals": {"signups": cur["signups"], "generations": cur["gens"], "cost": round(cur["cost"], 2),
+                   "active": len(cur["active"]), "tokens": cur["tokens"], "favorites": favs, "calendars": cals},
+        "previous": {"signups": prev["signups"], "generations": prev["gens"], "cost": round(prev["cost"], 2),
+                     "active": len(prev["active"])},
+        "types": types, "type_daily": type_daily, "tones": tones, "models": models,
+        "heatmap": heat, "funnel": [{"stage": a, "n": b} for a, b in funnel], "cohorts": cohorts,
+        "publishing": {"queue_status": q_status, "queue_platforms": q_platforms,
+                       "published": published, "connected": connected},
+        "segments": {"at_risk": at_risk[:50], "near_limit": near_limit[:50], "never_generated": never[:50],
+                     "counts": {"at_risk": len(at_risk), "near_limit": len(near_limit), "never_generated": len(never)}},
+        "top_users": [t for t in top if t["gens"]], "recent": recent,
+    }
+
+
+# ------------------------------- admin agents ------------------------------ #
+
+def agent_candidates(agent: str, free_limit: int = 10, limit: int = 15) -> list[dict]:
+    """Who an outreach agent should write to. Never includes admins, suspended or opted-out users."""
+    now = time.time()
+    with _conn() as c:
+        rows = [dict(r) for r in c.execute(
+            "SELECT u.id, u.name, u.email, u.plan, u.created_at, u.onboarded, u.last_reengage_at, "
+            "u.newsletter_opt_out, COUNT(g.id) AS gens, MAX(g.created_at) AS last_active "
+            "FROM users u LEFT JOIN generations g ON g.user_id=u.id "
+            "WHERE u.suspended=0 AND u.is_admin=0 "
+            "GROUP BY u.id, u.name, u.email, u.plan, u.created_at, u.onboarded, u.last_reengage_at, u.newsletter_opt_out"
+        ).fetchall()]
+        month_start = time.mktime(time.gmtime(now)[:2] + (1, 0, 0, 0, 0, 0, 0))
+        month = {r["user_id"]: r["n"] for r in c.execute(
+            "SELECT user_id, COUNT(*) AS n FROM generations WHERE created_at>=? GROUP BY user_id",
+            (month_start,)).fetchall()}
+        brands = {}
+        for r in c.execute("SELECT user_id, name, industry, audience FROM brands ORDER BY created_at").fetchall():
+            brands.setdefault(r["user_id"], dict(r))
+        recent_types = {}
+        for r in c.execute("SELECT user_id, content_type FROM generations ORDER BY created_at DESC").fetchall():
+            recent_types.setdefault(r["user_id"], [])
+            if len(recent_types[r["user_id"]]) < 3 and r["content_type"] not in recent_types[r["user_id"]]:
+                recent_types[r["user_id"]].append(r["content_type"])
+        pending = {r["user_id"] for r in c.execute(
+            "SELECT user_id FROM agent_items WHERE agent=? AND status='pending'", (agent,)).fetchall()}
+    out = []
+    for r in rows:
+        if r["newsletter_opt_out"] or r["id"] in pending:
+            continue
+        cooled = not r["last_reengage_at"] or r["last_reengage_at"] < now - 10 * 86400
+        b = brands.get(r["id"]) or {}
+        r.update(brand=b.get("name") or "", industry=b.get("industry") or "", audience=b.get("audience") or "",
+                 month_gens=month.get(r["id"], 0), recent_types=recent_types.get(r["id"], []))
+        if agent == "activation" and r["gens"] == 0 and r["created_at"] < now - 86400 and cooled:
+            out.append(r)
+        elif agent == "winback" and r["gens"] > 0 and r["last_active"] and r["last_active"] < now - 14 * 86400 and cooled:
+            out.append(r)
+        elif agent == "upgrade" and r["plan"] == "free" and r["month_gens"] >= max(1, int(free_limit * 0.7)):
+            out.append(r)
+    key = {"activation": lambda r: -r["created_at"], "winback": lambda r: (r["plan"] == "free", -r["gens"]),
+           "upgrade": lambda r: -r["month_gens"]}.get(agent, lambda r: 0)
+    return sorted(out, key=key)[:limit]
+
+
+def quality_sample(limit: int = 30) -> dict:
+    with _conn() as c:
+        recent = [dict(r) for r in c.execute(
+            "SELECT id, content_type, tone, brief, output, created_at FROM generations "
+            "WHERE content_type NOT IN ('content_calendar','rate_advisor','personal_brand','brand_learn') "
+            "ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()]
+        feedback = [dict(r) for r in c.execute(
+            "SELECT rating, text, created_at FROM brand_feedback ORDER BY created_at DESC LIMIT 20").fetchall()]
+    return {"generations": recent, "feedback": feedback}
+
+
+def create_agent_run(agent: str, summary: str, report: str, items: list[dict], created_by: int | None) -> int:
+    now = time.time()
+    with _conn() as c:
+        rid = _insert(c, "INSERT INTO agent_runs (agent, status, summary, report, created_by, created_at) VALUES (?,?,?,?,?,?)",
+                      (agent, "done", summary, report, created_by, now))
+        for it in items:
+            _insert(c, "INSERT INTO agent_items (run_id, agent, user_id, email, name, title, reason, subject, body_html, "
+                       "severity, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (rid, agent, it.get("user_id"), it.get("email", ""), it.get("name", ""), it.get("title", ""),
+                     it.get("reason", ""), it.get("subject", ""), it.get("body_html", ""), it.get("severity", ""),
+                     "pending", now))
+    return rid
+
+
+def agent_overview() -> dict:
+    with _conn() as c:
+        runs = {}
+        for r in c.execute("SELECT agent, MAX(created_at) AS last_run, COUNT(*) AS runs FROM agent_runs GROUP BY agent").fetchall():
+            runs[r["agent"]] = {"last_run": r["last_run"], "runs": r["runs"]}
+        items = {}
+        for r in c.execute("SELECT agent, status, COUNT(*) AS n FROM agent_items GROUP BY agent, status").fetchall():
+            items.setdefault(r["agent"], {})[r["status"]] = r["n"]
+    return {"runs": runs, "items": items}
+
+
+def agent_runs(agent: str, limit: int = 10) -> list[dict]:
+    with _conn() as c:
+        return [dict(r) for r in c.execute(
+            "SELECT id, agent, summary, report, created_at FROM agent_runs WHERE agent=? ORDER BY created_at DESC LIMIT ?",
+            (agent, limit)).fetchall()]
+
+
+def agent_items(agent: str, status: str | None = None, limit: int = 100) -> list[dict]:
+    sql = "SELECT * FROM agent_items WHERE agent=?"
+    args: list = [agent]
+    if status:
+        sql += " AND status=?"
+        args.append(status)
+    sql += " ORDER BY created_at DESC LIMIT ?"
+    args.append(limit)
+    with _conn() as c:
+        return [dict(r) for r in c.execute(sql, tuple(args)).fetchall()]
+
+
+def get_agent_item(item_id: int) -> dict | None:
+    with _conn() as c:
+        r = c.execute("SELECT * FROM agent_items WHERE id=?", (item_id,)).fetchone()
+    return dict(r) if r else None
+
+
+def update_agent_item(item_id: int, **fields) -> None:
+    allowed = {k: v for k, v in fields.items() if k in ("subject", "body_html", "status", "sent_at")}
+    if not allowed:
+        return
+    sets = ", ".join(f"{k}=?" for k in allowed)
+    with _conn() as c:
+        c.execute(f"UPDATE agent_items SET {sets} WHERE id=?", (*allowed.values(), item_id))
+

@@ -5,3 +5,8 @@ __pycache__/
 yarn.db
 *.log
 server.log
+
+# user uploads (Flyer Maker)
+static/brand_logos/
+static/designs/
+static/post_media/

@@ -1,4 +1,4 @@
-/* Vertil — standalone Admin Console (separate login, dark theme) */
+/* Vertil — Admin Console (separate login, dark theme) */
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -7,15 +7,28 @@ function vword({ size = "20px", color = "#f4f7f6", accent = "#2dd4bf" } = {}) {
   return `<span class="vword" style="font-size:${size};--vi:${accent};color:${color}">Vert<span class="vi"><span class="vi-tip"></span><span class="vi-stem"></span></span>l</span>`;
 }
 function vmark(px = 36) {
-  return `<span class="rounded-xl bg-brand grid place-items-center" style="width:${px}px;height:${px}px">
+  return `<span class="rounded-xl bg-brand grid place-items-center shrink-0" style="width:${px}px;height:${px}px;box-shadow:0 0 18px rgba(45,212,191,.35)">
     <span class="vi" style="font-size:${Math.round(px * 0.5)}px"><span class="vi-tip" style="border-bottom-color:#fff"></span><span class="vi-stem" style="background:#fff"></span></span></span>`;
 }
 
-const state = { user: null, overview: null, users: null, applications: null, detail: null, section: "overview", q: "",
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("vadm_" + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem("vadm_" + k, JSON.stringify(v)); } catch {} },
+};
+
+const state = { user: null, overview: null, users: null, applications: null, detail: null, section: store.get("section", "overview"), q: "",
   newsletter: null, newsletterDraft: null, nlBrief: "", nlDrafting: false, nlStyle: "A", nlTestEmail: "",
   nlSchedule: [], nlSchedEditing: null, nlSchedBusy: false,
   wpPrompt: "", wpCount: 3, wpStyle: "A", wpBusy: false,
-  pricing: null, pricingBusy: {} };
+  pricing: null, pricingBusy: {}, pricingDraft: {},
+  // new console controls
+  range: store.get("range", 30), autoRefresh: store.get("autoRefresh", false), analytics: null,
+  aTab: store.get("aTab", "growth"), chartView: store.get("chartView", {}), ovMetric: store.get("ovMetric", "generations"),
+  seg: "all", planFilter: "all", sort: store.get("sort", { key: "created_at", dir: -1 }), custView: store.get("custView", "table"),
+  density: store.get("density", "comfy"), selected: new Set(),
+  appFilter: "all", appQ: "", appView: store.get("appView", "table"),
+  agents: null, agentOpen: null, agentDetail: null, agentBusy: {}, agentSel: new Set(), agentFilter: "pending", analystChat: [], askBusy: false,
+  lastLoaded: null };
 
 const NL_STYLES = [
   { key: "A", label: "Dark hero", blurb: "Forest hero, light body" },
@@ -53,14 +66,33 @@ function toast(msg, kind = "ok") {
   const bg = kind === "error" ? "#3f1d21" : "#0e9488";
   const fg = kind === "error" ? "#fca5a5" : "#04120f";
   const border = kind === "error" ? "1px solid #7f2d33" : "none";
-  t.innerHTML = `<div style="background:${bg};color:${fg};border:${border};font-size:13px;font-weight:600;padding:11px 18px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-width:340px;">${esc(msg)}</div>`;
+  t.innerHTML = `<div style="background:${bg};color:${fg};border:${border};font-size:13px;font-weight:600;padding:11px 18px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-width:360px;">${esc(msg)}</div>`;
   clearTimeout(window.__adminToastTO);
-  window.__adminToastTO = setTimeout(() => { t.innerHTML = ""; }, 3400);
+  window.__adminToastTO = setTimeout(() => { t.innerHTML = ""; }, 3800);
+}
+
+function downloadCSV(name, rows) {
+  if (!rows.length) return toast("Nothing to export.", "error");
+  const cols = Object.keys(rows[0]);
+  const cell = v => { const s = v === null || v === undefined ? "" : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const csv = [cols.join(","), ...rows.map(r => cols.map(c => cell(r[c])).join(","))].join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = `${name}-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
 }
 
 /* ------------------------------ boot ------------------------------ */
 
+function renderLoading() {
+  $("#app").innerHTML = `<div class="min-h-screen grid place-items-center hero-grid"><div class="text-center fade-in">
+    <div class="flex justify-center">${vmark(46)}</div>
+    <div class="mt-4 text-[13px] text-muted font-mono uppercase tracking-wider">Loading console</div>
+    <div class="mt-3 mx-auto w-40 h-1 rounded-full bg-edge overflow-hidden"><div class="h-full w-1/3 rounded-full bg-brand-bright loading-bar"></div></div>
+  </div></div>`;
+}
+
 async function boot() {
+  renderLoading();
   try {
     const me = await api("/api/me");
     if (me.user && me.user.is_admin) { state.user = me.user; await load(); renderDash(); return; }
@@ -78,46 +110,45 @@ async function reloadSchedule() {
   const { start, end } = scheduleWindow();
   state.nlSchedule = await api(`/api/admin/newsletter/schedule?start=${start}&end=${end}`);
 }
+async function loadAnalytics() { state.analytics = await api(`/api/admin/analytics?days=${state.range}`); }
 
 async function load() {
   const { start, end } = scheduleWindow();
-  const [ov, us, apps, nl, sched, pricing] = await Promise.all([
+  const [ov, us, apps, nl, sched, pricing, an, ag] = await Promise.all([
     api("/api/admin/overview"), api("/api/admin/users"), api("/api/admin/applications"),
     api("/api/admin/newsletter"), api(`/api/admin/newsletter/schedule?start=${start}&end=${end}`),
-    api("/api/admin/pricing"),
+    api("/api/admin/pricing"), api(`/api/admin/analytics?days=${state.range}`), api("/api/admin/agents"),
   ]);
   state.overview = ov; state.users = us; state.applications = apps; state.newsletter = nl; state.nlSchedule = sched;
-  state.pricing = pricing;
+  state.pricing = pricing; state.analytics = an; state.agents = ag; state.lastLoaded = Date.now();
 }
 
 /* ------------------------------ login ----------------------------- */
 
 function renderLogin(msg) {
   $("#app").innerHTML = `
-  <div class="min-h-screen grid place-items-center p-6">
+  <div class="min-h-screen grid place-items-center p-6 hero-grid">
     <div class="w-full max-w-sm">
       <div class="flex items-center gap-2.5 mb-6 justify-center">
         ${vmark(38)}
         <div>${vword({ size: "20px" })}
           <div class="text-[11px] text-muted leading-none mt-1 tracking-wide uppercase font-mono">Admin Console</div></div>
       </div>
-      <div class="bg-panel border border-edge rounded-xl2 p-6">
+      <div class="glass rounded-2xl p-6">
         <h1 class="font-display font-extrabold text-xl">Sign in</h1>
         <p class="text-sm text-muted mt-1">Administrator access only.</p>
         <form id="loginForm" class="mt-5 space-y-3">
           <div><label class="text-xs font-semibold text-muted">Email</label>
-            <input name="email" type="email" required placeholder="admin@yarn.ai" class="ai"/></div>
+            <input name="email" type="email" required placeholder="admin@vertil.ng" class="input w-full mt-1"/></div>
           <div><label class="text-xs font-semibold text-muted">Password</label>
-            <input name="password" type="password" required placeholder="••••••••" class="ai"/></div>
+            <input name="password" type="password" required placeholder="••••••••" class="input w-full mt-1"/></div>
           <p id="err" class="text-xs text-rose-400 ${msg ? "" : "hidden"}">${esc(msg)}</p>
-          <button id="btn" type="submit" class="w-full py-2.5 rounded-xl font-semibold text-sm text-ink bg-brand hover:bg-brand-dark">Enter console</button>
+          <button id="btn" type="submit" class="btn-glow w-full">Enter console</button>
         </form>
       </div>
       <p class="text-center text-[11px] text-faint mt-4">Looking for the app? <a href="/app" class="text-brand">Open Vertil &rarr;</a></p>
     </div>
-  </div>
-  <style>.ai{width:100%;margin-top:.25rem;background:#0e131b;border:1px solid #1e2733;border-radius:.6rem;padding:.6rem .75rem;font-size:.9rem;color:#fff;outline:none}
-  .ai:focus{border-color:#0b8457;box-shadow:0 0 0 3px rgba(11,132,87,.25)}</style>`;
+  </div>`;
   $("#loginForm").onsubmit = doLogin;
 }
 
@@ -139,10 +170,10 @@ async function doLogin(e) {
 async function logout() {
   await api("/api/logout", { method: "POST" }).catch(() => {});
   state.user = null; state.overview = null; state.users = null; state.detail = null;
-  renderLogin("");
+  disposeCharts(); renderLogin("");
 }
 
-/* ---------------------------- dashboard --------------------------- */
+/* ------------------------------ shell ------------------------------ */
 
 function bars(items, color) {
   const max = Math.max(1, ...items.map(i => i.value));
@@ -151,77 +182,31 @@ function bars(items, color) {
     <div class="flex-1 bg-edge rounded-full h-2.5 overflow-hidden"><div class="h-full rounded-full" style="width:${Math.round(i.value / max * 100)}%;background:${color}"></div></div>
     <div class="w-24 text-right tabular-nums text-slate-300">${esc(String(i.sub ?? i.value))}</div></div>`).join("") || `<p class="text-xs text-muted">No data yet.</p>`;
 }
-
-function spark(items, key, color) {
-  if (!items || !items.length) return `<p class="text-xs text-muted">No data yet.</p>`;
-  const max = Math.max(1, ...items.map(i => i[key] || 0));
-  return `<div class="flex items-end gap-1 h-16">${items.map(i =>
-    `<div class="flex-1 rounded-t" title="${esc(i.d)}: ${i[key] || 0}" style="height:${Math.max(4, Math.round((i[key] || 0) / max * 100))}%;background:${color}"></div>`).join("")}</div>`;
-}
-
-function card(inner) { return `<div class="bg-panel border border-edge rounded-xl2 p-4">${inner}</div>`; }
-
-function statCard(label, val, sub, accent = "text-white") {
-  return `<div class="bg-panel border border-edge rounded-xl2 p-4">
-    <div class="text-[10.5px] font-semibold uppercase tracking-wide text-faint">${label}</div>
-    <div class="font-display font-extrabold text-2xl mt-1 ${accent}">${val}</div>
-    ${sub ? `<div class="text-[11px] text-muted mt-0.5">${sub}</div>` : ""}</div>`;
-}
-
-const PLAN_COLORS = { free: "#5f7a74", starter: "#2dd4bf", growth: "#0e9488", pro: "#d8a13a" };
-const planColor = k => PLAN_COLORS[k] || "#0e9488";
-
-// SVG area+line chart for a daily series of {d, <key>}
-function svgLine(series, key, color) {
-  if (!series || !series.length) return `<div class="text-xs text-muted py-10 text-center">No data yet.</div>`;
-  const W = 560, H = 150, padX = 6, top = 10, bot = 20;
-  const vals = series.map(s => +s[key] || 0);
-  const max = Math.max(1, ...vals), n = series.length;
-  const x = i => padX + (W - 2 * padX) * (n === 1 ? 0.5 : i / (n - 1));
-  const y = v => top + (H - top - bot) * (1 - v / max);
-  const pts = vals.map((v, i) => [x(i), y(v)]);
-  const line = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
-  const area = `M${x(0).toFixed(1)} ${(H - bot).toFixed(1)} ` + pts.map(p => "L" + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ") + ` L${x(n - 1).toFixed(1)} ${(H - bot).toFixed(1)} Z`;
-  const id = "ln" + Math.random().toString(36).slice(2, 8);
-  const grid = [0.5, 1].map(g => `<line x1="${padX}" x2="${W - padX}" y1="${y(max * g).toFixed(1)}" y2="${y(max * g).toFixed(1)}" stroke="#1d3b37" stroke-width="1"/>`).join("");
-  const last = pts[pts.length - 1];
-  return `<svg viewBox="0 0 ${W} ${H}" class="w-full" style="height:150px" preserveAspectRatio="none">
-    <defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="${color}" stop-opacity="0.32"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
-    ${grid}<path d="${area}" fill="url(#${id})"/>
-    <path d="${line}" fill="none" stroke="${color}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
-    <circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="3.5" fill="${color}"/></svg>`;
-}
-
-// SVG donut from [{label, value, color}]
-function svgDonut(segs) {
-  const total = segs.reduce((s, x) => s + x.value, 0) || 1;
-  const R = 56, C = 2 * Math.PI * R; let off = 0;
-  const rings = segs.filter(s => s.value > 0).map(s => {
-    const len = (s.value / total) * C;
-    const el = `<circle cx="80" cy="80" r="${R}" fill="none" stroke="${s.color}" stroke-width="18" stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 80 80)"/>`;
-    off += len; return el;
-  }).join("");
-  return `<svg viewBox="0 0 160 160" class="shrink-0" style="width:148px;height:148px">
-    <circle cx="80" cy="80" r="56" fill="none" stroke="#16322e" stroke-width="18"/>${rings}
-    <text x="80" y="76" text-anchor="middle" fill="#fff" font-size="24" font-weight="700">${total}</text>
-    <text x="80" y="98" text-anchor="middle" fill="#8aa39d" font-size="11">users</text></svg>`;
-}
+function card(inner) { return `<div class="glass rounded-2xl p-4">${inner}</div>`; }
 
 const NAV = [
   { key: "overview", label: "Overview", icon: '<path d="M4 13h7V4H4v9Zm9 7h7v-9h-7v9ZM4 20h7v-5H4v5ZM13 9h7V4h-7v5Z"/>' },
+  { key: "analytics", label: "Analytics", icon: '<path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 5-6"/>' },
   { key: "customers", label: "Customers", icon: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>' },
+  { key: "agents", label: "AI agents", icon: '<rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12h.01M15 12h.01M9 16h6"/>' },
   { key: "applications", label: "Applications", icon: '<path d="M4 5h16v14H4z"/><path d="M4 10h4l2 3h4l2-3h4"/>' },
   { key: "newsletter", label: "Newsletter", icon: '<path d="M4 6h16v12H4z"/><path d="m4 7 8 6 8-6"/>' },
   { key: "pricing", label: "Pricing", icon: '<path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>' },
 ];
+const RANGES = [[7, "7D"], [30, "30D"], [90, "90D"], [365, "12M"]];
 
 function adminSidebar() {
-  const item = n => `<button data-section="${n.key}" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition ${state.section === n.key ? "bg-brand/15 text-brand-bright" : "text-muted hover:bg-edge/40 hover:text-slate-100"}">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px]">${n.icon}</svg>${n.label}</button>`;
-  return `<aside class="hidden md:flex w-[228px] shrink-0 flex-col bg-panel/40 border-r border-edge px-3 py-5 sticky top-0 h-screen">
+  const pending = (state.agents?.agents || []).reduce((s, a) => s + (a.kind === "outreach" ? a.pending : 0), 0);
+  const badge = k => k === "agents" && pending ? `<span class="ml-auto text-[10px] font-bold bg-gold text-ink rounded-full px-1.5">${pending}</span>`
+    : k === "applications" && (state.applications || []).some(a => (a.status || "new") === "new") ? `<span class="ml-auto w-2 h-2 rounded-full bg-brand-bright pulse-dot"></span>` : "";
+  const item = n => `<button data-section="${n.key}" class="nav-item ${state.section === n.key ? "on" : ""}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px] shrink-0">${n.icon}</svg>${n.label}${badge(n.key)}</button>`;
+  return `<aside class="hidden md:flex w-[232px] shrink-0 flex-col side-glass px-3 py-5 sticky top-0 h-screen">
     <div class="flex items-center gap-2.5 px-2 mb-7">${vmark(32)}<div>${vword({ size: "17px" })}
       <div class="text-[9px] font-mono uppercase tracking-wider text-faint mt-1 leading-none">Admin console</div></div></div>
+    <button id="openPalette" class="mx-1 mb-4 flex items-center gap-2 text-[12px] text-faint border border-edge rounded-xl px-3 py-2 hover:border-brand/50 hover:text-slate-200">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3.5 h-3.5"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      Jump to… <span class="ml-auto font-mono text-[10px] border border-edge rounded px-1">Ctrl K</span></button>
     <nav class="space-y-1">${NAV.map(item).join("")}</nav>
     <div class="mt-auto px-2">
       <div class="text-[11px] text-muted truncate mb-2">${esc(state.user.email)}</div>
@@ -230,125 +215,285 @@ function adminSidebar() {
 }
 
 function adminTopbar() {
-  return `<header class="border-b border-edge bg-panel/60 backdrop-blur sticky top-0 z-20">
+  const showRange = ["overview", "analytics"].includes(state.section);
+  const title = (NAV.find(n => n.key === state.section) || {}).label || state.section;
+  return `<header class="border-b border-edge top-glass sticky top-0 z-20">
     <div class="px-5 sm:px-7 h-14 flex items-center gap-3">
       <span class="md:hidden">${vmark(28)}</span>
-      <div class="font-display font-bold capitalize">${state.section}</div>
-      <div class="md:hidden ml-1 flex gap-1">${NAV.map(n => `<button data-section="${n.key}" class="text-xs px-2 py-1 rounded-lg ${state.section === n.key ? "bg-brand/15 text-brand-bright" : "text-muted"}">${n.label}</button>`).join("")}</div>
+      <div class="font-display font-bold">${esc(title)}</div>
+      <div class="md:hidden ml-1 flex gap-1 overflow-x-auto scroll-thin">${NAV.map(n => `<button data-section="${n.key}" class="text-xs px-2 py-1 rounded-lg whitespace-nowrap ${state.section === n.key ? "bg-brand/15 text-brand-bright" : "text-muted"}">${n.label}</button>`).join("")}</div>
       <div class="ml-auto flex items-center gap-2">
-        <button id="refresh" class="text-muted hover:text-white border border-edge rounded-lg px-3 py-1.5 text-xs">↻ Refresh</button>
+        ${showRange ? `<div class="seg-group">${RANGES.map(([d, l]) => `<button data-range="${d}" class="seg ${state.range === d ? "on" : ""}">${l}</button>`).join("")}</div>` : ""}
+        <button id="autoRefresh" class="seg ${state.autoRefresh ? "on" : ""}" title="Refresh every 60 seconds"><span class="${state.autoRefresh ? "pulse-dot" : ""} inline-block w-1.5 h-1.5 rounded-full ${state.autoRefresh ? "bg-brand-bright" : "bg-faint"} mr-1.5 align-middle"></span>Live</button>
+        <button id="refresh" class="seg" title="Refresh now">↻</button>
         <button id="logout2" class="md:hidden text-rose-300 border border-edge rounded-lg px-3 py-1.5 text-xs">Out</button></div>
     </div></header>`;
 }
 
 function renderDash() {
+  disposeCharts();
+  const S = state.section;
+  const body = S === "customers" ? customersSection() : S === "applications" ? applicationsSection() : S === "newsletter" ? newsletterSection()
+    : S === "pricing" ? pricingSection() : S === "analytics" ? analyticsSection() : S === "agents" ? agentsSection() : overviewSection();
   $("#app").innerHTML = `<div class="flex min-h-screen">
     ${adminSidebar()}
     <div class="flex-1 min-w-0 flex flex-col">
       ${adminTopbar()}
-      <main class="flex-1 px-5 sm:px-7 py-6 w-full max-w-[1180px]">${state.section === "customers" ? customersSection() : state.section === "applications" ? applicationsSection() : state.section === "newsletter" ? newsletterSection() : state.section === "pricing" ? pricingSection() : overviewSection()}</main>
-    </div></div>`;
+      <main class="flex-1 px-5 sm:px-7 py-6 w-full max-w-[1320px]">${body}</main>
+    </div></div>
+    ${state.detail ? customerDrawer() : ""}`;
+  mountCharts();
   wireDash();
 }
 
-function overviewSection() {
-  const o = state.overview;
-  const usd = n => "$" + Math.round(n / o.fx).toLocaleString();
-  const margin = o.mrr ? Math.round((1 - (o.ai_spend_30d / o.mrr)) * 100) + "%" : "—";
-  const conv = o.total_users ? Math.round(o.paid_users / o.total_users * 100) : 0;
-  const arpu = o.paid_users ? naira(Math.round(o.mrr / o.paid_users)) : "—";
-  const planSegs = (o.plans || []).map(p => ({ label: p.name, value: p.count, color: planColor(p.plan) }));
-  const latest = (arr, key) => (arr && arr.length ? arr[arr.length - 1][key] : 0);
-  return `
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-      ${statCard("Total users", o.total_users.toLocaleString(), `+${o.new_users_30d} in 30 days`, "text-brand-bright")}
-      ${statCard("Paid users", o.paid_users.toLocaleString(), `${conv}% conversion`)}
-      ${statCard("Est. MRR", naira(o.mrr), `ARR ${naira(o.arr)} · ARPU ${arpu}`, "text-brand-bright")}
-      ${statCard("Gross margin · 30d", margin, "MRR vs AI cost", "text-brand-bright")}
-      ${statCard("Active · 7d", (o.active_7d || 0).toLocaleString(), "generated this week")}
-      ${statCard("Active · 30d", (o.active_30d || 0).toLocaleString(), `${o.total_users ? Math.round((o.active_30d || 0) / o.total_users * 100) : 0}% of base`)}
-      ${statCard("AI spend · all-time", naira(o.ai_spend), `${usd(o.ai_spend)} · ${o.generations.toLocaleString()} gens`, "text-gold")}
-      ${statCard("AI spend · 30d", naira(o.ai_spend_30d), `${o.generations_30d.toLocaleString()} gens · ${o.suspended_users || 0} suspended`)}
-    </div>
-    <div class="grid lg:grid-cols-3 gap-4 mt-4">
-      ${card(`<div class="flex items-center justify-between mb-1"><div class="text-[13px] font-semibold text-white">New signups</div><div class="text-[11px] text-muted">14 days</div></div>
-        <div class="font-display font-extrabold text-2xl mb-1 text-brand-bright">${latest(o.signups_daily, "n")}</div>${svgLine(o.signups_daily, "n", "#2dd4bf")}`)}
-      ${card(`<div class="flex items-center justify-between mb-1"><div class="text-[13px] font-semibold text-white">Generations</div><div class="text-[11px] text-muted">14 days</div></div>
-        <div class="font-display font-extrabold text-2xl mb-1 text-brand-bright">${latest(o.gens_daily, "n")}</div>${svgLine(o.gens_daily, "n", "#0e9488")}`)}
-      ${card(`<div class="flex items-center justify-between mb-1"><div class="text-[13px] font-semibold text-white">AI spend</div><div class="text-[11px] text-muted">14 days</div></div>
-        <div class="font-display font-extrabold text-2xl mb-1 text-gold">${naira(latest(o.gens_daily, "cost"))}</div>${svgLine(o.gens_daily, "cost", "#d8a13a")}`)}
-    </div>
-    <div class="grid lg:grid-cols-2 gap-4 mt-4">
-      ${card(`<div class="text-[13px] font-semibold mb-3 text-white">Subscriptions by plan</div>
-        <div class="flex items-center gap-5">${svgDonut(planSegs)}
-          <div class="space-y-2 flex-1 min-w-0">${(o.plans || []).map(p => `<div class="flex items-center gap-2 text-xs"><span class="w-3 h-3 rounded-sm shrink-0" style="background:${planColor(p.plan)}"></span><span class="text-slate-200 flex-1 truncate">${esc(p.name)}</span><span class="text-faint tabular-nums whitespace-nowrap">${p.count}${p.price ? " · " + naira(p.price * p.count) : ""}</span></div>`).join("") || '<p class="text-xs text-muted">No data.</p>'}</div></div>`)}
-      ${card(`<div class="text-[13px] font-semibold mb-3 text-white">Generations by type</div><div class="space-y-2.5">${bars(o.by_type.map(t => ({ label: t.label, value: t.n, sub: t.n })), "#34d186")}</div>`)}
-    </div>
-    <div class="mt-4">${card(`<div class="text-[13px] font-semibold mb-3 text-white">AI spend by model</div><div class="space-y-2.5">${bars(o.by_model.map(m => ({ label: m.model, value: Math.round(m.cost), sub: naira(m.cost) })), "#b7791f")}</div>`)}</div>`;
+/* ----------------------------- overview ---------------------------- */
+
+const OV_METRICS = [["generations", "Generations", CH.bright], ["active", "Active users", CH.cyan], ["signups", "Sign-ups", CH.violet], ["cost", "AI spend", CH.gold]];
+
+function kpiTile(label, value, sub, chip, sparkId, sparkData, color) {
+  return `<div class="glass kpi rounded-2xl p-4 relative overflow-hidden">
+    <div class="flex items-center justify-between"><div class="text-[10.5px] font-semibold uppercase tracking-wider text-faint">${label}</div>${chip || ""}</div>
+    <div class="font-display font-extrabold text-[26px] mt-1 text-white tabular-nums glow-text">${value}</div>
+    <div class="text-[11px] text-muted">${sub || ""}</div>
+    ${sparkId ? `<div class="mt-2 -mx-1">${chartBox(sparkId, sparkOpt(sparkData, color), 42)}</div>` : ""}
+  </div>`;
 }
 
+function overviewSection() {
+  const A = state.analytics, o = state.overview;
+  if (!A) return `<div class="text-muted">Loading…</div>`;
+  const T = A.totals, P = A.previous, S = A.series;
+  const conv = A.total_users ? Math.round(A.paid_users / A.total_users * 100) : 0;
+  const metric = OV_METRICS.find(m => m[0] === state.ovMetric) || OV_METRICS[0];
+  const mType = state.chartView.ov_main || "line";
+  const seg = A.segments.counts;
+  const greet = (() => { const h = new Date().getHours(); return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"; })();
+  const att = [
+    ["at_risk", "Paying customers gone quiet", seg.at_risk, "winback", "Draft win-backs"],
+    ["never_generated", "Signed up, never created", seg.never_generated, "activation", "Draft nudges"],
+    ["near_limit", "Free users near their limit", seg.near_limit, "upgrade", "Draft upgrade notes"],
+  ];
+  return `
+    <div class="glass rounded-2xl p-5 mb-4 hero-grid relative overflow-hidden">
+      <div class="flex items-center justify-between flex-wrap gap-3">
+        <div><div class="text-[11px] font-mono uppercase tracking-wider text-brand-bright">Command centre · last ${A.days} days</div>
+          <div class="font-display font-extrabold text-2xl text-white mt-1">${greet}, ${esc((state.user.name || "admin").split(" ")[0])}.</div>
+          <div class="text-[13px] text-muted mt-1">${T.generations.toLocaleString()} generations from ${T.active} active users · ${naira(A.mrr)} MRR · ${seg.at_risk + seg.never_generated + seg.near_limit} people need attention</div></div>
+        <div class="flex gap-2 flex-wrap">
+          <button data-section="agents" class="btn-glow">Open AI agents</button>
+          <button data-section="analytics" class="btn-ghost">Deep analytics →</button></div>
+      </div>
+    </div>
+    <div class="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+      ${kpiTile("Sign-ups", T.signups.toLocaleString(), `vs ${P.signups} before`, deltaChip(T.signups, P.signups), "sp_su", S.signups, CH.violet)}
+      ${kpiTile("Active users", T.active.toLocaleString(), `of ${A.total_users} total`, deltaChip(T.active, P.active), "sp_ac", S.active, CH.cyan)}
+      ${kpiTile("Generations", T.generations.toLocaleString(), `${(T.tokens / 1000).toFixed(0)}k tokens`, deltaChip(T.generations, P.generations), "sp_ge", S.generations, CH.bright)}
+      ${kpiTile("AI spend", naira(T.cost), `$${Math.round(T.cost / A.fx)}`, deltaChip(T.cost, P.cost, { invert: true }), "sp_co", S.cost, CH.gold)}
+      ${kpiTile("MRR (est.)", naira(A.mrr), `ARR ${naira(A.arr)}`, "", null)}
+      ${kpiTile("Paid users", A.paid_users.toLocaleString(), `${conv}% conversion`, "", null)}
+    </div>
+    <div class="grid lg:grid-cols-3 gap-4 mt-4">
+      ${chartCard(`<span class="flex gap-1 flex-wrap">${OV_METRICS.map(([k, l]) => `<button data-ovm="${k}" class="seg ${state.ovMetric === k ? "on" : ""}">${l}</button>`).join("")}</span>`,
+        "Drag the slider or scroll on the chart to zoom. The dashed line is the 7-day average.",
+        chartBox("ov_main", lineOpt(A.labels, [{ name: metric[1], data: S[metric[0]], color: metric[2] }], { type: mType, money: metric[0] === "cost", zoom: true, avg: true }), 320),
+        { id: "ov_main", span: "lg:col-span-2", tools: [{ k: "view", v: "line", label: "Line", on: mType === "line" }, { k: "view", v: "bar", label: "Bar", on: mType === "bar" }] })}
+      ${chartCard("Customers by plan", "Click a slice to filter customers",
+        chartBox("ov_plans", donutOpt(A.plans.map(p => ({ name: p.name, value: p.count })), "users", A.total_users), 320), { id: "ov_plans" })}
+    </div>
+    <div class="grid lg:grid-cols-3 gap-4 mt-4">
+      ${chartCard("Activation funnel", `Sign-ups in the last ${A.days} days`, chartBox("ov_funnel", funnelOpt(A.funnel), 280), { id: "ov_funnel" })}
+      <div class="glass rounded-2xl p-4">
+        <div class="text-[13px] font-semibold text-white mb-3">Needs attention</div>
+        <div class="space-y-2.5">${att.map(([k, l, n, agent, cta]) => `<div class="flex items-center gap-3 rounded-xl bg-paper/60 border border-edge px-3 py-2.5">
+          <div class="font-display font-extrabold text-xl tabular-nums ${n ? "text-gold" : "text-faint"} w-9">${n}</div>
+          <div class="flex-1 text-[12.5px] text-slate-200">${l}</div>
+          <button data-seg-open="${k}" class="text-[11px] text-muted hover:text-white">View</button>
+          ${n ? `<button data-agent-jump="${agent}" class="text-[11px] font-semibold text-brand-bright hover:underline">${cta}</button>` : ""}</div>`).join("")}</div>
+      </div>
+      <div class="glass rounded-2xl p-4">
+        <div class="flex items-center justify-between mb-3"><div class="text-[13px] font-semibold text-white">Live activity</div>
+          <span class="text-[10px] text-faint">${state.lastLoaded ? "updated " + new Date(state.lastLoaded).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : ""}</span></div>
+        <div class="space-y-2 max-h-[250px] overflow-y-auto scroll-thin">${(A.recent || []).map(r => `<div class="flex items-center gap-2.5 text-xs">
+          <span class="w-1.5 h-1.5 rounded-full bg-brand-bright pulse-dot shrink-0"></span>
+          <span class="text-slate-100 truncate flex-1"><b>${esc((r.name || "Someone").split(" ")[0])}</b> made a ${esc(r.label)}</span>
+          <span class="text-faint whitespace-nowrap">${ago(r.created_at)}</span></div>`).join("") || '<p class="text-xs text-muted">No activity yet.</p>'}</div>
+      </div>
+    </div>`;
+}
+
+/* ----------------------------- customers --------------------------- */
+
+const SEGMENTS = [
+  ["all", "All"], ["paid", "Paid"], ["free", "Free"], ["active7", "Active 7d"], ["at_risk", "At risk"],
+  ["never", "Never created"], ["suspended", "Suspended"], ["admins", "Admins"],
+];
+const DAY = 86400;
+function segTest(u, k) {
+  const now = Date.now() / 1000;
+  return k === "all" ? true : k === "paid" ? u.plan !== "free" : k === "free" ? u.plan === "free"
+    : k === "active7" ? u.last_active && u.last_active > now - 7 * DAY
+    : k === "at_risk" ? u.plan !== "free" && !u.suspended && (!u.last_active || u.last_active < now - 14 * DAY)
+    : k === "never" ? !u.gens : k === "suspended" ? !!u.suspended : k === "admins" ? !!u.is_admin : true;
+}
 function filteredUsers() {
   const q = (state.q || "").toLowerCase().trim();
-  if (!q) return state.users;
-  return state.users.filter(u => (u.name || "").toLowerCase().includes(q)
-    || (u.email || "").toLowerCase().includes(q) || (u.plan_name || "").toLowerCase().includes(q)
-    || (u.phone || "").toLowerCase().includes(q));
+  let list = (state.users || []).filter(u => segTest(u, state.seg) && (state.planFilter === "all" || u.plan === state.planFilter));
+  if (q) list = list.filter(u => (u.name || "").toLowerCase().includes(q) || (u.email || "").toLowerCase().includes(q)
+    || (u.plan_name || "").toLowerCase().includes(q) || (u.phone || "").toLowerCase().includes(q));
+  const { key, dir } = state.sort;
+  const val = u => key === "tokens" ? (u.it || 0) + (u.ot || 0) : key === "name" ? (u.name || u.email || "").toLowerCase() : (u[key] ?? 0);
+  return [...list].sort((a, b) => (val(a) > val(b) ? 1 : val(a) < val(b) ? -1 : 0) * dir);
 }
 
 function customersSection() {
+  const all = state.users || [];
   const list = filteredUsers();
+  const plans = [...new Set(all.map(u => u.plan))];
+  const th = (k, l, right) => `<th data-sort="${k}" class="py-2 px-2 font-semibold cursor-pointer select-none hover:text-slate-200 ${right ? "text-right" : ""}">${l}${state.sort.key === k ? (state.sort.dir > 0 ? " ▲" : " ▼") : ""}</th>`;
+  const dense = state.density === "compact";
+  const sel = state.selected;
+  const rows = list.map(u => userRow(u, dense)).join("") || `<tr><td colspan="10" class="py-6 text-center text-muted">No customers match.</td></tr>`;
+  const cards = list.map(u => `<button data-user="${u.id}" class="glass rounded-2xl p-4 text-left hover:border-brand/50 ${u.suspended ? "opacity-60" : ""}">
+      <div class="flex items-center gap-3"><span class="w-9 h-9 rounded-full grid place-items-center font-bold text-ink" style="background:linear-gradient(135deg,#2dd4bf,#0e9488)">${esc((u.name || u.email || "?")[0].toUpperCase())}</span>
+        <div class="min-w-0"><div class="text-[13px] font-semibold text-white truncate">${esc(u.name || "—")}</div><div class="text-[11px] text-faint truncate">${esc(u.email)}</div></div></div>
+      <div class="flex items-center gap-2 mt-3 text-[11px]"><span class="chip ${u.plan === "free" ? "chip-flat" : "chip-up"}">${esc(u.plan_name)}</span>
+        <span class="text-muted">${u.gens} gens · ${naira(u.cost)}</span><span class="ml-auto text-faint">${u.last_active ? ago(u.last_active) : "never active"}</span></div>
+    </button>`).join("") || `<p class="text-sm text-muted">No customers match.</p>`;
   return `
-    <div id="detail">${state.detail ? userDetail(state.detail) : ""}</div>
-    ${card(`<div class="flex items-center justify-between gap-3 mb-3 flex-wrap">
-        <div class="text-[13px] font-semibold text-white">Customers <span id="custCount" class="text-faint">(${list.length}${list.length !== state.users.length ? " of " + state.users.length : ""})</span></div>
-        <input id="userSearch" value="${esc(state.q || "")}" placeholder="Search name, email, plan…" class="bg-paper border border-edge rounded-lg px-3 py-1.5 text-xs text-slate-100 w-60 outline-none focus:border-brand/60"/></div>
+    <div class="flex gap-1.5 flex-wrap mb-3">${SEGMENTS.map(([k, l]) => `<button data-seg="${k}" class="seg ${state.seg === k ? "on" : ""}">${l} <span class="opacity-60">${all.filter(u => segTest(u, k)).length}</span></button>`).join("")}</div>
+    <div class="glass rounded-2xl p-4">
+      <div class="flex items-center gap-2 mb-3 flex-wrap">
+        <input id="userSearch" value="${esc(state.q || "")}" placeholder="Search name, email, phone…" class="input w-64"/>
+        <select id="planFilter" class="input"><option value="all">All plans</option>${plans.map(p => `<option value="${p}" ${state.planFilter === p ? "selected" : ""}>${esc(p)}</option>`).join("")}</select>
+        <span id="custCount" class="text-[12px] text-faint">${list.length} of ${all.length}</span>
+        <div class="ml-auto flex items-center gap-1.5">
+          ${sel.size ? `<span class="text-[12px] text-brand-bright">${sel.size} selected</span>
+            <select id="bulkPlan" class="input"><option value="">Change plan…</option>${(state.overview?.all_plans || []).map(p => `<option value="${p.key}">${esc(p.name)}</option>`).join("")}</select>
+            <button id="bulkExport" class="seg">Export selected</button><button id="bulkClear" class="seg">Clear</button>` : ""}
+          <div class="seg-group"><button data-cview="table" class="seg ${state.custView === "table" ? "on" : ""}">Table</button><button data-cview="cards" class="seg ${state.custView === "cards" ? "on" : ""}">Cards</button></div>
+          ${state.custView === "table" ? `<button id="density" class="seg" title="Row density">${dense ? "Comfy" : "Compact"}</button>` : ""}
+          <button id="exportCSV" class="seg">⤓ CSV</button>
+        </div>
+      </div>
+      ${state.custView === "cards" ? `<div class="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">${cards}</div>` : `
       <div class="overflow-x-auto scroll-thin"><table class="w-full text-xs">
         <thead><tr class="text-faint text-left border-b border-edge">
-          <th class="py-2 pr-3 font-semibold">User</th><th class="py-2 px-2 font-semibold">Phone</th><th class="py-2 px-2 font-semibold">Plan</th>
-          <th class="py-2 px-2 font-semibold text-right">Gens</th><th class="py-2 px-2 font-semibold text-right">Tokens</th>
-          <th class="py-2 px-2 font-semibold text-right">AI spend</th><th class="py-2 px-2 font-semibold">Joined</th><th></th></tr></thead>
-        <tbody id="custBody">${list.map(userRow).join("") || `<tr><td colspan="8" class="py-4 text-muted">No users yet.</td></tr>`}</tbody></table></div>`)}`;
+          <th class="py-2 pr-2 w-6"><input type="checkbox" id="selAllUsers" class="accent-teal-400" ${list.length && list.every(u => sel.has(u.id)) ? "checked" : ""}/></th>
+          ${th("name", "Customer")}<th class="py-2 px-2 font-semibold">Phone</th>${th("plan", "Plan")}
+          ${th("gens", "Gens", 1)}${th("tokens", "Tokens", 1)}${th("cost", "AI spend", 1)}${th("last_active", "Last active")}${th("created_at", "Joined")}<th></th></tr></thead>
+        <tbody id="custBody">${rows}</tbody></table></div>`}
+    </div>`;
 }
 
+function userRow(u, dense) {
+  const tok = (u.it || 0) + (u.ot || 0);
+  const pad = dense ? "py-1" : "py-2.5";
+  const now = Date.now() / 1000;
+  const dot = !u.last_active ? "bg-faint" : u.last_active > now - 7 * DAY ? "bg-brand-bright" : u.last_active > now - 30 * DAY ? "bg-gold" : "bg-rose-400";
+  return `<tr class="border-b border-edge/60 hover:bg-edge/30 ${u.suspended ? "opacity-60" : ""} ${state.selected.has(u.id) ? "bg-brand/10" : ""}">
+    <td class="${pad} pr-2"><input type="checkbox" data-usel="${u.id}" class="accent-teal-400" ${state.selected.has(u.id) ? "checked" : ""}/></td>
+    <td class="${pad} pr-3"><div class="font-semibold flex items-center gap-1.5 text-slate-100">${esc(u.name || "—")}${u.is_admin ? ' <span class="text-[8.5px] bg-brand text-ink px-1 py-0.5 rounded">ADMIN</span>' : ""}${u.suspended ? ' <span class="text-[8.5px] bg-rose-500/80 text-white px-1 py-0.5 rounded">SUSPENDED</span>' : ""}</div>${dense ? "" : `<div class="text-faint">${esc(u.email)}</div>`}</td>
+    <td class="${pad} px-2 whitespace-nowrap">${phoneLink(u.phone)}</td>
+    <td class="${pad} px-2"><span class="chip ${u.plan === "free" ? "chip-flat" : "chip-up"}">${esc(u.plan_name)}</span></td>
+    <td class="${pad} px-2 text-right tabular-nums text-slate-300">${u.gens}</td>
+    <td class="${pad} px-2 text-right tabular-nums text-slate-300">${tok.toLocaleString()}</td>
+    <td class="${pad} px-2 text-right tabular-nums text-slate-300">${naira(u.cost)}</td>
+    <td class="${pad} px-2 whitespace-nowrap text-muted"><span class="inline-block w-1.5 h-1.5 rounded-full ${dot} mr-1.5 align-middle"></span>${u.last_active ? ago(u.last_active) : "never"}</td>
+    <td class="${pad} px-2 text-muted whitespace-nowrap">${fmtDate(u.created_at)}</td>
+    <td class="${pad} pl-2 text-right"><button data-user="${u.id}" class="text-brand-bright font-semibold hover:underline">View</button></td></tr>`;
+}
+
+function customerDrawer() {
+  return `<div id="drawerBg" class="fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px] fade-in"></div>
+    <aside class="fixed right-0 top-0 bottom-0 z-50 w-full max-w-[640px] overflow-y-auto scroll-thin drawer p-5 slide-in">${userDetail(state.detail)}</aside>`;
+}
+
+/* ---------------------------- applications ------------------------- */
+
+const APP_STATUSES = ["new", "contacted", "accepted", "rejected"];
 function applicationsSection() {
-  const list = state.applications || [];
-  const newCount = list.filter(a => (a.status || "new") === "new").length;
-  return card(`<div class="flex items-center justify-between gap-3 mb-3 flex-wrap">
-      <div class="text-[13px] font-semibold text-white">Creator Initiative applications
-        <span class="text-faint">(${list.length})</span>${newCount ? ` <span class="text-[10px] bg-brand text-ink px-1.5 py-0.5 rounded-full font-bold ml-1">${newCount} new</span>` : ""}</div></div>
-    <div class="overflow-x-auto scroll-thin"><table class="w-full text-xs">
+  const all = state.applications || [];
+  const q = state.appQ.toLowerCase().trim();
+  const list = all.filter(a => (state.appFilter === "all" || (a.status || "new") === state.appFilter)
+    && (!q || [a.name, a.email, a.handle, a.niche, a.note, a.phone].some(x => (x || "").toLowerCase().includes(q))));
+  const count = s => all.filter(a => (a.status || "new") === s).length;
+  const board = `<div class="grid md:grid-cols-4 gap-3">${APP_STATUSES.map(s => {
+    const col = list.filter(a => (a.status || "new") === s);
+    return `<div class="glass rounded-2xl p-3 min-h-[200px]"><div class="flex items-center justify-between mb-2"><span class="text-[12px] font-semibold capitalize text-white">${s}</span><span class="chip chip-flat">${col.length}</span></div>
+      <div class="space-y-2">${col.map(a => `<div class="rounded-xl bg-paper/70 border border-edge p-3">
+        <div class="text-[12.5px] font-semibold text-slate-100">${esc(a.name)}</div>
+        <div class="text-[11px] text-faint">${esc(a.niche || "—")}${a.handle ? " · " + esc(a.handle) : ""}</div>
+        ${a.note ? `<div class="text-[11px] text-muted mt-1.5 line-clamp-3">${esc(a.note)}</div>` : ""}
+        <div class="flex items-center gap-2 mt-2"><a href="${waHref(a.phone)}" target="_blank" rel="noopener" class="text-[11px] text-brand-bright">WhatsApp</a>
+          <select data-appstatus="${a.id}" class="input ml-auto !py-1 capitalize">${APP_STATUSES.map(x => `<option value="${x}" ${(a.status || "new") === x ? "selected" : ""}>${x}</option>`).join("")}</select></div>
+      </div>`).join("") || '<div class="text-[11px] text-faint py-4 text-center">Empty</div>'}</div></div>`;
+  }).join("")}</div>`;
+  const table = card(`<div class="overflow-x-auto scroll-thin"><table class="w-full text-xs">
       <thead><tr class="text-faint text-left border-b border-edge">
         <th class="py-2 pr-3 font-semibold">Applicant</th><th class="py-2 px-2 font-semibold">Phone / WhatsApp</th>
         <th class="py-2 px-2 font-semibold">Niche</th><th class="py-2 px-2 font-semibold">About</th>
         <th class="py-2 px-2 font-semibold">Applied</th><th class="py-2 px-2 font-semibold">Status</th></tr></thead>
-      <tbody>${list.map(appRow).join("") || `<tr><td colspan="6" class="py-4 text-muted">No applications yet.</td></tr>`}</tbody></table></div>`);
+      <tbody>${list.map(appRow).join("") || `<tr><td colspan="6" class="py-6 text-center text-muted">No applications match.</td></tr>`}</tbody></table></div>`);
+  return `
+    <div class="flex items-center gap-2 flex-wrap mb-3">
+      ${["all", ...APP_STATUSES].map(s => `<button data-appf="${s}" class="seg capitalize ${state.appFilter === s ? "on" : ""}">${s} <span class="opacity-60">${s === "all" ? all.length : count(s)}</span></button>`).join("")}
+      <input id="appSearch" value="${esc(state.appQ)}" placeholder="Search applicants…" class="input w-56 ml-auto"/>
+      <div class="seg-group"><button data-aview="table" class="seg ${state.appView === "table" ? "on" : ""}">Table</button><button data-aview="board" class="seg ${state.appView === "board" ? "on" : ""}">Board</button></div>
+      <button id="appExport" class="seg">⤓ CSV</button>
+    </div>
+    ${state.appView === "board" ? board : table}`;
 }
 
-function pricingRow(p) {
-  const busy = state.pricingBusy[p.key];
-  return `<div class="flex items-center gap-3 py-3 border-b border-edge/60 last:border-0">
-    <div class="w-28 shrink-0">
-      <div class="text-sm font-semibold text-slate-100">${esc(p.name)}</div>
-      ${p.is_override ? `<div class="text-[10px] text-brand-bright">Custom · default ${naira(p.default_price)}</div>` : `<div class="text-[10px] text-faint">Default</div>`}
-    </div>
-    <div class="flex items-center gap-1.5">
-      <span class="text-slate-400 text-sm">₦</span>
-      <input data-price-input="${p.key}" type="number" min="0" step="500" value="${p.price}"
-        class="w-32 bg-panel border border-edge rounded-lg px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-brand/60"/>
-    </div>
-    <button data-price-save="${p.key}" ${busy?"disabled":""} class="text-xs font-semibold bg-brand text-ink rounded-lg px-3 py-1.5 hover:bg-brand-bright disabled:opacity-50">${busy?"Saving…":"Save"}</button>
-    ${p.is_override ? `<button data-price-reset="${p.key}" class="text-xs text-muted hover:text-rose-300">Reset</button>` : ""}
-  </div>`;
-}
+/* ------------------------------ pricing ---------------------------- */
 
 function pricingSection() {
   const plans = state.pricing || [];
-  return card(`
-    <div class="text-[13px] font-semibold mb-1 text-white">Plan pricing</div>
-    <div class="text-[11px] text-faint mb-4">Changes apply immediately to new checkouts and upgrades. Existing subscribers keep whatever they already paid until they re-subscribe.</div>
-    ${plans.map(pricingRow).join("") || '<p class="text-xs text-muted">No plans found.</p>'}
-  `);
+  const subs = Object.fromEntries((state.analytics?.plans || []).map(p => [p.plan, p.count]));
+  const draft = state.pricingDraft;
+  const priceOf = p => draft[p.key] !== undefined ? +draft[p.key] : p.price;
+  const curMRR = plans.reduce((s, p) => s + p.price * (subs[p.key] || 0), 0);
+  const newMRR = plans.reduce((s, p) => s + priceOf(p) * (subs[p.key] || 0), 0);
+  const diff = newMRR - curMRR;
+  const rows = plans.map(p => {
+    const busy = state.pricingBusy[p.key], n = subs[p.key] || 0, changed = draft[p.key] !== undefined && +draft[p.key] !== p.price;
+    return `<tr class="border-b border-edge/60">
+      <td class="py-3 pr-3"><div class="text-sm font-semibold text-slate-100">${esc(p.name)}</div>
+        ${p.is_override ? `<div class="text-[10px] text-brand-bright">Custom · default ${naira(p.default_price)}</div>` : `<div class="text-[10px] text-faint">Default price</div>`}</td>
+      <td class="py-3 px-2 text-right tabular-nums text-slate-300">${n}</td>
+      <td class="py-3 px-2"><div class="flex items-center gap-1.5 justify-end"><span class="text-slate-400 text-sm">₦</span>
+        <input data-price-input="${p.key}" type="number" min="0" step="500" value="${priceOf(p)}" class="input w-32 text-right ${changed ? "!border-gold" : ""}"/></div></td>
+      <td class="py-3 px-2 text-right tabular-nums text-slate-300">${naira(priceOf(p) * n)}</td>
+      <td class="py-3 pl-2 text-right whitespace-nowrap">
+        <button data-price-save="${p.key}" ${busy ? "disabled" : ""} class="btn-glow !py-1.5">${busy ? "Saving…" : "Save"}</button>
+        ${p.is_override ? `<button data-price-reset="${p.key}" class="text-xs text-muted hover:text-rose-300 ml-2">Reset</button>` : ""}</td></tr>`;
+  }).join("");
+  const proj = plans.filter(p => p.price || priceOf(p));
+  return `<div class="grid lg:grid-cols-3 gap-4">
+    <div class="glass rounded-2xl p-4 lg:col-span-2">
+      <div class="text-[13px] font-semibold text-white">Plan pricing</div>
+      <div class="text-[11px] text-faint mb-3">Type a new price to preview its effect on MRR before saving. Changes apply to new checkouts and upgrades; existing subscribers keep what they paid until they re-subscribe.</div>
+      <div class="overflow-x-auto scroll-thin"><table class="w-full text-xs"><thead><tr class="text-faint text-left border-b border-edge">
+        <th class="py-2 pr-3 font-semibold">Plan</th><th class="py-2 px-2 font-semibold text-right">Subscribers</th><th class="py-2 px-2 font-semibold text-right">Price / month</th>
+        <th class="py-2 px-2 font-semibold text-right">MRR</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+    </div>
+    <div class="space-y-4">
+      <div class="glass rounded-2xl p-4 hero-grid">
+        <div class="text-[11px] uppercase tracking-wider text-faint font-semibold">MRR if saved</div>
+        <div class="font-display font-extrabold text-3xl text-white mt-1 glow-text">${naira(newMRR)}</div>
+        <div class="text-[12px] mt-1 ${diff > 0 ? "text-emerald-300" : diff < 0 ? "text-rose-300" : "text-muted"}">${diff ? (diff > 0 ? "+" : "−") + naira(Math.abs(diff)) + " vs today" : "Same as today"} · current ${naira(curMRR)}</div>
+        <div class="text-[11px] text-faint mt-2">Assumes every current subscriber stays on their plan.</div>
+      </div>
+      ${chartCard("Revenue by plan", "Today vs with your edits", chartBox("ch_price", {
+        grid: { left: 8, right: 8, top: 30, bottom: 8, containLabel: true }, legend: { top: 0 },
+        xAxis: { type: "category", data: proj.map(p => p.name), axisLabel: { interval: 0, rotate: 30 } }, yAxis: { type: "value", axisLabel: { formatter: v => "₦" + compact(v) } },
+        tooltip: { trigger: "axis", valueFormatter: v => naira(v) },
+        series: [{ name: "Today", type: "bar", barMaxWidth: 14, data: proj.map(p => p.price * (subs[p.key] || 0)), itemStyle: { color: CH.teal, borderRadius: [4, 4, 0, 0] } },
+          { name: "With edits", type: "bar", barMaxWidth: 14, data: proj.map(p => priceOf(p) * (subs[p.key] || 0)), itemStyle: { color: CH.gold, borderRadius: [4, 4, 0, 0] } }],
+      }, 240), { id: "ch_price" })}
+    </div></div>`;
 }
+
+/* ----------------------------- newsletter --------------------------- */
 
 const NL_STATUS_META = {
   sent:   { color: "#5eead4", bg: "rgba(94,234,212,.14)",  ring: "border-brand-bright/40",   label: it => `Sent · ${it.sent_count ?? 0}` },
@@ -512,42 +657,131 @@ function appRow(a) {
       ${statuses.map(s => `<option value="${s}" ${(a.status || "new") === s ? "selected" : ""}>${s}</option>`).join("")}</select></td></tr>`;
 }
 
+/* ------------------------------ wiring ----------------------------- */
+
+function setSection(k) {
+  state.section = k; store.set("section", k); state.detail = null;
+  if (k !== "agents") state.agentOpen = null;
+  renderDash(); window.scrollTo({ top: 0 });
+}
+
+async function reloadAll() { await load(); if (state.agentOpen) state.agentDetail = await api(`/api/admin/agents/${state.agentOpen}`); renderDash(); }
+
 function wireDash() {
-  $$("[data-section]").forEach(b => b.onclick = () => { state.section = b.dataset.section; state.detail = null; renderDash(); });
+  $$("[data-section]").forEach(b => b.onclick = () => setSection(b.dataset.section));
   $$("[data-appstatus]").forEach(sel => sel.onchange = async () => {
     try {
       await api(`/api/admin/applications/${sel.dataset.appstatus}/status`, { method: "POST", body: JSON.stringify({ status: sel.value }) });
       const a = (state.applications || []).find(x => String(x.id) === sel.dataset.appstatus); if (a) a.status = sel.value;
-    } catch (e) { /* ignore */ }
+      if (state.appView === "board") renderDash();
+      toast("Status updated.");
+    } catch (e) { toast(e.message, "error"); }
   });
   const lo = $("#logout"); if (lo) lo.onclick = logout;
   const lo2 = $("#logout2"); if (lo2) lo2.onclick = logout;
-  const rf = $("#refresh"); if (rf) rf.onclick = async () => { await load(); renderDash(); };
+  const rf = $("#refresh"); if (rf) rf.onclick = async () => { rf.textContent = "…"; await reloadAll(); toast("Refreshed."); };
+  const ar = $("#autoRefresh"); if (ar) ar.onclick = () => { state.autoRefresh = !state.autoRefresh; store.set("autoRefresh", state.autoRefresh); renderDash(); };
+  const op = $("#openPalette"); if (op) op.onclick = openPalette;
+  $$("[data-range]").forEach(b => b.onclick = async () => {
+    state.range = +b.dataset.range; store.set("range", state.range);
+    b.textContent = "…"; await loadAnalytics(); renderDash();
+  });
+  $$("[data-atab]").forEach(b => b.onclick = () => { state.aTab = b.dataset.atab; store.set("aTab", state.aTab); renderDash(); });
+  $$("[data-ovm]").forEach(b => b.onclick = () => { state.ovMetric = b.dataset.ovm; store.set("ovMetric", state.ovMetric); renderDash(); });
+  $$("[data-seg-open]").forEach(b => b.onclick = () => {
+    state.seg = { at_risk: "at_risk", never_generated: "never", near_limit: "free" }[b.dataset.segOpen] || "all"; setSection("customers");
+  });
+  $$("[data-agent-jump]").forEach(b => b.onclick = () => { state.section = "agents"; store.set("section", "agents"); openAgent(b.dataset.agentJump); });
+  wireChartTools();
+  // chart view toggles must persist
+  $$('[data-ctool="view"]').forEach(b => b.addEventListener("click", () => store.set("chartView", state.chartView)));
+  const plansChart = chartById("ov_plans");
+  if (plansChart) plansChart.on("click", p => {
+    const plan = (state.analytics.plans.find(x => x.name === p.name) || {}).plan;
+    if (plan) { state.planFilter = plan; state.seg = "all"; setSection("customers"); }
+  });
+  wireCustomers();
+  wireApplications();
+  wireRows();
+  wireNewsletter();
+  wirePricing();
+  wireAgents();
+}
+
+function wireCustomers() {
+  if (state.section !== "customers") return;
+  $$("[data-seg]").forEach(b => b.onclick = () => { state.seg = b.dataset.seg; state.selected = new Set(); renderDash(); });
+  $$("[data-sort]").forEach(h => h.onclick = () => {
+    const k = h.dataset.sort;
+    state.sort = { key: k, dir: state.sort.key === k ? -state.sort.dir : -1 }; store.set("sort", state.sort); renderDash();
+  });
+  $$("[data-cview]").forEach(b => b.onclick = () => { state.custView = b.dataset.cview; store.set("custView", state.custView); renderDash(); });
+  const dn = $("#density"); if (dn) dn.onclick = () => { state.density = state.density === "compact" ? "comfy" : "compact"; store.set("density", state.density); renderDash(); };
+  const pf = $("#planFilter"); if (pf) pf.onchange = () => { state.planFilter = pf.value; renderDash(); };
   const se = $("#userSearch");
   if (se) se.oninput = () => {
     state.q = se.value;
     const list = filteredUsers();
-    const tb = $("#custBody"); if (tb) tb.innerHTML = list.map(userRow).join("") || `<tr><td colspan="8" class="py-4 text-muted">No matching users.</td></tr>`;
-    const cnt = $("#custCount"); if (cnt) cnt.textContent = `(${list.length}${list.length !== state.users.length ? " of " + state.users.length : ""})`;
-    wireRows();
+    const tb = $("#custBody");
+    if (tb) { tb.innerHTML = list.map(u => userRow(u, state.density === "compact")).join("") || `<tr><td colspan="10" class="py-6 text-center text-muted">No customers match.</td></tr>`; wireRows(); wireUserSelect(); }
+    else { renderDash(); const s2 = $("#userSearch"); if (s2) { s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length); } }
+    const cnt = $("#custCount"); if (cnt) cnt.textContent = `${list.length} of ${state.users.length}`;
   };
-  wireRows();
-  wireNewsletter();
-  wirePricing();
+  wireUserSelect();
+  const sa = $("#selAllUsers"); if (sa) sa.onchange = () => { state.selected = sa.checked ? new Set(filteredUsers().map(u => u.id)) : new Set(); renderDash(); };
+  const csvRows = list => list.map(u => ({ id: u.id, name: u.name, email: u.email, phone: u.phone, plan: u.plan_name, generations: u.gens,
+    tokens: (u.it || 0) + (u.ot || 0), ai_spend_naira: Math.round(u.cost || 0), last_active: u.last_active ? new Date(u.last_active * 1000).toISOString() : "",
+    joined: new Date(u.created_at * 1000).toISOString(), suspended: u.suspended ? "yes" : "no" }));
+  const ex = $("#exportCSV"); if (ex) ex.onclick = () => downloadCSV("vertil-customers", csvRows(filteredUsers()));
+  const be = $("#bulkExport"); if (be) be.onclick = () => downloadCSV("vertil-customers-selected", csvRows(state.users.filter(u => state.selected.has(u.id))));
+  const bc = $("#bulkClear"); if (bc) bc.onclick = () => { state.selected = new Set(); renderDash(); };
+  const bp = $("#bulkPlan"); if (bp) bp.onchange = async () => {
+    const plan = bp.value; if (!plan) return;
+    const ids = [...state.selected];
+    if (!confirm(`Move ${ids.length} customer${ids.length > 1 ? "s" : ""} to the ${plan} plan?`)) { bp.value = ""; return; }
+    let ok = 0;
+    for (const id of ids) { try { await api(`/api/admin/users/${id}/update`, { method: "POST", body: JSON.stringify({ plan }) }); ok++; } catch {} }
+    toast(`Updated ${ok} of ${ids.length}.`);
+    state.selected = new Set(); await load(); renderDash();
+  };
+}
+function wireUserSelect() {
+  $$("[data-usel]").forEach(c => c.onchange = () => {
+    const id = +c.dataset.usel; c.checked ? state.selected.add(id) : state.selected.delete(id); renderDash();
+  });
+}
+
+function wireApplications() {
+  if (state.section !== "applications") return;
+  $$("[data-appf]").forEach(b => b.onclick = () => { state.appFilter = b.dataset.appf; renderDash(); });
+  $$("[data-aview]").forEach(b => b.onclick = () => { state.appView = b.dataset.aview; store.set("appView", state.appView); renderDash(); });
+  const s = $("#appSearch"); if (s) s.oninput = () => {
+    state.appQ = s.value; renderDash();
+    const s2 = $("#appSearch"); s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length);
+  };
+  const ex = $("#appExport"); if (ex) ex.onclick = () => downloadCSV("vertil-applications", (state.applications || []).map(a => ({
+    name: a.name, email: a.email, phone: a.phone, handle: a.handle, niche: a.niche, status: a.status || "new", note: a.note,
+    applied: new Date(a.created_at * 1000).toISOString() })));
 }
 
 function wirePricing() {
   if (state.section !== "pricing") return;
+  $$("[data-price-input]").forEach(inp => {
+    inp.onchange = () => { state.pricingDraft[inp.dataset.priceInput] = +inp.value; renderDash(); };
+    inp.onkeydown = e => { if (e.key === "Enter") inp.blur(); };
+  });
   $$("[data-price-save]").forEach(b => b.onclick = async () => {
     const key = b.dataset.priceSave;
-    const input = $(`[data-price-input="${key}"]`);
-    const price = +input.value;
+    const price = +$(`[data-price-input="${key}"]`).value;
     if (!(price >= 0)) return toast("Enter a valid price.", "error");
+    const plan = (state.pricing || []).find(p => p.key === key);
+    if (!confirm(`Set ${plan.name} to ${naira(price)} a month? New checkouts use it straight away.`)) return;
     state.pricingBusy[key] = true; renderDash();
     try {
       await api("/api/admin/pricing", { method: "POST", body: JSON.stringify({ plan: key, price }) });
-      state.pricing = await api("/api/admin/pricing");
-      toast(`${key} price updated.`);
+      state.pricing = await api("/api/admin/pricing"); delete state.pricingDraft[key];
+      await loadAnalytics();
+      toast(`${plan.name} price updated.`);
     } catch (ex) { toast(ex.message, "error"); }
     state.pricingBusy[key] = false; renderDash();
   });
@@ -559,11 +793,99 @@ function wirePricing() {
     state.pricingBusy[key] = true; renderDash();
     try {
       await api(`/api/admin/pricing/${key}`, { method: "DELETE" });
-      state.pricing = await api("/api/admin/pricing");
-      toast(`${key} reset to default.`);
+      state.pricing = await api("/api/admin/pricing"); delete state.pricingDraft[key];
+      await loadAnalytics();
+      toast(`${plan.name} reset to default.`);
     } catch (ex) { toast(ex.message, "error"); }
     state.pricingBusy[key] = false; renderDash();
   });
+}
+
+/* --------------------------- command palette ----------------------- */
+
+function openPalette() {
+  if ($("#palette")) return;
+  const m = document.createElement("div");
+  m.id = "palette";
+  m.className = "fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm flex items-start justify-center pt-[12vh] px-4 fade-in";
+  m.innerHTML = `<div class="glass rounded-2xl w-full max-w-xl overflow-hidden">
+    <input id="palInput" placeholder="Jump to a section, customer or agent…" class="w-full bg-transparent px-5 py-4 text-[15px] text-white outline-none border-b border-edge"/>
+    <div id="palList" class="max-h-[50vh] overflow-y-auto scroll-thin p-2"></div></div>`;
+  document.body.appendChild(m);
+  const items = () => {
+    const q = $("#palInput").value.toLowerCase().trim();
+    const out = [
+      ...NAV.map(n => ({ label: n.label, hint: "Section", run: () => setSection(n.key) })),
+      ...ANALYTICS_TABS.map(([k, l]) => ({ label: "Analytics: " + l, hint: "Chart", run: () => { state.aTab = k; store.set("aTab", k); setSection("analytics"); } })),
+      ...(state.agents?.agents || []).map(a => ({ label: "Run " + a.name, hint: "Agent", run: () => { state.section = "agents"; store.set("section", "agents"); openAgent(a.key); } })),
+      ...(state.users || []).map(u => ({ label: u.name || u.email, hint: u.email + " · " + u.plan_name, run: async () => { state.detail = await api(`/api/admin/users/${u.id}`); renderDash(); } })),
+    ];
+    return (q ? out.filter(i => (i.label + " " + i.hint).toLowerCase().includes(q)) : out).slice(0, 30);
+  };
+  let sel = 0, cur = [];
+  const draw = () => {
+    cur = items(); sel = Math.min(sel, Math.max(0, cur.length - 1));
+    $("#palList").innerHTML = cur.map((it, i) => `<button data-pi="${i}" class="w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm ${i === sel ? "bg-brand/20 text-white" : "text-slate-300 hover:bg-edge/40"}">
+      <span class="flex-1 truncate">${esc(it.label)}</span><span class="text-[11px] text-faint truncate max-w-[50%]">${esc(it.hint)}</span></button>`).join("") || '<div class="px-3 py-4 text-sm text-muted">No matches.</div>';
+    $$("[data-pi]").forEach(b => b.onclick = () => go(+b.dataset.pi));
+  };
+  const close = () => m.remove();
+  const go = i => { const it = cur[i]; close(); if (it) it.run(); };
+  m.onclick = e => { if (e.target === m) close(); };
+  const inp = $("#palInput");
+  inp.oninput = () => { sel = 0; draw(); };
+  inp.onkeydown = e => {
+    if (e.key === "ArrowDown") { sel = Math.min(sel + 1, cur.length - 1); draw(); e.preventDefault(); }
+    else if (e.key === "ArrowUp") { sel = Math.max(sel - 1, 0); draw(); e.preventDefault(); }
+    else if (e.key === "Enter") go(sel);
+    else if (e.key === "Escape") close();
+  };
+  draw(); inp.focus();
+}
+document.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k" && state.user) { e.preventDefault(); openPalette(); }
+  if (e.key === "Escape" && state.detail && !$("#palette")) { state.detail = null; renderDash(); }
+});
+
+// Live mode: refresh data every minute unless the admin is typing or a dialog is open.
+setInterval(async () => {
+  if (!state.autoRefresh || !state.user || document.hidden) return;
+  const a = document.activeElement;
+  if (a && ["INPUT", "TEXTAREA", "SELECT"].includes(a.tagName) || a?.isContentEditable || $("#palette") || state.detail) return;
+  try { await load(); renderDash(); } catch {}
+}, 60000);
+
+/* --------------------------- customer drawer ----------------------- */
+
+function userDetail(d) {
+  const u = d.user;
+  const stat = (l, v) => `<div class="rounded-xl bg-paper/60 border border-edge px-3 py-2.5"><div class="text-[10px] uppercase tracking-wide text-faint">${l}</div><div class="font-semibold text-sm mt-0.5 text-slate-100">${v}</div></div>`;
+  return `<div class="fade-up">
+    <div class="flex items-start justify-between mb-4 gap-3">
+      <div class="flex items-center gap-3 min-w-0"><span class="w-11 h-11 rounded-full grid place-items-center font-bold text-ink text-lg shrink-0" style="background:linear-gradient(135deg,#2dd4bf,#0e9488);box-shadow:0 0 18px rgba(45,212,191,.4)">${esc((u.name || u.email || "?")[0].toUpperCase())}</span>
+        <div class="min-w-0"><div class="font-display font-extrabold text-lg text-white truncate">${esc(u.name || "—")} ${u.is_admin ? '<span class="text-[8.5px] bg-brand text-ink px-1 py-0.5 rounded align-middle">ADMIN</span>' : ""}</div>
+          <div class="text-xs text-muted">${esc(u.email)}${u.phone ? " · " + phoneLink(u.phone) : ""}</div>
+          <div class="text-xs text-faint">${esc(u.plan_name)} plan · joined ${fmtDate(u.created_at)}</div></div></div>
+      <button id="closeDetail" class="seg">✕</button></div>
+    ${u.suspended ? '<div class="mb-3 text-xs font-semibold text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded-lg px-3 py-2">This account is suspended — the user cannot log in.</div>' : ""}
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+      ${stat("Generations", d.gens)}${stat("AI spend", naira(d.cost))}
+      ${stat("Tokens", (d.input_tokens + d.output_tokens).toLocaleString())}${stat("Brands", d.brands)}
+      ${stat("Calendars", d.calendars)}${stat("Saved copy", d.favorites)}
+      ${stat("Feedback", "👍 " + d.feedback_up + " · 👎 " + d.feedback_down)}${stat("Gigs", d.gigs + " (" + naira(d.gigs_value) + ")")}
+    </div>
+    ${(d.daily && d.daily.length) ? `<div class="glass rounded-2xl p-3 mb-4"><div class="text-[12px] font-semibold text-white mb-1">Activity · recent days</div>
+      ${chartBox("ch_user", lineOpt(d.daily.map(x => x.d), [{ name: "Generations", data: d.daily.map(x => x.n) }], { type: "bar" }), 150)}</div>` : ""}
+    ${d.by_type.length ? `<div class="glass rounded-2xl p-3 mb-4"><div class="text-[12px] font-semibold text-white mb-2">What they generate</div>
+      <div class="space-y-2">${bars(d.by_type.map(t => ({ label: t.label, value: t.n, sub: t.n })), "linear-gradient(90deg,#0e9488,#2dd4bf)")}</div></div>` : ""}
+    ${adminControls(u)}
+    <div class="text-[12px] font-semibold mb-2 text-white">Recent activity</div>
+    <div class="space-y-1.5">${(d.recent || []).map(g => `<div class="flex items-center gap-2 text-xs bg-paper/60 border border-edge rounded-lg px-3 py-2">
+      <span class="font-medium whitespace-nowrap text-slate-200">${esc(g.label)}</span>
+      <span class="text-muted truncate flex-1">${esc(g.brief || "")}</span>
+      <span class="text-faint tabular-nums whitespace-nowrap">${((g.input_tokens || 0) + (g.output_tokens || 0)).toLocaleString()} tok</span>
+      <span class="text-faint tabular-nums whitespace-nowrap">${naira(g.cost)}</span></div>`).join("") || '<p class="text-xs text-muted">No activity yet.</p>'}</div>
+  </div>`;
 }
 
 function wireNewsletter() {
@@ -723,47 +1045,6 @@ function wireNewsletter() {
   };
 }
 
-function userRow(u) {
-  const tok = (u.it || 0) + (u.ot || 0);
-  const planColor = u.plan === "free" ? "bg-edge text-muted" : "bg-brand/20 text-brand";
-  return `<tr class="border-b border-edge/60 hover:bg-edge/40 ${u.suspended ? "opacity-60" : ""}">
-    <td class="py-2 pr-3"><div class="font-semibold flex items-center gap-1.5 text-slate-100">${esc(u.name || "—")}${u.is_admin ? ' <span class="text-[8.5px] bg-brand text-ink px-1 py-0.5 rounded">ADMIN</span>' : ""}${u.suspended ? ' <span class="text-[8.5px] bg-rose-500/80 text-white px-1 py-0.5 rounded">SUSPENDED</span>' : ""}</div><div class="text-faint">${esc(u.email)}</div></td>
-    <td class="py-2 px-2 whitespace-nowrap">${phoneLink(u.phone)}</td>
-    <td class="py-2 px-2"><span class="px-2 py-0.5 rounded-full ${planColor}">${esc(u.plan_name)}</span></td>
-    <td class="py-2 px-2 text-right tabular-nums text-slate-300">${u.gens}</td>
-    <td class="py-2 px-2 text-right tabular-nums text-slate-300">${tok.toLocaleString()}</td>
-    <td class="py-2 px-2 text-right tabular-nums text-slate-300">${naira(u.cost)}</td>
-    <td class="py-2 px-2 text-muted whitespace-nowrap">${fmtDate(u.created_at)}</td>
-    <td class="py-2 pl-2 text-right"><button data-user="${u.id}" class="text-brand font-semibold hover:underline">View</button></td></tr>`;
-}
-
-function userDetail(d) {
-  const u = d.user;
-  const stat = (l, v) => `<div><div class="text-[10px] uppercase tracking-wide text-faint">${l}</div><div class="font-semibold text-sm mt-0.5 text-slate-100">${v}</div></div>`;
-  return `<div class="bg-panel border border-brand/40 rounded-xl2 p-5 fade-up">
-    <div class="flex items-start justify-between mb-3">
-      <div><div class="font-display font-extrabold text-lg">${esc(u.name || "—")} ${u.is_admin ? '<span class="text-[8.5px] bg-brand text-ink px-1 py-0.5 rounded align-middle">ADMIN</span>' : ""}</div>
-        <div class="text-xs text-muted">${esc(u.email)}${u.phone ? " · " + phoneLink(u.phone) : ""} · ${esc(u.plan_name)} plan · joined ${fmtDate(u.created_at)}</div></div>
-      <button id="closeDetail" class="text-sm text-muted hover:text-white">✕ close</button></div>
-    ${u.suspended ? '<div class="mb-3 text-xs font-semibold text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded-lg px-3 py-2">This account is suspended — the user cannot log in.</div>' : ""}
-    ${adminControls(u)}
-    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-      ${stat("Generations", d.gens)}${stat("AI spend", naira(d.cost))}
-      ${stat("Tokens", (d.input_tokens + d.output_tokens).toLocaleString())}${stat("Brands", d.brands)}
-      ${stat("Calendars", d.calendars)}${stat("Saved copy", d.favorites)}
-      ${stat("Feedback", "👍 " + d.feedback_up + " · 👎 " + d.feedback_down)}${stat("Gigs", d.gigs + " (" + naira(d.gigs_value) + ")")}
-    </div>
-    ${(d.daily && d.daily.length) ? `<div class="mb-4"><div class="text-[12px] font-semibold mb-2 text-white">Activity · 14d</div>${spark(d.daily, "n", "#0b8457")}</div>` : ""}
-    ${d.by_type.length ? `<div class="text-[12px] font-semibold mb-2 text-white">What they generate</div><div class="space-y-2 mb-4">${bars(d.by_type.map(t => ({ label: t.label, value: t.n, sub: t.n })), "#0b8457")}</div>` : ""}
-    <div class="text-[12px] font-semibold mb-2 text-white">Recent activity</div>
-    <div class="space-y-1.5">${(d.recent || []).map(g => `<div class="flex items-center gap-2 text-xs bg-paper border border-edge rounded-lg px-3 py-2">
-      <span class="font-medium whitespace-nowrap text-slate-200">${esc(g.label)}</span>
-      <span class="text-muted truncate flex-1">${esc(g.brief || "")}</span>
-      <span class="text-faint tabular-nums whitespace-nowrap">${((g.input_tokens || 0) + (g.output_tokens || 0)).toLocaleString()} tok</span>
-      <span class="text-faint tabular-nums whitespace-nowrap">${naira(g.cost)}</span></div>`).join("") || '<p class="text-xs text-muted">No activity yet.</p>'}</div>
-  </div>`;
-}
-
 function adminControls(u) {
   const plans = (state.overview && state.overview.all_plans) || [];
   const opts = plans.map(p => `<option value="${p.key}" ${p.key === u.plan ? "selected" : ""}>${esc(p.name)}${p.price ? " · " + naira(p.price) : ""}</option>`).join("");
@@ -797,16 +1078,17 @@ async function adminAct(uid, body, opts = {}) {
     await load();  // refresh overview + user list
     state.detail = opts.del ? null : await api(`/api/admin/users/${uid}`);
     renderDash();
-    if (opts.toast) { /* lightweight confirmation */ }
-  } catch (e) { alert(e.message); }
+    toast(opts.del ? "Customer deleted." : "Saved.");
+  } catch (e) { toast(e.message, "error"); }
 }
 
 function wireRows() {
   $$("[data-user]").forEach(b => b.onclick = async () => {
-    try { state.detail = await api(`/api/admin/users/${b.dataset.user}`); renderDash(); window.scrollTo({ top: 0, behavior: "smooth" }); }
-    catch (e) { alert(e.message); }
+    try { state.detail = await api(`/api/admin/users/${b.dataset.user}`); renderDash(); }
+    catch (e) { toast(e.message, "error"); }
   });
   const c = $("#closeDetail"); if (c) c.onclick = () => { state.detail = null; renderDash(); };
+  const bg = $("#drawerBg"); if (bg) bg.onclick = () => { state.detail = null; renderDash(); };
 
   const panel = $("[data-admin-id]");
   if (panel) {
@@ -824,7 +1106,7 @@ function wireRows() {
       try {
         await api(`/api/admin/users/${uid}/admin`, { method: "POST", body: JSON.stringify({ on }) });
         await load(); state.detail = await api(`/api/admin/users/${uid}`); renderDash();
-      } catch (e) { alert(e.message); }
+      } catch (e) { toast(e.message, "error"); }
     };
   }
 }

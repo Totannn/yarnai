@@ -92,6 +92,7 @@ const MONTHS = ["January","February","March","April","May","June","July","August
 const MONTH_ABBR = {January:"Jan",February:"Feb",March:"Mar",April:"Apr",May:"May",June:"Jun",July:"Jul",August:"Aug",September:"Sep",October:"Oct",November:"Nov",December:"Dec"};
 
 const ICON = {
+  flyer: '<rect x="4" y="2.5" width="16" height="19" rx="2.5"/><path d="M8 7h8M8 11h5"/><circle cx="15" cy="16" r="2"/><path d="m4 18 4-3.5 3 2.5"/>',
   home: '<path d="M3 10.5 12 3l9 7.5M5.5 9.5V20h13V9.5"/><path d="M9.5 20v-6h5v6"/>',
   learn: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="m10.5 12.5 .8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7-1.7-.8 1.7-.8z"/>',
   bulk: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M3.5 14.5h17M9 4.5v15"/>',
@@ -675,6 +676,7 @@ function routeView() {
     case "team": return teamView();
     case "script": return studioTabs("script") + scriptView();
     case "gigs": return gigsView();
+    case "flyer": return flyerView();
     case "profile": return profileView();
     default: return studioView();
   }
@@ -741,7 +743,7 @@ function sidebar() {
     <nav class="space-y-1 overflow-y-auto scroll-thin flex-1">
       ${item("home","Home")}
       ${grpLabel("Create")}
-      ${item("studio","Studio")}${item("board","Content Board")}${item("brands","Brands")}${item("learn","Learn My Brand")}
+      ${item("studio","Studio")}${item("flyer","Flyer Maker")}${item("board","Content Board")}${item("brands","Brands")}${item("learn","Learn My Brand")}
       ${publishGroup}
       ${grpLabel("Plan & grow")}
       ${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}${item("favorites","Saved Copy")}${item("history","History")}
@@ -775,7 +777,7 @@ function sidebar() {
       <nav class="space-y-1">
         ${item("home","Home")}
         ${grpLabel("Create")}
-        ${item("studio","Studio")}${item("board","Content Board")}${item("brands","Brands")}${item("learn","Learn My Brand")}
+        ${item("studio","Studio")}${item("flyer","Flyer Maker")}${item("board","Content Board")}${item("brands","Brands")}${item("learn","Learn My Brand")}
         ${publishGroup}
         ${grpLabel("Plan & grow")}
         ${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}${item("favorites","Saved Copy")}${item("history","History")}
@@ -831,6 +833,7 @@ function topbar() {
     writers:["Writers Hub","Fix grammar & punctuation and make any draft read smoothly"],
     bulk:["Bulk Catalogue","Turn a list of products into on-brand descriptions — all at once"],
     favorites:["Saved Copy","Your starred, ready-to-use copy"],
+    flyer:["Flyer Maker","Turn any post into a ready-to-share image — with your logo and colours"],
     history:["History","Everything you've generated"],
     pricing:["Plans & Pricing","Upgrade to unlock more"],
     rate:["Rate Advisor","Wetin to charge — realistic Naira pricing for your gigs"],
@@ -2619,6 +2622,7 @@ function calPostCard(p,i,abbr) {
       <span class="text-[11px] bg-paper border border-line rounded-md px-1.5 py-0.5">${esc(tone.label)}</span></div>
     <div class="flex gap-1.5 mt-1">
       <button data-write="${i}" class="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-semibold text-brand-dark bg-brand-tint hover:bg-brand hover:text-white transition rounded-lg py-2">${ic("pencil","w-4 h-4")} Write this post</button>
+      <button data-cal-flyer="${i}" title="Make a flyer for this post" class="shrink-0 inline-flex items-center justify-center text-brand-dark border border-line hover:border-brand/40 transition rounded-lg px-2.5">${svgIcon(ICON.flyer,"w-4 h-4")}</button>
       <button data-cal-to-board="${i}" title="Queue on Content Board without writing it yet" class="shrink-0 inline-flex items-center justify-center gap-1.5 text-sm font-semibold text-brand-dark border border-line hover:border-brand/40 transition rounded-lg px-3">${ic("board","w-4 h-4")}</button>
     </div></div>`;
 }
@@ -2667,6 +2671,7 @@ function brandsView() {
           <button data-del="${b.id}" class="text-xs px-2.5 py-1 rounded-lg border border-line text-rose-500 hover:border-rose-300">Delete</button></div></div>
       ${b.audience?`<p class="text-xs text-muted mt-2"><span class="text-faint">Audience:</span> ${esc(b.audience)}</p>`:''}
       ${b.personality?`<p class="text-xs text-muted mt-1"><span class="text-faint">Voice:</span> ${esc(b.personality)}</p>`:''}
+      ${brandLogoBlock(b)}
       ${state.config?.social_posting?`<button data-manage-accounts="${b.id}" class="mt-3 text-[11px] font-semibold text-brand-dark hover:text-brand">${connectedCount ? `${connectedCount} account${connectedCount>1?'s':''} connected` : 'Connect accounts'} →</button>`:''}</div>`;
   }).join("");
   const limit = state.usage?.brands_limit, atLimit = limit != null && state.brands.length >= limit;
@@ -2916,8 +2921,9 @@ function composerView() {
   const activeTab = c.tab === "all" ? (c.sel[0] || "instagram") : c.tab;
   const text = capFor(c, activeTab);
   const hasHard = w.some(x => x.hard);
-  const summary = c.sel.length ? `${c.sel.map(k => PLATFORM_META[k].label).join(", ")} · ${c.when === "now" ? "Post now" : slotLabel(c.slot.at)}${w.length ? ` · ${w.length} issue${w.length > 1 ? "s" : ""}` : ""}` : "Pick a platform to continue";
-  const ctaLabel = !c.sel.length ? "Pick a platform" : c.when === "now" ? `Post to ${c.sel.length} platform${c.sel.length > 1 ? "s" : ""}` : c.approval ? "Send for approval" : "Schedule";
+  const anyConn = PLATFORM_ORDER.some(k => conn[k]?.status === "connected");
+  const summary = c.sel.length ? `${c.sel.map(k => PLATFORM_META[k].label).join(", ")} · ${c.when === "now" ? "Post now" : slotLabel(c.slot.at)}${w.length ? ` · ${w.length} issue${w.length > 1 ? "s" : ""}` : ""}` : anyConn ? "Pick a platform to continue" : "Connect a platform above to post — or save it as a draft";
+  const ctaLabel = !c.sel.length ? (anyConn ? "Pick a platform" : "Connect a platform") : c.when === "now" ? `Post to ${c.sel.length} platform${c.sel.length > 1 ? "s" : ""}` : c.approval ? "Send for approval" : "Schedule";
   const ctaDisabled = !c.sel.length || hasHard || (c.when === "now" && w.length > 0) || c.busy;
 
   const platformPill = k => {
@@ -3339,7 +3345,7 @@ function pricingView() {
         ${isCur?'Current plan':(p.price?'Upgrade':'Downgrade')}</button></div>`;
   }).join("");
   return `<div class="pb-24 md:pb-0">
-    <div class="grid sm:grid-cols-2 lg:grid-cols-5 gap-4">${cards}</div>
+    <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">${cards}</div>
     <p class="text-xs text-muted text-center mt-5">${state.config.paystack?'Secure checkout via Paystack — card, bank transfer, USSD.':'⚙️ Paystack not configured — choosing a plan will simulate the upgrade so you can test limits.'}</p>
   </div>`;
 }
@@ -4009,6 +4015,8 @@ function wire() {
     const cd=$("[data-cal-doc]"); if(cd) cd.onclick=()=>{ const c=state.calendar; downloadDoc(`Vertil ${c.month} ${c.year} Plan.doc`, `${c.month} ${c.year} Content Plan`, calendarDocHTML(c)); toast("Calendar downloaded"); };
     $$("[data-write]").forEach(b=>b.onclick=()=>writeFromCalendar(state.calendar.posts[+b.dataset.write]));
     $$("[data-cal-to-board]").forEach(b=>b.onclick=()=>sendCalendarPostToBoard(state.calendar.posts[+b.dataset.calToBoard], b));
+    $$("[data-cal-flyer]").forEach(b=>b.onclick=()=>{ const p=state.calendar.posts[+b.dataset.calFlyer];
+      openFlyer({ source: [p.occasion, p.theme, p.hook].filter(Boolean).join(" — "), brandId: state.calendar.brand_id || state.activeBrandId, tone: p.tone }); });
   }
   if (state.view === "calendars") {
     $$("[data-open-cal]").forEach(b=>b.onclick=async()=>{ const cal=await api(`/api/calendar/${b.dataset.openCal}`); state.calendar=cal; state.view="calendar"; render(); });
@@ -4026,7 +4034,9 @@ function wire() {
     const form=$("#brandForm"); if(form) form.onsubmit=saveBrand;
     const lb=$("#learnBtn"); if(lb) lb.onclick=learnFromPosts;
     $$("[data-manage-accounts]").forEach(b=>b.onclick=()=>{ state.activeBrandId=+b.dataset.manageAccounts; goto("accounts"); });
+    wireBrandLogos();
   }
+  if (state.view === "flyer") wireFlyer();
   if (state.view === "pages" || state.view === "performance") {
     const rb=$("[data-pages-refresh]"); if(rb) rb.onclick=async()=>{
       state.pagesLoading = true; render();
@@ -4165,6 +4175,7 @@ async function goto(view, fromPop) {
     if (view === "accounts") await loadSocialStatuses();
     if (view === "gigs") { state.gigEditing = null; await loadGigs(); }
     if (view === "board") { state.board.items = await api("/api/content"); state.board.justLoaded = true; }
+    if (view === "flyer") { if (!state.flyer) flyNew(); state.designs = await api("/api/designs").catch(() => []); }
   } catch {}
   render();
   // Add a browser history entry so the phone's Back gesture returns to the
@@ -4422,6 +4433,7 @@ function renderCards() {
           <button data-star="${i}" class="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand/40">${ic("save","w-3.5 h-3.5")} Save</button>
           <button data-copy="${i}" class="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand/40">${ic("copy","w-3.5 h-3.5")} Copy</button>
           <button data-board="${i}" class="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand/40">${ic("board","w-3.5 h-3.5")} Add to Board</button>
+          <button data-make-flyer="${i}" class="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg border border-brand/40 bg-brand-tint text-brand-dark hover:bg-brand hover:text-white">${svgIcon(ICON.flyer,"w-3.5 h-3.5")} Make flyer</button>
         </div></div>
       ${c.preview
         ? pvCardPreview(c, i)
@@ -4450,6 +4462,10 @@ function renderCards() {
   $$("[data-refine-input]",out).forEach(inp=>inp.onkeydown=e=>{ if(e.key==="Enter"){ e.preventDefault(); const v=inp.value.trim(); if(v) refineCard(+inp.dataset.refineInput, v); } });
   $$("[data-pvset]",out).forEach(b=>b.onclick=()=>{ const i=+b.dataset.pvset, c=state.cards[i], on=b.dataset.pvon==="1"; if(c.preview===on)return; c.preview=on; if(on&&!c.previewType)c.previewType=PV_BY_CT[state.contentType]||"ig"; renderCards(); });
   $$("[data-pvt]",out).forEach(b=>b.onclick=()=>{ state.cards[+b.dataset.pvt].previewType=b.dataset.pvtk; renderCards(); });
+  $$("[data-make-flyer]",out).forEach(b=>b.onclick=()=>{
+    const c = state.cards[+b.dataset.makeFlyer];
+    openFlyer({ source: c.text, brandId: state.activeBrandId, tone: state.tone });
+  });
   $$("[data-comp-open]",out).forEach(b=>b.onclick=()=>{
     const i = +b.dataset.compOpen, c = state.cards[i];
     openComposer({ base: c.text, source: `From Studio · Option ${i+1}` });

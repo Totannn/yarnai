@@ -83,6 +83,11 @@ PLANS = {
         "blurb": "Kick the tyres",
         "features": ["10 generations / month", "1 brand voice", "All 8 tones", "Pidgin + English"],
     },
+    "lite": {
+        "name": "Lite", "price": 2500, "gen_limit": 30, "brands": 1, "calendar": False,
+        "blurb": "Small shop, small price",
+        "features": ["30 generations / month", "1 brand voice", "All 8 tones & content types", "Save favourites"],
+    },
     "starter": {
         "name": "Starter", "price": 7500, "gen_limit": 150, "brands": 1, "calendar": False,
         "blurb": "Solo hustler",
@@ -92,6 +97,13 @@ PLANS = {
         "name": "Growth", "price": 19000, "gen_limit": 600, "brands": 3, "calendar": True,
         "blurb": "Serious SME", "popular": True,
         "features": ["600 generations / month", "3 brand voices", "Content Calendar builder", "Voice that learns 👍"],
+    },
+    "freelancer": {
+        "name": "Freelancer", "price": 25000, "gen_limit": 800, "brands": 5, "calendar": True,
+        "brand_learn": True,
+        "blurb": "Social media managers",
+        "features": ["800 generations / month", "5 brand voices — one per client", "Learn My Brand (AI)",
+                    "Content Calendar builder", "Everything in Growth"],
     },
     "pro": {
         "name": "Pro", "price": 45000, "gen_limit": None, "brands": 10, "calendar": True,
@@ -107,7 +119,7 @@ PLANS = {
                     "Shared brand voices", "Everything in Pro"],
     },
 }
-PLAN_ORDER = ["free", "starter", "growth", "pro", "business"]
+PLAN_ORDER = ["free", "lite", "starter", "growth", "freelancer", "pro", "business"]
 
 
 def plan_price(key: str) -> float:
@@ -1228,14 +1240,15 @@ def _upload_post_publish(username: str, platforms: list, base_caption: str, over
     if not eligible:
         return {"success": False, "message": "No selected platform can publish with the media provided."}, skipped
     headers = {"Authorization": f"Apikey {UPLOAD_POST_API_KEY}"}
-    form = [("user", username), ("title", base_caption)]
+    # httpx 0.28 only accepts a dict for form data (a list of pairs crashes before sending);
+    # list values become repeated fields, which is how platform[] must be sent.
+    form = {"user": username, "title": base_caption, "platform[]": list(eligible)}
     for p in eligible:
-        form.append(("platform[]", p))
         if overrides.get(p):
-            form.append((PLATFORM_TITLE_FIELD[p], overrides[p]))
+            form[PLATFORM_TITLE_FIELD[p]] = overrides[p]
     if media_bytes:
         if is_video:
-            form.append(("media_type", "REELS"))
+            form["media_type"] = "REELS"
             r = httpx.post(f"{UPLOAD_POST_BASE}/upload", headers=headers, data=form,
                            files={"video": (media_filename, media_bytes, media_mimetype)}, timeout=180)
         else:
@@ -1243,7 +1256,13 @@ def _upload_post_publish(username: str, platforms: list, base_caption: str, over
                            files={"photos[]": (media_filename, media_bytes, media_mimetype)}, timeout=60)
     else:
         r = httpx.post(f"{UPLOAD_POST_BASE}/upload_text", headers=headers, data=form, timeout=30)
-    return r.json(), skipped
+    try:
+        out = r.json()
+    except ValueError:
+        out = {"success": False, "message": f"Upload-Post returned HTTP {r.status_code}: {r.text[:200]}"}
+    if not r.is_success:
+        app.logger.warning("Upload-Post %s -> %s %s", r.request.url.path, r.status_code, r.text[:500])
+    return out, skipped
 
 
 @app.post("/api/social/publish")
@@ -1274,17 +1293,20 @@ def social_publish(user):
     is_video = bool(media) and (media.mimetype or "").startswith("video/")
     if not caption and not media_bytes:
         return jsonify({"error": "Add a caption or attach media before publishing."}), 400
+    media_name, media_mime = (media.filename, media.mimetype) if media_bytes else (None, None)
+    if media_bytes and not is_video:
+        media_bytes = _to_jpeg(media_bytes)
+        media_name, media_mime = os.path.splitext(secure_filename(media.filename))[0] + ".jpg", "image/jpeg"
     try:
         out, skipped = _upload_post_publish(username, connected, caption, overrides, media_bytes,
-                                            media.filename if media else None,
-                                            media.mimetype if media else None, is_video)
+                                            media_name, media_mime, is_video)
     except Exception as exc:
         return jsonify({"error": f"Upload-Post error: {exc}"}), 502
 
     def _save_thumbnail() -> str | None:
         if not media_bytes:
             return None
-        ext = os.path.splitext(secure_filename(media.filename))[1] or (".mp4" if is_video else ".jpg")
+        ext = os.path.splitext(media_name or "")[1] or (".mp4" if is_video else ".jpg")
         fname = f"{brand_id}_{int(time.time())}{ext}"
         (POST_MEDIA_DIR / fname).write_bytes(media_bytes)
         return f"/static/post_media/{fname}"
@@ -1373,12 +1395,33 @@ def _queue_warnings(platforms: list, overrides: dict, base_caption: str, has_med
     return warnings
 
 
+def _to_jpeg(data: bytes) -> bytes:
+    """Platforms (Instagram especially) only take JPEG photos; flyers arrive as PNG."""
+    try:
+        from PIL import Image, ImageOps
+        img = ImageOps.exif_transpose(Image.open(io.BytesIO(data)))
+        if img.format == "JPEG":
+            return data
+        if img.mode in ("RGBA", "LA", "P"):
+            img = img.convert("RGBA")
+            flat = Image.new("RGB", img.size, (255, 255, 255))
+            flat.paste(img, mask=img.split()[-1])
+            img = flat
+        out = io.BytesIO()
+        img.convert("RGB").save(out, "JPEG", quality=92, optimize=True)
+        return out.getvalue()
+    except Exception:
+        return data
+
+
 def _save_queue_media(brand_id, media):
     if not media or not media.filename:
         return None, None
     media_bytes = media.stream.read()
     is_video = (media.mimetype or "").startswith("video/")
     ext = os.path.splitext(secure_filename(media.filename))[1] or (".mp4" if is_video else ".jpg")
+    if not is_video:
+        media_bytes, ext = _to_jpeg(media_bytes), ".jpg"
     fname = f"q{brand_id}_{int(time.time())}{ext}"
     (POST_MEDIA_DIR / fname).write_bytes(media_bytes)
     return f"/static/post_media/{fname}", ("video" if is_video else "photo")
@@ -1504,6 +1547,8 @@ def _run_scheduled_posts(now: float | None = None) -> str:
                 media_bytes = p_path.read_bytes()
                 media_name = p_path.name
                 mime = "video/mp4" if post.get("media_type") == "video" else "image/jpeg"
+                if mime == "image/jpeg":
+                    media_bytes, media_name = _to_jpeg(media_bytes), p_path.stem + ".jpg"
         try:
             out, _ = _upload_post_publish(username, connected, post["base_caption"] or "", post["overrides"],
                                           media_bytes, media_name, mime, post.get("media_type") == "video")
@@ -2206,6 +2251,191 @@ def refine(user):
     return jsonify({"text": text.strip(), "used": _effective_usage(user)})
 
 
+# ------------------------- Flyer Maker ------------------------------------ #
+
+LOGO_DIR = Path(app.static_folder) / "brand_logos"
+LOGO_DIR.mkdir(parents=True, exist_ok=True)
+DESIGN_DIR = Path(app.static_folder) / "designs"
+DESIGN_DIR.mkdir(parents=True, exist_ok=True)
+_HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _remove_static(path: str, folder: Path) -> None:
+    """Delete a previously stored file, only if it lives inside `folder`."""
+    if path and path.startswith("/static/"):
+        p = (folder / os.path.basename(path)).resolve()
+        if p.parent == folder.resolve() and p.exists():
+            p.unlink()
+
+
+@app.post("/api/brands/<int:brand_id>/logo")
+@auth
+def brand_logo_upload(user, brand_id):
+    if db.get_org_owner(user["id"]):
+        return jsonify(_TEAM_BRAND_ERR), 403
+    brand = db.get_brand(user["id"], brand_id)
+    if not brand or brand.get("user_id") != user["id"]:
+        return jsonify({"error": "Brand not found"}), 404
+    f = request.files.get("logo")
+    if not f or not f.filename:
+        return jsonify({"error": "Choose a logo image."}), 400
+    data = f.stream.read(5 * 1024 * 1024 + 1)
+    if len(data) > 5 * 1024 * 1024:
+        return jsonify({"error": "That logo is over 5MB — please use a smaller file."}), 400
+    # Re-encode through Pillow: only real raster images get stored (no SVG/HTML
+    # smuggling), oversized logos are shrunk, and transparency is preserved.
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(data))
+        img.load()
+        img = img.convert("RGBA")
+    except Exception:
+        return jsonify({"error": "We couldn't read that file. Use a PNG, JPG or WebP image."}), 400
+    w, h = img.size
+    img.thumbnail((1024, 1024))
+    out = io.BytesIO()
+    img.save(out, "PNG", optimize=True)
+    fname = f"b{brand_id}_{int(time.time())}.png"
+    (LOGO_DIR / fname).write_bytes(out.getvalue())
+    _remove_static(brand.get("logo") or "", LOGO_DIR)
+    updated = db.set_brand_style(user["id"], brand_id, logo=f"/static/brand_logos/{fname}")
+    return jsonify({"brand": updated, "low_res": min(w, h) < 200})
+
+
+@app.delete("/api/brands/<int:brand_id>/logo")
+@auth
+def brand_logo_delete(user, brand_id):
+    if db.get_org_owner(user["id"]):
+        return jsonify(_TEAM_BRAND_ERR), 403
+    brand = db.get_brand(user["id"], brand_id)
+    if not brand or brand.get("user_id") != user["id"]:
+        return jsonify({"error": "Brand not found"}), 404
+    _remove_static(brand.get("logo") or "", LOGO_DIR)
+    return jsonify({"brand": db.set_brand_style(user["id"], brand_id, logo="")})
+
+
+@app.put("/api/brands/<int:brand_id>/colors")
+@auth
+def brand_colors(user, brand_id):
+    if db.get_org_owner(user["id"]):
+        return jsonify(_TEAM_BRAND_ERR), 403
+    brand = db.get_brand(user["id"], brand_id)
+    if not brand or brand.get("user_id") != user["id"]:
+        return jsonify({"error": "Brand not found"}), 404
+    cols = [c for c in ((request.get_json(force=True) or {}).get("colors") or []) if isinstance(c, str) and _HEX.match(c)][:5]
+    return jsonify({"brand": db.set_brand_style(user["id"], brand_id, colors=",".join(cols))})
+
+
+@app.post("/api/flyer/fill")
+@auth
+def flyer_fill(user):
+    d = request.get_json(force=True) or {}
+    source = (d.get("source") or "").strip()
+    if not source:
+        return jsonify({"error": "Tell Vertil what the flyer is about."}), 400
+    if _over_limit(user):
+        return jsonify({"error": "Monthly limit reached. Upgrade to keep creating.", "upgrade": True}), 402
+    profile = db.get_brand(user["id"], d.get("brand_id")) if d.get("brand_id") else None
+    system = voice.build_system_prompt(profile, d.get("tone") or "friendly")
+    client = get_client()
+    if client is None:
+        demo = {"kind": d.get("kind") or "promo", "tag": "NEW", "headline": source[:40], "subhead": "",
+                "price": "", "old_price": "", "cta": "Order now", "contact": "", "date": "", "time": "",
+                "venue": "", "items": []}
+        return jsonify({"flyer": demo, "demo": True})
+    try:
+        with client.messages.stream(
+            model=MODEL, max_tokens=1200, thinking={"type": "adaptive"},
+            output_config={"effort": "low"}, system=system,
+            messages=[{"role": "user", "content": voice.build_flyer_user(source, d.get("kind"))}],
+        ) as s:
+            text = "".join(s.text_stream)
+            u = s.get_final_message().usage
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    flyer = voice.parse_flyer_json(text)
+    db.save_generation(user["id"], d.get("brand_id"), "flyer", d.get("tone") or "", source[:300],
+                       [flyer["headline"]], model=MODEL, input_tokens=u.input_tokens,
+                       output_tokens=u.output_tokens, cost=cost_naira(MODEL, u.input_tokens, u.output_tokens))
+    return jsonify({"flyer": flyer, "used": _effective_usage(user)})
+
+
+@app.post("/api/flyer/photo")
+@auth
+def flyer_photo(user):
+    """Product photo (or a one-off logo) for a flyer. Re-encoded so only real
+    images are stored; big phone photos are shrunk to keep exports fast."""
+    f = request.files.get("photo")
+    if not f or not f.filename:
+        return jsonify({"error": "Choose a photo."}), 400
+    data = f.stream.read(8 * 1024 * 1024 + 1)
+    if len(data) > 8 * 1024 * 1024:
+        return jsonify({"error": "That photo is over 8MB."}), 400
+    keep_alpha = request.form.get("keep_alpha") == "1"
+    try:
+        from PIL import Image, ImageOps
+        img = Image.open(io.BytesIO(data))
+        img.load()
+        img = ImageOps.exif_transpose(img)  # respect phone camera rotation
+    except Exception:
+        return jsonify({"error": "We couldn't read that file. Use a JPG, PNG or WebP image."}), 400
+    img.thumbnail((1600, 1600) if not keep_alpha else (1024, 1024))
+    out = io.BytesIO()
+    if keep_alpha:
+        img.convert("RGBA").save(out, "PNG", optimize=True); ext = "png"
+    else:
+        img.convert("RGB").save(out, "JPEG", quality=88, optimize=True); ext = "jpg"
+    fname = f"p{user['id']}_{int(time.time() * 1000)}.{ext}"
+    (DESIGN_DIR / fname).write_bytes(out.getvalue())
+    return jsonify({"url": f"/static/designs/{fname}"})
+
+
+@app.get("/api/designs")
+@auth
+def designs_list(user):
+    return jsonify(db.list_designs(user["id"]))
+
+
+@app.post("/api/designs")
+@auth
+def designs_save(user):
+    d = request.get_json(force=True) or {}
+    image_path = None
+    png = d.get("image") or ""
+    if png:
+        if not png.startswith("data:image/png;base64,"):
+            return jsonify({"error": "Bad image"}), 400
+        raw = base64.b64decode(png.split(",", 1)[1], validate=False)
+        if len(raw) > 8 * 1024 * 1024 or not raw.startswith(b"\x89PNG"):
+            return jsonify({"error": "Bad image"}), 400
+        fname = f"d{user['id']}_{int(time.time() * 1000)}.png"
+        (DESIGN_DIR / fname).write_bytes(raw)
+        image_path = f"/static/designs/{fname}"
+    design_id = d.get("id")
+    if design_id and image_path:
+        old = db.get_design(user["id"], design_id)
+        if old:
+            _remove_static(old.get("image") or "", DESIGN_DIR)
+    brand_id = d.get("brand_id")
+    if brand_id and not db.get_brand(user["id"], brand_id):
+        brand_id = None
+    saved = db.save_design(user["id"], design_id, brand_id, str(d.get("title") or "")[:120],
+                           str(d.get("kind") or "")[:20], json.dumps(d.get("data") or {})[:60000], image_path)
+    if not saved:
+        return jsonify({"error": "Design not found"}), 404
+    return jsonify(saved)
+
+
+@app.delete("/api/designs/<int:design_id>")
+@auth
+def designs_delete(user, design_id):
+    img = db.delete_design(user["id"], design_id)
+    if img is None:
+        return jsonify({"error": "Design not found"}), 404
+    _remove_static(img, DESIGN_DIR)
+    return jsonify({"ok": True})
+
+
 # ------------------------- bulk catalogue --------------------------------- #
 
 BULK_MAX_ROWS = 50
@@ -2682,6 +2912,334 @@ def admin_overview(_user):
         "all_plans": [{"key": k, "name": PLANS[k]["name"], "price": prices[k]} for k in PLAN_ORDER],
         "fx": NGN_PER_USD,
     })
+
+
+@app.get("/api/admin/analytics")
+@admin
+def admin_analytics(_user):
+    days = max(7, min(request.args.get("days", 30, type=int), 365))
+    a = db.admin_analytics(days, PLANS["free"]["gen_limit"] or 10)
+    prices = {k: plan_price(k) for k in PLANS}
+    o = db.admin_overview()
+    plans, mrr, paid = [], 0, 0
+    for row in o["by_plan"]:
+        price = prices.get(row["plan"], 0)
+        mrr += price * row["n"]
+        paid += row["n"] if price else 0
+        plans.append({"plan": row["plan"], "name": PLANS.get(row["plan"], {}).get("name", row["plan"]),
+                      "count": row["n"], "price": price, "mrr": price * row["n"]})
+    a["types"] = [{"key": k, "label": _TYPE_LABELS.get(k, k), "n": n} for k, n in sorted(a["types"].items(), key=lambda x: -x[1])]
+    a["type_daily"] = {_TYPE_LABELS.get(k, k): v for k, v in a["type_daily"].items()}
+    tone_labels = {k: v.get("label", k) for k, v in voice.TONES.items()}
+    a["tones"] = [{"key": k, "label": tone_labels.get(k, k), "n": n} for k, n in sorted(a["tones"].items(), key=lambda x: -x[1])]
+    a["models"] = [{"model": k, **v} for k, v in sorted(a["models"].items(), key=lambda x: -x[1]["cost"])]
+    for r in a["recent"]:
+        r["label"] = _TYPE_LABELS.get(r["content_type"], r["content_type"])
+        r.pop("email", None)
+    a.update(plans=sorted(plans, key=lambda x: -x["count"]), mrr=mrr, arr=mrr * 12, paid_users=paid,
+             total_users=o["total_users"], fx=NGN_PER_USD, free_limit=PLANS["free"]["gen_limit"])
+    return jsonify(a)
+
+
+# ------------------------------- admin agents ------------------------------ #
+# Each agent drafts work for a human to review. Nothing an agent writes is
+# emailed until an admin approves it.
+
+AGENTS = {
+    "analyst": {"name": "Growth Analyst", "kind": "report",
+                "blurb": "Reads your live numbers and writes a briefing: what changed, why, and the three moves that matter most. Ask it questions too."},
+    "activation": {"name": "Activation Coach", "kind": "outreach",
+                   "blurb": "Finds people who signed up but never created anything, and drafts a personal nudge with a first post idea for their business."},
+    "winback": {"name": "Win-back", "kind": "outreach",
+                "blurb": "Spots users who've gone quiet for 14+ days (paying customers first) and drafts a warm note to bring them back."},
+    "upgrade": {"name": "Upgrade Scout", "kind": "outreach",
+                "blurb": "Finds free users close to their monthly limit and drafts an upgrade note matched to how they actually use Vertil."},
+    "quality": {"name": "Quality Monitor", "kind": "findings",
+                "blurb": "Reviews recent AI output and user feedback for slips: Markdown, wrong language, changed prices, off-brand tone. Suggests prompt fixes."},
+}
+
+_AGENT_EMAIL_RULES = (
+    "You write short, warm, personal emails from the Vertil team to one Vertil user. Vertil is an AI tool that writes "
+    "social posts, WhatsApp broadcasts and ads for Nigerian small businesses in their own brand voice and in Pidgin, "
+    "Yoruba, Igbo, Hausa or English, and can schedule and publish them. Rules: plain, friendly Nigerian English; at most "
+    "90 words; no hype, no fake urgency, no discounts or promises we haven't made; mention their business by name when "
+    "known; one clear next step. body_html may only use <p>, <b> and <br>. Do not add a button, greeting signature beyond "
+    "'— The Vertil team', or any links; we add those. Reply with JSON only."
+)
+
+
+class _EmailHTMLCleaner(HTMLParser):
+    """Rebuilds HTML keeping only a few formatting tags, with no attributes."""
+    KEEP = {"p", "b", "strong", "em", "i", "br", "ul", "ol", "li"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.out = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self.KEEP:
+            self.out.append(f"<{tag}>")
+
+    def handle_endtag(self, tag):
+        if tag in self.KEEP and tag != "br":
+            self.out.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        self.out.append(_esc_html(data))
+
+
+def _clean_email_html(raw: str) -> str:
+    p = _EmailHTMLCleaner()
+    p.feed(raw or "")
+    p.close()
+    return "".join(p.out).strip()
+
+
+def _agent_people(agent: str, limit: int = 15) -> list[dict]:
+    """Outreach candidates, minus owner admins (who aren't flagged is_admin in the table)."""
+    people = db.agent_candidates(agent, PLANS["free"]["gen_limit"] or 10, limit + len(ADMIN_EMAILS))
+    return [p for p in people if (p["email"] or "").lower() not in ADMIN_EMAILS][:limit]
+
+
+def _json_from(text: str):
+    """First JSON object or array in a model reply (whichever bracket opens first)."""
+    text = (text or "").strip()
+    pairs = sorted((("{", "}"), ("[", "]")), key=lambda oc: text.find(oc[0]) if text.find(oc[0]) != -1 else 10 ** 9)
+    for open_c, close_c in pairs:
+        a, b = text.find(open_c), text.rfind(close_c)
+        if a != -1 and b > a:
+            try:
+                return json.loads(text[a:b + 1])
+            except ValueError:
+                continue
+    return None
+
+
+def _as_list(data) -> list:
+    """Accept a list, a single object, or an object wrapping a list (e.g. {"emails": [...]})."""
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        inner = next((v for v in data.values() if isinstance(v, list)), None)
+        return inner if inner is not None else [data]
+    return []
+
+
+def _analytics_digest(days: int = 30) -> dict:
+    a = db.admin_analytics(days, PLANS["free"]["gen_limit"] or 10)
+    o = db.admin_overview()
+    prices = {k: plan_price(k) for k in PLANS}
+    return {
+        "window_days": days, "totals": a["totals"], "previous_window": a["previous"],
+        "daily_signups": a["series"]["signups"][-14:], "daily_generations": a["series"]["generations"][-14:],
+        "funnel": a["funnel"], "content_types": dict(sorted(a["types"].items(), key=lambda x: -x[1])[:8]),
+        "tones": a["tones"], "publishing": a["publishing"], "segment_counts": a["segments"]["counts"],
+        "plans": {r["plan"]: r["n"] for r in o["by_plan"]},
+        "mrr_naira": sum(prices.get(r["plan"], 0) * r["n"] for r in o["by_plan"]),
+        "total_users": o["total_users"], "ai_spend_30d_naira": o["ai_spend_30d"],
+        "weekly_cohort_retention_pct": [{"week_of": c["label"], "size": c["size"], "weeks": c["weeks"]} for c in a["cohorts"]],
+    }
+
+
+def _run_analyst(user) -> tuple[str, str, list]:
+    digest = _analytics_digest(30)
+    system = ("You are the growth analyst for Vertil, an AI marketing tool for Nigerian small businesses priced in naira. "
+              "Be concrete and honest; use the numbers given and never invent any. Small samples: say so. Reply with JSON only.")
+    usr = ("Here is the latest data (JSON):\n" + json.dumps(digest) + "\n\nReturn JSON: {\"headline\": one sentence, "
+           "\"summary\": 2-3 sentences, \"highlights\": [{\"title\", \"detail\", \"tone\": \"good\"|\"bad\"|\"neutral\"}] (3-5), "
+           "\"actions\": [{\"title\", \"detail\", \"impact\": \"high\"|\"medium\"|\"low\"}] (exactly 3)}")
+    text, _, _ = _complete(system, usr, 3000)
+    rep = _json_from(text)
+    if not isinstance(rep, dict) or not rep.get("headline"):
+        raise ValueError("The analyst couldn't produce a report. Try again.")
+    items = [{"title": x.get("title", ""), "reason": x.get("detail", ""), "severity": x.get("impact", "")}
+             for x in rep.get("actions", [])[:3]]
+    return rep["headline"], json.dumps(rep), items
+
+
+def _run_outreach(agent: str, user) -> tuple[str, str, list]:
+    people = _agent_people(agent)
+    if not people:
+        return "Nobody matches right now, so there's nothing to draft.", "", []
+    now = time.time()
+    brief = {
+        "activation": "They signed up but have never generated anything. Give one concrete first post idea for their business and invite them to try it.",
+        "winback": "They used Vertil but have been quiet for a while. Acknowledge it lightly, offer one timely post idea for their business, invite them back.",
+        "upgrade": f"They're on the free plan and have used most of their {PLANS['free']['gen_limit']} free generations this month (see generations_this_month). Explain which paid plan fits how they use Vertil (Lite ₦{plan_price('lite'):,.0f}, Starter ₦{plan_price('starter'):,.0f}, Growth ₦{plan_price('growth'):,.0f} a month) without pressure.",
+    }[agent]
+    rows = []
+    for p in people:
+        rows.append({"user_id": p["id"], "first_name": (p["name"] or "").split(" ")[0], "plan": p["plan"],
+                     "business": p["brand"], "industry": p["industry"], "audience": p["audience"],
+                     "generations_total": p["gens"], "generations_this_month": p["month_gens"],
+                     "days_since_signup": int((now - p["created_at"]) / 86400),
+                     "days_quiet": int((now - p["last_active"]) / 86400) if p["last_active"] else None,
+                     "recent_content_types": [_TYPE_LABELS.get(t, t) for t in p["recent_types"]]})
+    usr = (f"Goal: {brief}\n\nUsers (JSON):\n{json.dumps(rows)}\n\nReturn a JSON array with one object per user: "
+           "{\"user_id\", \"subject\" (max 60 chars), \"body_html\", \"reason\" (one short line for the admin on why this user was picked)}")
+    text, _, _ = _complete(_AGENT_EMAIL_RULES, usr, 6000)
+    drafts = _as_list(_json_from(text))
+    if not drafts:
+        raise ValueError("The agent couldn't draft emails. Try again.")
+    by_id = {p["id"]: p for p in people}
+    items = []
+    for d in drafts:
+        p = by_id.get(d.get("user_id"))
+        if not p or not d.get("subject") or not d.get("body_html"):
+            continue
+        items.append({"user_id": p["id"], "email": p["email"], "name": p["name"] or "", "title": p["brand"] or p["name"] or p["email"],
+                      "reason": d.get("reason", ""), "subject": d["subject"][:120], "body_html": _clean_email_html(d["body_html"])})
+    return f"Drafted {len(items)} email{'s' if len(items) != 1 else ''} for review.", "", items
+
+
+def _run_quality(user) -> tuple[str, str, list]:
+    sample = db.quality_sample(30)
+    if not sample["generations"]:
+        return "No recent output to review.", "", []
+    gens = [{"id": g["id"], "type": _TYPE_LABELS.get(g["content_type"], g["content_type"]), "tone": g["tone"],
+             "brief": (g["brief"] or "")[:300], "output": (g["output"] or "")[:1200]} for g in sample["generations"]]
+    system = ("You audit AI-written marketing copy for Vertil (Nigerian small businesses). Our rules: names and prices exactly "
+              "as given in the brief; no Markdown (WhatsApp *single* bold allowed); no self-corrections or asides; correct "
+              "Pidgin/Yoruba/Igbo/Hausa usage; on-brand tone; platform length limits. Only report real, evidenced problems. "
+              "Reply with JSON only.")
+    usr = ("Recent outputs (JSON):\n" + json.dumps(gens) + "\n\nUser feedback (JSON):\n" + json.dumps(sample["feedback"]) +
+           "\n\nReturn JSON: {\"summary\": one sentence, \"findings\": [{\"title\", \"severity\": \"high\"|\"medium\"|\"low\", "
+           "\"detail\", \"example\" (a short quote from the output), \"fix\" (a concrete prompt rule to add)}]} (0-6 findings)")
+    text, _, _ = _complete(system, usr, 4000)
+    rep = _json_from(text)
+    if not isinstance(rep, dict):
+        raise ValueError("The quality monitor couldn't finish. Try again.")
+    items = [{"title": f.get("title", ""), "severity": f.get("severity", "low"), "reason": f.get("detail", ""),
+              "body_html": f"<p><b>Example:</b> {_esc_html(f.get('example', ''))}</p><p><b>Suggested fix:</b> {_esc_html(f.get('fix', ''))}</p>"}
+             for f in rep.get("findings", [])[:6]]
+    return rep.get("summary") or f"{len(items)} finding(s).", "", items
+
+
+@app.get("/api/admin/agents")
+@admin
+def admin_agents(_user):
+    ov = db.agent_overview()
+    out = []
+    for key, meta in AGENTS.items():
+        it = ov["items"].get(key, {})
+        cand = len(_agent_people(key, 500)) if meta["kind"] == "outreach" else None
+        out.append({"key": key, **meta, "last_run": (ov["runs"].get(key) or {}).get("last_run"),
+                    "runs": (ov["runs"].get(key) or {}).get("runs", 0), "pending": it.get("pending", 0),
+                    "sent": it.get("sent", 0), "candidates": cand})
+    nl = db.newsletter_stats()
+    return jsonify({"agents": out, "ai_ready": bool(LIVE), "email_ready": bool(RESEND_API_KEY),
+                    "newsletter": nl})
+
+
+@app.get("/api/admin/agents/<key>")
+@admin
+def admin_agent_detail(_user, key):
+    if key not in AGENTS:
+        return jsonify({"error": "Unknown agent"}), 404
+    runs = db.agent_runs(key, 10)
+    for r in runs:
+        r["report"] = _json_from(r["report"]) if r.get("report") else None
+    preview = []
+    if AGENTS[key]["kind"] == "outreach":
+        preview = [{"id": p["id"], "name": p["name"], "email": p["email"], "plan": p["plan"], "brand": p["brand"],
+                    "gens": p["gens"], "month_gens": p["month_gens"], "last_active": p["last_active"], "created_at": p["created_at"]}
+                   for p in _agent_people(key, 50)]
+    return jsonify({"agent": {"key": key, **AGENTS[key]}, "runs": runs, "items": db.agent_items(key, None, 200),
+                    "candidates": preview})
+
+
+@app.post("/api/admin/agents/<key>/run")
+@admin
+def admin_agent_run(user, key):
+    if key not in AGENTS:
+        return jsonify({"error": "Unknown agent"}), 404
+    if get_client() is None:
+        return jsonify({"error": "AI isn't configured — set ANTHROPIC_API_KEY."}), 400
+    try:
+        if key == "analyst":
+            summary, report, items = _run_analyst(user)
+        elif key == "quality":
+            summary, report, items = _run_quality(user)
+        else:
+            summary, report, items = _run_outreach(key, user)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 502
+    except Exception as exc:
+        return jsonify({"error": f"Agent failed: {exc}"}), 500
+    rid = db.create_agent_run(key, summary, report, items, user["id"])
+    return jsonify({"ok": True, "run_id": rid, "summary": summary, "items": len(items)})
+
+
+@app.post("/api/admin/agents/analyst/ask")
+@admin
+def admin_agent_ask(_user):
+    q = ((request.get_json(force=True) or {}).get("question") or "").strip()
+    if not q:
+        return jsonify({"error": "Ask a question first."}), 400
+    if get_client() is None:
+        return jsonify({"error": "AI isn't configured — set ANTHROPIC_API_KEY."}), 400
+    system = ("You are Vertil's growth analyst. Answer the admin's question using only the data provided; if the data "
+              "can't answer it, say exactly what's missing. Plain text, at most 120 words, no Markdown headings.")
+    try:
+        text, _, _ = _complete(system, "Data (JSON):\n" + json.dumps(_analytics_digest(30)) + "\n\nQuestion: " + q[:500], 1500)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    return jsonify({"answer": text.strip()})
+
+
+def _agent_email_html(item: dict) -> str:
+    body = item["body_html"] + _btn(APP_BASE_URL + "/app", "Open Vertil")
+    if item.get("user_id"):
+        body += (f'<p style="font-size:11px;color:#9aa8a4">Don\'t want these? '
+                 f'<a href="{APP_BASE_URL}/newsletter/unsubscribe?token={_unsub_token(item["user_id"])}" style="color:#9aa8a4">Unsubscribe</a></p>')
+    return _email_shell(body)
+
+
+def _send_agent_item(item: dict) -> tuple[bool, str]:
+    if item["status"] != "pending":
+        return False, "Already handled"
+    if not item.get("email") or not item.get("subject"):
+        return False, "Nothing to send"
+    u = db.get_user(item["user_id"]) if item.get("user_id") else None
+    if not u or u.get("newsletter_opt_out") or u.get("suspended"):
+        db.update_agent_item(item["id"], status="skipped")
+        return False, "User opted out or is suspended"
+    if not send_email(item["email"], item["subject"], _agent_email_html(item)):
+        return False, "Email isn't configured (RESEND_API_KEY) or the send failed"
+    db.update_agent_item(item["id"], status="sent", sent_at=time.time())
+    if item["agent"] in ("winback", "activation"):
+        db.set_reengaged(item["user_id"])  # keeps the daily re-engagement email from doubling up
+    return True, "Sent"
+
+
+@app.put("/api/admin/agent-items/<int:item_id>")
+@admin
+def admin_agent_item_update(_user, item_id):
+    item = db.get_agent_item(item_id)
+    if not item:
+        return jsonify({"error": "Not found"}), 404
+    d = request.get_json(force=True) or {}
+    fields = {}
+    if "subject" in d:
+        fields["subject"] = str(d["subject"]).strip()[:150]
+    if "body_html" in d:
+        fields["body_html"] = _clean_email_html(str(d["body_html"]))
+    if d.get("status") in ("pending", "dismissed", "resolved"):
+        fields["status"] = d["status"]
+    db.update_agent_item(item_id, **fields)
+    return jsonify(db.get_agent_item(item_id))
+
+
+@app.post("/api/admin/agent-items/send")
+@admin
+def admin_agent_items_send(_user):
+    ids = [int(i) for i in ((request.get_json(force=True) or {}).get("ids") or [])][:100]
+    results = []
+    for i in ids:
+        item = db.get_agent_item(i)
+        ok, msg = _send_agent_item(item) if item else (False, "Not found")
+        results.append({"id": i, "ok": ok, "message": msg})
+    return jsonify({"sent": sum(1 for r in results if r["ok"]), "results": results})
 
 
 @app.get("/api/admin/pricing")

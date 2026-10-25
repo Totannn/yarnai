@@ -50,11 +50,14 @@ TONES: dict[str, dict] = {
         "emoji": "🧡",
         "blurb": "English with natural Yoruba phrases woven in.",
         "guidance": (
-            "Write in English with natural Yoruba code-switching woven in the way Lagos "
-            "and South-West brands actually speak. Sprinkle real Yoruba phrases where they "
-            "land naturally: 'Owo ti e' (your money), 'E ku ise' (well done), 'Aje', "
-            "'Omo to good', ' Se wa daadaa', 'Maa lo'. Always keep it understandable to a "
-            "general Nigerian audience — the Yoruba should add warmth and identity, not block comprehension."
+            "Write in English with natural Yoruba code-switching woven in the way Lagos, Ibadan "
+            "and South-West brands actually speak. Use 2-4 short, common Yoruba expressions per piece, "
+            "with correct tone marks where you can, placed where they land naturally — e.g. "
+            "'Ẹ kú iṣẹ́' (well done), 'Ẹ kú àárọ̀' (good morning), 'Ẹ ṣé' (thank you), 'Ẹ ṣé gan' "
+            "(thank you very much), 'Ẹ káàbọ̀' (welcome), 'Ó ga o' (it's top-notch), 'Jọ̀ọ́' (please), "
+            "'Ṣé dáadáa ni?' (are you doing well?), 'Ọmọ, e sweet!'. Only use expressions you are sure of; "
+            "never write long Yoruba sentences or invent proverbs. Keep it understandable to a general "
+            "Nigerian audience — the Yoruba adds warmth and identity, not confusion."
         ),
     },
     "igbo_market": {
@@ -64,9 +67,12 @@ TONES: dict[str, dict] = {
         "guidance": (
             "Write in the direct, value-driven, trust-building tone common in Eastern "
             "Nigerian commerce (Onitsha, Aba, Nnewi). Emphasise value-for-money, quality, "
-            "durability and good business. Confident and persuasive. You may weave in light "
-            "Igbo phrases naturally where they add warmth: 'Daalu' (thank you), 'Ngwa ngwa' "
-            "(quickly), 'Ihe oma' (good thing) — but keep the core message in clear English."
+            "durability and good business. Confident and persuasive. Weave in 2-3 short, common "
+            "Igbo expressions where they add warmth — e.g. 'Ndewo' (hello), 'Nnọọ' (welcome), "
+            "'Daalụ' (thank you), 'Biko' (please), 'Ngwa ngwa' (quickly), 'Ọ dị mma' (it is good), "
+            "'Ezigbo' (excellent/genuine, as in 'ezigbo quality'), 'Kedu?' (how are you?). Keep the "
+            "core message in clear English. Never invent Igbo proverbs or long Igbo sentences — if you "
+            "are not certain a phrase is correct, say it in English."
         ),
     },
     "hausa_north": {
@@ -75,10 +81,14 @@ TONES: dict[str, dict] = {
         "blurb": "Formal, respectful, relationship-first.",
         "guidance": (
             "Write in a formal, respectful, relationship-first tone suited to Northern "
-            "Nigerian audiences (Kano, Kaduna, Sokoto). Lead with courtesy and trust. "
-            "You may include respectful Hausa greetings/phrases where natural: 'Sannu' "
-            "(hello/well done), 'Na gode' (thank you), 'Madalla' (excellent), 'Barka'. "
-            "Keep the register dignified and warm; avoid slang."
+            "Nigerian audiences (Kano, Kaduna, Sokoto, Abuja). Lead with courtesy and trust. "
+            "Weave in 2-4 short, correct Hausa expressions where natural — e.g. 'Sannu' (hello / well "
+            "done), 'Sannu da zuwa' (welcome), 'Ina kwana' (good morning), 'Barka da yamma' (good "
+            "evening), 'Na gode' / 'Mun gode' (thank you / we thank you), 'Madalla' (excellent), "
+            "'Allah ya kara albarka' (may God increase your blessings), 'Barka da Juma'a' (on Fridays). "
+            "For Eid always use 'Barka da Sallah' (never 'Barka da zuwa Sallah'); for Ramadan "
+            "'Barka da shan ruwa' at breaking of fast. Only use expressions you are certain of; never "
+            "invent phrases or write long Hausa sentences. Keep the register dignified and warm; avoid slang."
         ),
     },
     "luxury": {
@@ -192,18 +202,31 @@ CONTENT_TYPES: dict[str, dict] = {
         "label": "Meta / Google Ad Copy",
         "emoji": "🎯",
         "spec": (
-            "Write paid ad copy (Meta/Google). Provide: a primary text (2-3 short lines, hook + benefit + CTA), "
-            "a punchy headline (under 40 chars), and a one-line description. Speak to the target customer's "
-            "real desire or pain. Price in Naira if relevant."
+            "Write paid ad copy in the exact format of the platform the brief asks for.\n"
+            "• If the brief mentions Google, search or a search ad, write a Google Responsive Search Ad:\n"
+            "  'Headlines:' then 5 headlines, one per line, EACH 30 characters or fewer (count spaces);\n"
+            "  'Descriptions:' then 2 descriptions, one per line, EACH 90 characters or fewer.\n"
+            "  No emojis, no exclamation marks in headlines, title case is fine.\n"
+            "• Otherwise write a Meta (Facebook/Instagram) ad:\n"
+            "  'Primary text:' 2-3 short lines (hook + benefit + call to action);\n"
+            "  'Headline:' 40 characters or fewer; 'Description:' 30 characters or fewer.\n"
+            "Speak to the target customer's real desire or pain. Price in Naira if relevant. "
+            "Stay strictly within every character limit."
         ),
     },
     "email": {
         "label": "Email / Newsletter",
         "emoji": "✉️",
         "spec": (
-            "Write a marketing email. Provide a compelling subject line, a short preview line, and a body "
-            "that is warm, skimmable and benefit-led, ending in one clear call-to-action button text. "
-            "Keep paragraphs short."
+            "Write a marketing email in plain text, laid out exactly like this:\n"
+            "Subject: <compelling subject line>\n"
+            "Preview: <short preview line>\n"
+            "(blank line)\n"
+            "<the body — warm, skimmable and benefit-led, short paragraphs>\n"
+            "(blank line)\n"
+            "Button: <one clear call-to-action button text>\n"
+            "Keep the subject line, preview, body and button together as ONE option. "
+            "No Markdown symbols, no '---' divider lines."
         ),
     },
     "blog_intro": {
@@ -303,6 +326,14 @@ about Nigerian realities.
 - Match the brand voice above more than any generic "best practice".
 - Be specific and vivid; avoid empty marketing filler ("top-notch quality", "we are the best").
 - Respect the requested format exactly.
+- Use the brand name, product names, prices, dates and offers EXACTLY as written in the brand \
+profile and brief. Never change, shorten, merge or invent a product or brand name.
+- Output only finished, publish-ready copy. Never include second thoughts, self-corrections \
+("…I mean", "or rather"), placeholders, notes to the user or anything the customer shouldn't read.
+- Write plain text. Do not use Markdown — no **double asterisks**, no # headings, no '---' lines. \
+(WhatsApp messages may use *single asterisks* for bold, as WhatsApp itself does.)
+- Only use words from another Nigerian language if you are certain they are correct and commonly \
+used. If in doubt, say it in English. Never invent proverbs or long sentences in a local language.
 - Do not explain yourself, do not add notes or disclaimers — output ONLY the finished copy.
 """
 
@@ -368,6 +399,76 @@ def parse_brand_json(text: str) -> dict:
     return {k: str(data.get(k, "")).strip() for k in keys}
 
 
+# --------------------------------------------------------------------------- #
+# Flyer Maker — turn a caption or brief into the short pieces a flyer needs.
+# --------------------------------------------------------------------------- #
+
+FLYER_KINDS = {
+    "promo": "a single product or offer promo",
+    "pricelist": "a price list / menu with several items and prices",
+    "event": "an event or announcement (date, time, venue)",
+}
+
+
+def build_flyer_user(source: str, kind: str | None) -> str:
+    kinds = "\n".join(f'- "{k}": {v}' for k, v in FLYER_KINDS.items())
+    hint = f'The user wants kind "{kind}".' if kind in FLYER_KINDS else "Pick the kind that fits best."
+    return f"""Turn this into the text for a social-media flyer (an image people see for 2 seconds).
+
+SOURCE (a caption, brief or offer):
+\"\"\"
+{(source or "").strip()[:3000]}
+\"\"\"
+
+Flyer kinds:
+{kinds}
+{hint}
+
+Return ONLY valid JSON (no markdown) in exactly this shape:
+{{
+  "kind": "promo" | "pricelist" | "event",
+  "tag": "tiny label above the headline, max 3 words (e.g. 'NEW ARRIVAL', 'SATURDAY SPECIAL') or empty",
+  "headline": "the big line, max 6 words, punchy, in the brand voice",
+  "subhead": "one supporting line, max 12 words, or empty",
+  "price": "the main price exactly as given, e.g. '₦6,500', or empty",
+  "old_price": "a crossed-out price ONLY if the source gives one, else empty",
+  "cta": "call to action, max 4 words, e.g. 'Order on WhatsApp'",
+  "contact": "phone / handle / website from the source, else empty",
+  "date": "for events: date text, else empty",
+  "time": "for events: time text, else empty",
+  "venue": "for events: venue text, else empty",
+  "items": [{{"name": "item name", "price": "₦…"}}]
+}}
+Rules: "items" only for pricelist (3-8 items taken from the source; never invent items or prices — \
+if the source has no list, use kind "promo"). Keep every price, product and brand name EXACTLY as \
+written. Never invent a phone number, date or venue. Output JSON only."""
+
+
+def parse_flyer_json(text: str) -> dict:
+    import json
+    raw = (text or "").strip().strip("`")
+    if raw.lower().startswith("json"):
+        raw = raw[4:]
+    s, e = raw.find("{"), raw.rfind("}")
+    try:
+        data = json.loads(raw[s:e + 1]) if s != -1 and e != -1 else {}
+    except json.JSONDecodeError:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    out = {k: str(data.get(k, "") or "").strip()[:160] for k in
+           ("kind", "tag", "headline", "subhead", "price", "old_price", "cta", "contact", "date", "time", "venue")}
+    if out["kind"] not in FLYER_KINDS:
+        out["kind"] = "promo"
+    items = data.get("items") if isinstance(data.get("items"), list) else []
+    out["items"] = [{"name": str(i.get("name", ""))[:60], "price": str(i.get("price", ""))[:20]}
+                    for i in items if isinstance(i, dict) and i.get("name")][:10]
+    return out
+
+
+VARIANT_SEP = "<<<NEXT OPTION>>>"
+
+
 def build_user_prompt(content_type_key: str, brief: str, variants: int) -> str:
     """Build the user turn describing the content type, the brief, and how many variants."""
     ct = CONTENT_TYPES.get(content_type_key, CONTENT_TYPES["instagram_caption"])
@@ -383,7 +484,7 @@ THE BRIEF (what to write about):
 
 Produce exactly {variants} distinct option(s). Make each option genuinely different \
 in angle or hook — not minor rewordings. Separate each option with a line containing \
-only '---' (three dashes) and nothing else. Do not number them or add any other commentary."""
+only {VARIANT_SEP} and nothing else. Do not number them or add any other commentary."""
 
 
 def list_tones() -> list[dict]:
@@ -395,15 +496,20 @@ def list_content_types() -> list[dict]:
 
 
 def split_variants(text: str) -> list[str]:
-    """Split the model output into individual variants on '---' separators."""
-    parts = [p.strip() for p in text.split("\n---")]
-    # also handle a leading '---' or inline separators
-    cleaned: list[str] = []
-    for p in parts:
-        p = p.strip().strip("-").strip()
-        if p:
-            cleaned.append(p)
-    return cleaned or [text.strip()]
+    """Split the model output into individual options on the VARIANT_SEP line.
+
+    A dedicated token (not '---') is used because '---' is also a normal Markdown
+    rule that the model puts *inside* emails, which used to split one email into
+    a fake "subject" option and a fake "body" option. Older outputs/prompts that
+    still use '---' fall back to the legacy split.
+    """
+    text = (text or "").strip()
+    if VARIANT_SEP in text:
+        parts = text.split(VARIANT_SEP)
+    else:
+        parts = text.split("\n---")
+    cleaned = [p.strip().strip("-").strip() for p in parts]
+    return [p for p in cleaned if p] or [text]
 
 
 # --------------------------------------------------------------------------- #
