@@ -2838,6 +2838,7 @@ function composerWarnings(c) {
 }
 
 async function connectPlatformPopup(brandId, platform, onDone) {
+  if (state.usage && !state.usage.social) { state.composer = null; return openUpgrade("Posting and scheduling to social media is on paid plans. Upgrade to connect your accounts."); }
   try {
     const r = await api("/api/social/connect", { method: "POST", body: JSON.stringify({ brand_id: brandId, platform }) });
     state.connecting = platform; render();
@@ -2854,7 +2855,7 @@ async function connectPlatformPopup(brandId, platform, onDone) {
         render();
       }
     }, 800);
-  } catch (ex) { toast("⚠ " + ex.message); }
+  } catch (ex) { if (ex.data && ex.data.upgrade) { state.composer = null; openUpgrade(ex.message); } else toast("⚠ " + ex.message); }
 }
 function composerConnect(platform) {
   const c = state.composer; if (!c) return;
@@ -2904,6 +2905,7 @@ async function composerSubmit(asDraft) {
       if (c.mediaFile) fd.append("media", c.mediaFile);
       const res = await fetch("/api/queue", { method: "POST", body: fd });
       d = await res.json().catch(() => ({}));
+      if (res.status === 402 && d.upgrade) { state.composer = null; return openUpgrade(d.error); }
       if (!res.ok) throw new Error(d.error || "Couldn't save this post");
     }
     toast(d.message || (asDraft ? "Draft saved — find it in Queue" : c.when === "now" ? "Posted" : c.approval ? "Sent for approval" : "Scheduled"));
@@ -2929,7 +2931,7 @@ function composerView() {
   const platformPill = k => {
     const isSel = c.sel.includes(k), isConn = conn[k]?.status === "connected", isConnecting = state.connecting === k;
     if (!isConn) return `<button data-comp-connect="${k}" ${isConnecting ? "disabled" : ""} class="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border border-dashed border-line text-muted hover:border-brand/40 disabled:opacity-60">
-      ${platformBadge(k, 20)} ${PLATFORM_META[k].label} <span class="text-brand">${isConnecting ? "Connecting…" : "Connect"}</span></button>`;
+      ${platformBadge(k, 20)} ${PLATFORM_META[k].label} <span class="text-brand">${isConnecting ? "Connecting…" : state.usage && !state.usage.social ? "🔒 Paid plans" : "Connect"}</span></button>`;
     return `<button data-comp-pl="${k}" class="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border ${isSel ? "border-brand bg-brand-tint text-brand-dark" : "border-line text-ink hover:border-brand/40"}">
       ${platformBadge(k, 20)} ${PLATFORM_META[k].label}</button>`;
   };

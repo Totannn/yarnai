@@ -84,39 +84,39 @@ PLANS = {
         "features": ["10 generations / month", "1 brand voice", "All 8 tones", "Pidgin + English"],
     },
     "lite": {
-        "name": "Lite", "price": 2500, "gen_limit": 30, "brands": 1, "calendar": False,
+        "name": "Lite", "price": 2500, "social": True, "gen_limit": 30, "brands": 1, "calendar": False,
         "blurb": "Small shop, small price",
-        "features": ["30 generations / month", "1 brand voice", "All 8 tones & content types", "Save favourites"],
+        "features": ["30 generations / month", "1 brand voice", "All 8 tones & content types", "Save favourites", "Post & schedule to Instagram, Facebook, TikTok & more"],
     },
     "starter": {
-        "name": "Starter", "price": 7500, "gen_limit": 150, "brands": 1, "calendar": False,
+        "name": "Starter", "price": 7500, "social": True, "gen_limit": 150, "brands": 1, "calendar": False,
         "blurb": "Solo hustler",
-        "features": ["150 generations / month", "1 brand voice", "All tones & content types", "Save favourites"],
+        "features": ["150 generations / month", "1 brand voice", "All tones & content types", "Save favourites", "Post & schedule to Instagram, Facebook, TikTok & more"],
     },
     "growth": {
-        "name": "Growth", "price": 19000, "gen_limit": 600, "brands": 3, "calendar": True,
+        "name": "Growth", "price": 19000, "social": True, "gen_limit": 600, "brands": 3, "calendar": True,
         "blurb": "Serious SME", "popular": True,
-        "features": ["600 generations / month", "3 brand voices", "Content Calendar builder", "Voice that learns 👍"],
+        "features": ["600 generations / month", "3 brand voices", "Content Calendar builder", "Voice that learns 👍", "Post & schedule to Instagram, Facebook, TikTok & more"],
     },
     "freelancer": {
-        "name": "Freelancer", "price": 25000, "gen_limit": 800, "brands": 5, "calendar": True,
+        "name": "Freelancer", "price": 25000, "social": True, "gen_limit": 800, "brands": 5, "calendar": True,
         "brand_learn": True,
         "blurb": "Social media managers",
         "features": ["800 generations / month", "5 brand voices — one per client", "Learn My Brand (AI)",
-                    "Content Calendar builder", "Everything in Growth"],
+                    "Content Calendar builder", "Everything in Growth", "Post & schedule to Instagram, Facebook, TikTok & more"],
     },
     "pro": {
-        "name": "Pro", "price": 45000, "gen_limit": None, "brands": 10, "calendar": True,
+        "name": "Pro", "price": 45000, "social": True, "gen_limit": None, "brands": 10, "calendar": True,
         "brand_learn": True, "bulk": True,
         "blurb": "Power user",
-        "features": ["Unlimited generations", "10 brand voices", "Learn My Brand (AI)", "Bulk catalogue generator", "Everything in Growth"],
+        "features": ["Unlimited generations", "10 brand voices", "Learn My Brand (AI)", "Bulk catalogue generator", "Everything in Growth", "Post & schedule to Instagram, Facebook, TikTok & more"],
     },
     "business": {
-        "name": "Business", "price": 150000, "gen_limit": None, "brands": 10, "calendar": True,
+        "name": "Business", "price": 150000, "social": True, "gen_limit": None, "brands": 10, "calendar": True,
         "brand_learn": True, "bulk": True, "seats": 5,
         "blurb": "Team workspace",
         "features": ["Unlimited generations, pooled across your team", "5 team seats included",
-                    "Shared brand voices", "Everything in Pro"],
+                    "Shared brand voices", "Everything in Pro", "Post & schedule to Instagram, Facebook, TikTok & more"],
     },
 }
 PLAN_ORDER = ["free", "lite", "starter", "growth", "freelancer", "pro", "business"]
@@ -270,6 +270,7 @@ def usage_payload(user) -> dict:
         "calendar": p["calendar"],
         "brand_learn": bool(p.get("brand_learn")),
         "bulk": bool(p.get("bulk")),
+        "social": bool(p.get("social")),
         "seats": p.get("seats"),
         "is_team_member": owner_id != user["id"],
     }
@@ -1134,6 +1135,9 @@ def remove_brand(user, brand_id):
     return jsonify({"ok": True})
 
 
+SOCIAL_UPGRADE = {"error": "Posting and scheduling to social media is on paid plans. Upgrade to connect your accounts.", "upgrade": True}
+
+
 def _upload_post_username(brand_id: int) -> str:
     return f"vertil-brand-{brand_id}"
 
@@ -1157,6 +1161,8 @@ PLATFORM_LABEL = {"instagram": "Instagram", "facebook": "Facebook", "tiktok": "T
 def social_connect(user):
     if db.get_org_owner(user["id"]):
         return jsonify(_TEAM_BRAND_ERR), 403
+    if not plan_of(user).get("social"):
+        return jsonify(SOCIAL_UPGRADE), 402
     if not UPLOAD_POST_API_KEY:
         return jsonify({"error": "Social posting isn't configured yet."}), 400
     data = request.get_json(force=True) or {}
@@ -1268,6 +1274,8 @@ def _upload_post_publish(username: str, platforms: list, base_caption: str, over
 @app.post("/api/social/publish")
 @auth
 def social_publish(user):
+    if not plan_of(user).get("social"):
+        return jsonify(SOCIAL_UPGRADE), 402
     if not UPLOAD_POST_API_KEY:
         return jsonify({"error": "Social posting isn't configured yet."}), 400
     brand_id = request.form.get("brand_id", type=int)
@@ -1453,6 +1461,8 @@ def queue_create(user):
                                      scheduled_at, "draft", approval_required)
         return jsonify({"ok": True, "post": item, "message": "Draft saved — find it in Queue"})
 
+    if not plan_of(user).get("social"):
+        return jsonify(SOCIAL_UPGRADE), 402
     if any(x.get("hard") for x in w):
         return jsonify({"error": "Fix the issues before publishing.", "warnings": w}), 400
 
