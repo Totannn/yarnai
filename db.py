@@ -309,6 +309,21 @@ def init_db() -> None:
         _add_col(c, "applications", "admin_notes", "TEXT DEFAULT ''")
         _add_col(c, "applications", "ai_review", "TEXT DEFAULT ''")
         _add_col(c, "applications", "status_changed_at", f"{_REAL}")
+        _add_col(c, "applications", "email_opt_out", "INTEGER NOT NULL DEFAULT 0")
+        _add_col(c, "applications", "last_emailed_at", f"{_REAL}")
+        _add_col(c, "applications", "emails_sent", "INTEGER NOT NULL DEFAULT 0")
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS app_broadcasts (
+                id         {_PK},
+                subject    TEXT NOT NULL,
+                body       TEXT NOT NULL,
+                audience   TEXT DEFAULT '',
+                sent       INTEGER NOT NULL DEFAULT 0,
+                failed     INTEGER NOT NULL DEFAULT 0,
+                skipped    INTEGER NOT NULL DEFAULT 0,
+                created_by INTEGER,
+                created_at {_REAL} NOT NULL
+            )""")
         # migrations (idempotent on both backends)
         for tbl in ("brands", "generations", "calendars"):
             _add_col(c, tbl, "user_id", "INTEGER")
@@ -706,6 +721,30 @@ def get_application(app_id: int) -> dict | None:
     with _conn() as c:
         r = c.execute("SELECT * FROM applications WHERE id=?", (app_id,)).fetchone()
     return dict(r) if r else None
+
+
+def mark_applications_emailed(ids: list[int]) -> None:
+    now = time.time()
+    with _conn() as c:
+        for i in ids:
+            c.execute("UPDATE applications SET last_emailed_at=?, emails_sent=COALESCE(emails_sent,0)+1 WHERE id=?", (now, i))
+
+
+def set_application_opt_out(app_id: int, on: bool = True) -> None:
+    with _conn() as c:
+        c.execute("UPDATE applications SET email_opt_out=? WHERE id=?", (1 if on else 0, app_id))
+
+
+def create_app_broadcast(subject: str, body: str, audience: str, sent: int, failed: int, skipped: int, created_by: int) -> int:
+    with _conn() as c:
+        return _insert(c, "INSERT INTO app_broadcasts (subject, body, audience, sent, failed, skipped, created_by, created_at) "
+                          "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (subject, body, audience, sent, failed, skipped, created_by, time.time()))
+
+
+def list_app_broadcasts(limit: int = 30) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute("SELECT * FROM app_broadcasts ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+    return [dict(r) for r in rows]
 
 
 def update_application(app_id: int, **fields) -> None:

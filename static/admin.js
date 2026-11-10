@@ -245,7 +245,8 @@ function renderDash() {
       <main class="flex-1 px-5 sm:px-7 py-6 w-full max-w-[1320px]">${body}</main>
     </div></div>
     ${state.detail ? customerDrawer() : ""}
-    ${state.appDetail && S === "applications" ? applicantDrawer() : ""}`;
+    ${state.appDetail && S === "applications" ? applicantDrawer() : ""}
+    ${state.appMailer && S === "applications" ? appMailerModal() : ""}`;
   mountCharts();
   wireDash();
 }

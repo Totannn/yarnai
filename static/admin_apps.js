@@ -82,10 +82,11 @@ function applicationsSection() {
       <input id="appSearch" value="${esc(state.appQ)}" placeholder="Search applicants, notes…" class="input w-56 ml-auto"/>
       <div class="seg-group"><button data-aview="table" class="seg ${state.appView === "table" ? "on" : ""}">Table</button><button data-aview="board" class="seg ${state.appView === "board" ? "on" : ""}">Board</button></div>
       <button id="appExport" class="seg">⤓ CSV</button>
+      <button id="appMail" class="btn-glow !py-1.5">✉ Email applicants</button>
     </div>
     ${sel.size ? `<div class="glass rounded-xl px-4 py-2.5 mb-3 flex items-center gap-2 flex-wrap fade-in"><span class="text-[12.5px] text-brand-bright font-semibold">${sel.size} selected</span>
       <span class="text-[12px] text-muted ml-2">Move to</span>${APP_STATUSES.map(s => `<button data-bulkapp="${s}" class="seg">${APP_META[s].label}</button>`).join("")}
-      <button id="appSelClear" class="seg ml-auto">Clear</button></div>` : ""}`;
+      <button id="appMailSel" class="seg">✉ Email selected</button><button id="appSelClear" class="seg ml-auto">Clear</button></div>` : ""}`;
   return stats + toolbar + (state.appView === "board" ? appsBoard(list) : appsTable(list));
 }
 
@@ -96,7 +97,7 @@ function appsTable(list) {
     return `<tr data-app-open="${a.id}" class="border-b border-edge/60 hover:bg-edge/30 cursor-pointer ${sel.has(a.id) ? "bg-brand/10" : ""}">
       <td class="py-3 pr-2" data-stop><input type="checkbox" data-appsel="${a.id}" class="accent-teal-400" ${sel.has(a.id) ? "checked" : ""}/></td>
       <td class="py-3 pr-3"><div class="flex items-center gap-2.5"><span class="w-8 h-8 rounded-full grid place-items-center text-[12px] font-bold text-ink shrink-0" style="background:linear-gradient(135deg,#2dd4bf,#0e9488)">${esc(firstName(a.name)[0].toUpperCase())}</span>
-        <div class="min-w-0"><div class="font-semibold text-slate-100">${esc(a.name)}</div><div class="text-faint truncate max-w-[260px]">${esc(a.email || "")}${a.handle ? " · " + esc(a.handle) : ""}</div></div></div></td>
+        <div class="min-w-0"><div class="font-semibold text-slate-100">${esc(a.name)}</div><div class="text-faint truncate max-w-[260px]">${esc(a.email || "")}${a.handle ? " · " + esc(a.handle) : ""}${a.last_emailed_at ? ` · <span class="text-brand-bright">✉ ${ago(a.last_emailed_at)}</span>` : ""}${a.email_opt_out ? ' · <span class="text-rose-300">unsubscribed</span>' : ""}</div></div></div></td>
       <td class="py-3 px-2 text-slate-300 whitespace-nowrap">${esc(a.niche || "—")}</td>
       <td class="py-3 px-2 text-muted max-w-[340px]"><div class="line-clamp-2">${esc(a.note || "—")}</div>${a.admin_notes ? `<div class="text-[10.5px] text-gold mt-1 truncate">✎ ${esc(a.admin_notes)}</div>` : ""}</td>
       <td class="py-3 px-2 whitespace-nowrap">${r ? `<span class="chip ${FIT_META[r.fit][1]}">${r.score}</span>` : '<span class="text-faint">—</span>'}</td>
@@ -237,6 +238,10 @@ function wireApplications() {
     catch (ex) { toast(ex.message, "error"); }
   });
 
+  const am = $("#appMail"); if (am) am.onclick = openMailer;
+  const ams = $("#appMailSel"); if (ams) ams.onclick = openMailer;
+  wireMailer();
+
   // open
   $$("[data-app-open]").forEach(el => el.addEventListener("click", () => openApplicant(el.dataset.appOpen)));
 
@@ -326,4 +331,179 @@ document.addEventListener("keydown", async e => {
     const st = { c: "contacted", a: "accepted", r: "rejected", n: "new" }[e.key.toLowerCase()];
     try { await setAppStatus([a.id], st); toast(`${firstName(a.name)} → ${APP_META[st].label}`); renderDash(); } catch (ex) { toast(ex.message, "error"); }
   }
+});
+
+/* ------------------------- email applicants (bulk) ------------------------- */
+
+const MAIL_TEMPLATES = {
+  update: { label: "News / update", subject: "A quick update from Vertil", body: "Hi {first_name},\n\nThank you for applying to the Vertil Creator Initiative. We wanted to share a quick update with you:\n\n[write your update here]\n\nWe'll be in touch soon.\n\n— The Vertil team" },
+  welcome: { label: "Welcome in", subject: "Welcome to the Vertil Creator Initiative 🎉", body: "Hi {first_name},\n\nGreat news — you're in! We loved what you shared and we're excited to have you in the Vertil Creator Initiative.\n\nNext step: create your free account at vertil.ng (use this same email), then reply to this email with your main handle so we can add you to the community.\n\n— The Vertil team" },
+  info: { label: "Ask for more info", subject: "Quick question about your application", body: "Hi {first_name},\n\nThanks for applying to the Vertil Creator Initiative! Before we add you, could you reply with:\n\n1. Your main platform and handle\n2. Roughly how often you post\n3. What you'd love to create with Vertil\n\n— The Vertil team" },
+  event: { label: "Invite to an event", subject: "You're invited: Vertil creator session", body: "Hi {first_name},\n\nWe're hosting a session for Vertil creators and we'd love you to join.\n\nWhen: [date and time]\nWhere: [link or venue]\n\nReply to this email to save your spot.\n\n— The Vertil team" },
+};
+
+function mailAudiences() {
+  const all = state.applications || [];
+  const opts = [];
+  if (state.appSel.size) opts.push(["selected", `Selected (${state.appSel.size})`, all.filter(a => state.appSel.has(a.id))]);
+  const fl = filteredApps();
+  if (fl.length !== all.length) opts.push(["filter", `Current filter (${fl.length})`, fl]);
+  opts.push(["all", `Everyone (${all.length})`, all]);
+  APP_STATUSES.forEach(s => { const l = all.filter(a => appStatus(a) === s); if (l.length) opts.push([s, `${APP_META[s].label} (${l.length})`, l]); });
+  return opts;
+}
+const mailable = a => !!a.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a.email.trim()) && !a.email_opt_out;
+const mailAud = () => { const M = state.appMailer, auds = mailAudiences(); return auds.find(o => o[0] === M.aud) || auds[0]; };
+
+function openMailer() {
+  const auds = mailAudiences();
+  state.appMailer = { aud: auds[0][0], subject: MAIL_TEMPLATES.update.subject, body: MAIL_TEMPLATES.update.body, tpl: "update",
+    markContacted: true, previewHtml: "", brief: "", drafting: false, sending: false, history: null, tab: "write", showList: false };
+  renderDash(); loadMailHistory(); refreshMailPreview();
+}
+async function loadMailHistory() {
+  let h = [];
+  try { h = await api("/api/admin/applications/broadcasts"); } catch {}
+  if (state.appMailer) { state.appMailer.history = h; renderDash(); }
+}
+let _mailPrevT = null;
+function refreshMailPreview() {
+  clearTimeout(_mailPrevT);
+  _mailPrevT = setTimeout(async () => {
+    const M = state.appMailer; if (!M) return;
+    const sample = mailAud()[2].find(mailable);
+    try {
+      const r = await api("/api/admin/applications/message/preview", { method: "POST", body: JSON.stringify({ id: sample ? sample.id : 0, subject: M.subject, body: M.body }) });
+      M.previewHtml = r.html; M.previewSubject = r.subject; M.previewName = sample ? sample.name : "Amaka Obi (example)";
+      const f = $("#mailPreview");
+      if (f) { f.srcdoc = r.html; $("#mailPrevSubj").textContent = r.subject; $("#mailPrevTo").textContent = M.previewName; }
+    } catch {}
+  }, 350);
+}
+
+function appMailerModal() {
+  const M = state.appMailer; if (!M) return "";
+  const auds = mailAudiences();
+  const list = mailAud()[2], ok = list.filter(mailable), skipped = list.length - ok.length;
+  const newOnes = ok.filter(a => appStatus(a) === "new").length;
+  const hist = M.history === null ? `<div class="text-[12px] text-faint">Loading…</div>`
+    : M.history.length ? M.history.map(h => `<div class="flex items-center gap-3 py-2.5 border-b border-edge/60 text-[12.5px]">
+        <div class="min-w-0 flex-1"><div class="text-slate-100 font-semibold truncate">${esc(h.subject)}</div>
+        <div class="text-faint text-[11px]">${esc(h.audience || "Applicants")} · ${fmtDate(h.created_at)} (${ago(h.created_at)})</div></div>
+        <span class="chip chip-up">${h.sent} sent</span>${h.failed ? `<span class="chip chip-down">${h.failed} failed</span>` : ""}${h.skipped ? `<span class="chip chip-flat">${h.skipped} skipped</span>` : ""}
+        <button data-mailreuse="${h.id}" class="ctool">Reuse</button></div>`).join("")
+    : `<div class="text-[12px] text-faint">No emails sent to applicants yet.</div>`;
+  const write = `
+    <div class="grid lg:grid-cols-[1fr_420px] gap-4">
+      <div class="space-y-3">
+        <div class="glass rounded-2xl p-4">
+          <div class="text-[10.5px] uppercase tracking-wide text-faint mb-2">1 · Who gets it</div>
+          <div class="flex flex-wrap gap-1.5">${auds.map(([k, l]) => `<button data-mailaud="${k}" class="seg ${M.aud === k ? "on" : ""}">${esc(l)}</button>`).join("")}</div>
+          <div class="text-[12px] mt-3 flex flex-wrap gap-x-4 gap-y-1">
+            <span class="text-brand-bright font-semibold">${ok.length} will receive it</span>
+            ${skipped ? `<span class="text-faint">${skipped} skipped (no email or unsubscribed)</span>` : ""}
+            ${ok.length ? `<button id="mailShowList" class="text-muted underline decoration-dotted">${M.showList ? "Hide" : "See"} recipients</button>` : ""}</div>
+          ${M.showList ? `<div class="mt-2 max-h-32 overflow-y-auto scroll-thin text-[11.5px] text-slate-300 leading-relaxed">${ok.map(a => `${esc(a.name)} &lt;${esc(a.email)}&gt;${a.last_emailed_at ? ` <span class="text-faint">· emailed ${ago(a.last_emailed_at)}</span>` : ""}`).join("<br>")}</div>` : ""}
+        </div>
+        <div class="glass rounded-2xl p-4">
+          <div class="flex items-center gap-1.5 flex-wrap mb-3"><span class="text-[10.5px] uppercase tracking-wide text-faint mr-auto">2 · Message</span>
+            ${Object.entries(MAIL_TEMPLATES).map(([k, t]) => `<button data-mailtpl="${k}" class="seg ${M.tpl === k ? "on" : ""}">${t.label}</button>`).join("")}</div>
+          <div class="flex gap-2 mb-3"><input id="mailBrief" class="input flex-1" placeholder="✨ Or tell AI what to say, e.g. we're starting creator meetups in Lagos next month" value="${esc(M.brief)}"/>
+            <button id="mailDraft" class="btn-ghost whitespace-nowrap" ${M.drafting ? "disabled" : ""}>${M.drafting ? '<span class="spin inline-block w-3 h-3 border-2 border-brand/40 border-t-brand-bright rounded-full mr-1.5"></span>Writing…' : "Write with AI"}</button></div>
+          <label class="text-[11px] text-faint">Subject</label>
+          <input id="mailSubject" class="input w-full mb-2 !text-[13.5px]" value="${esc(M.subject)}"/>
+          <label class="text-[11px] text-faint">Message <span class="opacity-70">(a blank line starts a new paragraph)</span></label>
+          <textarea id="mailBody" rows="11" class="input w-full !text-[13px] leading-relaxed">${esc(M.body)}</textarea>
+          <div class="flex flex-wrap gap-1.5 mt-2 items-center"><span class="text-[11px] text-faint mr-1">Personalise:</span>
+            ${["first_name", "name", "niche", "handle"].map(k => `<button data-mailtag="${k}" class="ctool">{${k}}</button>`).join("")}</div>
+        </div>
+      </div>
+      <div class="space-y-3">
+        <div class="glass rounded-2xl p-3">
+          <div class="text-[10.5px] uppercase tracking-wide text-faint mb-2 px-1">Preview · as <span id="mailPrevTo" class="text-slate-300 normal-case">${esc(M.previewName || "…")}</span> sees it</div>
+          <div class="bg-white rounded-xl overflow-hidden">
+            <div class="px-3 py-2 border-b border-slate-200 text-[12px] text-slate-700"><b>Subject:</b> <span id="mailPrevSubj">${esc(M.previewSubject || M.subject)}</span></div>
+            <iframe id="mailPreview" class="w-full h-[380px] bg-white" sandbox srcdoc="${esc(M.previewHtml || "")}"></iframe></div>
+        </div>
+        <div class="glass rounded-2xl p-4 space-y-3">
+          ${newOnes ? `<label class="flex items-center gap-2 text-[12.5px] text-slate-200"><input id="mailMark" type="checkbox" class="accent-teal-400" ${M.markContacted ? "checked" : ""}/> Mark the ${newOnes} “New” applicant${newOnes > 1 ? "s" : ""} as Contacted</label>` : ""}
+          <div class="flex gap-2 flex-wrap">
+            <button id="mailTest" class="btn-ghost" ${M.sending ? "disabled" : ""}>Send me a test</button>
+            <button id="mailSend" class="btn-glow flex-1" ${M.sending || !ok.length ? "disabled" : ""}>${M.sending ? "Sending…" : `Send to ${ok.length} applicant${ok.length === 1 ? "" : "s"}`}</button></div>
+          <div class="text-[11px] text-faint">Each email is personalised and has an unsubscribe link. Replies go to your email.</div>
+        </div>
+      </div>
+    </div>`;
+  return `<div id="mailBg" class="fixed inset-0 z-40 bg-black/55 backdrop-blur-[2px] fade-in"></div>
+  <div id="mailWrap" class="fixed inset-0 z-50 flex items-start justify-center p-3 sm:p-6 overflow-y-auto">
+  <div id="mailBox" class="w-full max-w-[1120px] drawer rounded-2xl p-5 fade-up" style="border:1px solid rgba(45,212,191,.25)">
+    <div class="flex items-center gap-3 mb-4 flex-wrap">
+      <span class="agent-orb !w-10 !h-10"><svg viewBox="0 0 24 24" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m3.5 6.5 8.5 6.5 8.5-6.5"/></svg></span>
+      <div><div class="font-display font-extrabold text-lg text-white">Email applicants</div>
+        <div class="text-[12px] text-muted">One personalised email to many Creator Initiative applicants.</div></div>
+      <div class="seg-group ml-auto"><button data-mailtab="write" class="seg ${M.tab === "write" ? "on" : ""}">Write</button><button data-mailtab="history" class="seg ${M.tab === "history" ? "on" : ""}">Sent${M.history ? ` (${M.history.length})` : ""}</button></div>
+      <button id="mailClose" class="seg" title="Close (Esc)">✕</button></div>
+    ${M.tab === "history" ? `<div class="glass rounded-2xl p-4">${hist}</div>` : write}
+  </div></div>`;
+}
+
+function wireMailer() {
+  const M = state.appMailer; if (!M) return;
+  const close = () => { state.appMailer = null; renderDash(); };
+  $("#mailClose").onclick = close;
+  $("#mailWrap").onclick = e => { if (e.target.id === "mailWrap") close(); };
+  $$("[data-mailtab]").forEach(b => b.onclick = () => { M.tab = b.dataset.mailtab; renderDash(); if (M.tab === "write") refreshMailPreview(); });
+  $$("[data-mailreuse]").forEach(b => b.onclick = () => { const h = M.history.find(x => x.id === +b.dataset.mailreuse); if (!h) return; M.subject = h.subject; M.body = h.body; M.tpl = null; M.tab = "write"; renderDash(); refreshMailPreview(); });
+  if (M.tab !== "write") return;
+  $$("[data-mailaud]").forEach(b => b.onclick = () => { M.aud = b.dataset.mailaud; renderDash(); refreshMailPreview(); });
+  const sl = $("#mailShowList"); if (sl) sl.onclick = () => { M.showList = !M.showList; renderDash(); };
+  $$("[data-mailtpl]").forEach(b => b.onclick = () => {
+    const t = MAIL_TEMPLATES[b.dataset.mailtpl];
+    if (M.tpl === null && M.body.trim() && !confirm("Replace your message with this template?")) return;
+    M.tpl = b.dataset.mailtpl; M.subject = t.subject; M.body = t.body; renderDash(); refreshMailPreview();
+  });
+  const subj = $("#mailSubject"), body = $("#mailBody");
+  subj.oninput = () => { M.subject = subj.value; refreshMailPreview(); };
+  body.oninput = () => { M.body = body.value; M.tpl = null; refreshMailPreview(); };
+  $$("[data-mailtag]").forEach(b => b.onclick = () => {
+    const tag = `{${b.dataset.mailtag}}`, s = body.selectionStart ?? body.value.length, e2 = body.selectionEnd ?? s;
+    body.value = body.value.slice(0, s) + tag + body.value.slice(e2); M.body = body.value; M.tpl = null;
+    body.focus(); body.setSelectionRange(s + tag.length, s + tag.length); refreshMailPreview();
+  });
+  const br = $("#mailBrief"); br.oninput = () => { M.brief = br.value; };
+  $("#mailDraft").onclick = async () => {
+    if (!M.brief.trim()) return toast("Tell the AI what the email is about.", "error");
+    M.drafting = true; renderDash();
+    try {
+      const r = await api("/api/admin/applications/message/draft", { method: "POST", body: JSON.stringify({ brief: M.brief, audience: mailAud()[1] }) });
+      M.subject = r.subject || M.subject; M.body = r.body; M.tpl = null; toast("Draft ready. Edit anything you like.");
+    } catch (ex) { toast(ex.message, "error"); }
+    M.drafting = false; renderDash(); refreshMailPreview();
+  };
+  const mk = $("#mailMark"); if (mk) mk.onchange = () => { M.markContacted = mk.checked; };
+  const ids = () => mailAud()[2].filter(mailable).map(a => a.id);
+  $("#mailTest").onclick = async () => {
+    try { const r = await api("/api/admin/applications/message", { method: "POST", body: JSON.stringify({ ids: ids().slice(0, 1), subject: M.subject, body: M.body, test: true }) }); toast(`Test sent to ${r.to}`); }
+    catch (ex) { toast(ex.message, "error"); }
+  };
+  $("#mailSend").onclick = async () => {
+    const list = ids();
+    if (!M.subject.trim() || !M.body.trim()) return toast("Add a subject and a message.", "error");
+    if (/\[(write|date|link)[^\]]*\]/i.test(M.body)) return toast("Fill in the [bracketed] parts of the template first.", "error");
+    if (!confirm(`Send “${M.subject}” to ${list.length} applicant${list.length === 1 ? "" : "s"}?`)) return;
+    M.sending = true; renderDash();
+    try {
+      const r = await api("/api/admin/applications/message", { method: "POST", body: JSON.stringify({ ids: list, subject: M.subject, body: M.body, mark_contacted: M.markContacted, audience: mailAud()[1].replace(/\s*\(\d+\)$/, "") }) });
+      const now = Date.now() / 1000;
+      (state.applications || []).forEach(a => { if (list.includes(a.id)) { a.last_emailed_at = now; a.emails_sent = (a.emails_sent || 0) + 1; if (M.markContacted && appStatus(a) === "new") a.status = "contacted"; } });
+      toast(`Sent to ${r.sent}${r.failed ? ` · ${r.failed} failed` : ""}${r.skipped ? ` · ${r.skipped} skipped` : ""}`);
+      M.sending = false; M.tab = "history"; M.history = null; renderDash(); loadMailHistory();
+    } catch (ex) { M.sending = false; toast(ex.message, "error"); renderDash(); }
+  };
+}
+
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape" || !state.appMailer || $("#palette")) return;
+  const t = document.activeElement; if (t && ["INPUT", "TEXTAREA"].includes(t.tagName)) { t.blur(); return; }
+  state.appMailer = null; renderDash();
 });

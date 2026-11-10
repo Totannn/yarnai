@@ -3381,6 +3381,165 @@ def admin_application_review(_user, app_id):
     return jsonify(rev)
 
 
+# ---------------- email the Creator Initiative applicants ---------------- #
+
+_APP_MERGE = ("first_name", "name", "niche", "handle")
+
+
+def _app_unsub_token(app_id: int) -> str:
+    sig = hmac.new(app.secret_key.encode(), f"app:{app_id}".encode(), hashlib.sha256).hexdigest()[:24]
+    return f"{app_id}.{sig}"
+
+
+def _verify_app_unsub(token: str) -> int | None:
+    try:
+        id_s, sig = (token or "").split(".", 1)
+        app_id = int(id_s)
+    except ValueError:
+        return None
+    return app_id if hmac.compare_digest(sig, _app_unsub_token(app_id).split(".", 1)[1]) else None
+
+
+def _app_merge(text: str, a: dict) -> str:
+    first = (a.get("name") or "").strip().split(" ")[0] or "there"
+    vals = {"first_name": first, "name": (a.get("name") or "").strip() or "there",
+            "niche": (a.get("niche") or "").strip() or "your", "handle": (a.get("handle") or "").strip()}
+    for k in _APP_MERGE:
+        text = text.replace("{" + k + "}", vals[k])
+    return text
+
+
+def _app_email_html(a: dict, body: str) -> str:
+    """Plain-text message → safe, simple email. Blank lines = paragraphs, links auto-linked."""
+    text = _app_merge(body, a)
+    paras = []
+    for block in re.split(r"\n\s*\n", text.strip()):
+        h = _esc_html(block).replace("\n", "<br>")
+        h = re.sub(r"(https?://[^\s<]+)", r'<a href="\1" style="color:#0e9488">\1</a>', h)
+        h = re.sub(r"(?<![/\w.])(vertil\.ng)(?![\w/])", r'<a href="https://vertil.ng" style="color:#0e9488">\1</a>', h)
+        paras.append(f'<p style="margin:0 0 14px;line-height:1.6">{h}</p>')
+    unsub = f"{APP_BASE_URL}/applications/unsubscribe?token={_app_unsub_token(a['id'])}" if a.get("id") else "#"
+    foot = (f'<p style="font-size:11.5px;color:#9aa8a4;margin-top:22px;border-top:1px solid #e6eceb;padding-top:12px">'
+            f'You\'re getting this because you applied to the Vertil Creator Initiative. '
+            f'<a href="{unsub}" style="color:#9aa8a4">Unsubscribe</a></p>')
+    return _email_shell("".join(paras) + foot)
+
+
+def _send_batch(messages: list[dict], reply_to: str = "") -> tuple[int, int]:
+    """Send via Resend's batch endpoint (100 per call). Returns (sent, failed)."""
+    if not RESEND_API_KEY:
+        return 0, len(messages)
+    sent = failed = 0
+    for i in range(0, len(messages), 100):
+        chunk = [{"from": MAIL_FROM, "to": [m["to"]], "subject": m["subject"], "html": m["html"],
+                  **({"reply_to": reply_to} if reply_to else {})} for m in messages[i:i + 100]]
+        try:
+            r = httpx.post("https://api.resend.com/emails/batch", timeout=30,
+                           headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"}, json=chunk)
+            if r.status_code in (200, 201):
+                sent += len(chunk)
+            else:
+                failed += len(chunk)
+        except Exception:
+            failed += len(chunk)
+    return sent, failed
+
+
+def _valid_email(e: str) -> bool:
+    return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", (e or "").strip()))
+
+
+@app.post("/api/admin/applications/message/preview")
+@admin
+def admin_app_message_preview(_user):
+    d = request.get_json(force=True) or {}
+    a = db.get_application(int(d.get("id") or 0)) or {"id": 0, "name": "Amaka Obi", "niche": "Fashion & style", "handle": "@amaka"}
+    return jsonify({"subject": _app_merge(str(d.get("subject") or ""), a), "html": _app_email_html(a, str(d.get("body") or ""))})
+
+
+@app.post("/api/admin/applications/message/draft")
+@admin
+def admin_app_message_draft(_user):
+    d = request.get_json(force=True) or {}
+    brief = str(d.get("brief") or "").strip()[:1500]
+    if not brief:
+        return jsonify({"error": "Tell the AI what the email is about."}), 400
+    if not LIVE:
+        return jsonify({"error": "AI isn't configured — set ANTHROPIC_API_KEY."}), 400
+    system = ("You write short, warm emails from the Vertil team to people who applied to the Vertil Creator Initiative — "
+              "Nigerian creators, sellers and small-business owners. Friendly Nigerian English, plain text, no hype, "
+              "no emojis overload (one at most). Use the merge tag {first_name} for the greeting. Sign off '— The Vertil team'. "
+              "Never invent dates, prizes or numbers that aren't in the brief. Reply with JSON only.")
+    usr = (f"Audience: {str(d.get('audience') or 'applicants')[:200]}\nWhat the email should say: {brief}\n\n"
+           "Return JSON: {\"subject\": under 60 characters, \"body\": the email in plain text, short paragraphs separated by blank lines, under 160 words}")
+    try:
+        text, _, _ = _complete(system, usr, 1500)
+    except Exception as exc:
+        return jsonify({"error": f"Draft failed: {exc}"}), 500
+    out = _json_from(text)
+    if not isinstance(out, dict) or not out.get("body"):
+        return jsonify({"error": "The AI couldn't finish a draft. Try again."}), 502
+    return jsonify({"subject": str(out.get("subject") or "")[:120], "body": str(out["body"])[:5000]})
+
+
+@app.post("/api/admin/applications/message")
+@admin
+def admin_app_message(actor):
+    d = request.get_json(force=True) or {}
+    subject = str(d.get("subject") or "").strip()[:150]
+    body = str(d.get("body") or "").strip()[:8000]
+    if not subject or not body:
+        return jsonify({"error": "Add a subject and a message."}), 400
+    if not RESEND_API_KEY:
+        return jsonify({"error": "Email isn't configured — set RESEND_API_KEY."}), 400
+    ids = [int(i) for i in (d.get("ids") or [])][:1000]
+    apps = [a for a in (db.get_application(i) for i in ids) if a]
+    if d.get("test"):
+        sample = dict(apps[0]) if apps else {"id": 0, "name": actor.get("name") or "Test", "niche": "", "handle": ""}
+        ok = send_email(actor["email"], "[TEST] " + _app_merge(subject, sample), _app_email_html(sample, body))
+        return jsonify({"ok": ok, "to": actor["email"]}) if ok else (jsonify({"error": "The test email didn't send."}), 502)
+    seen, msgs, targets, skipped = set(), [], [], 0
+    for a in apps:
+        e = (a.get("email") or "").strip().lower()
+        if not _valid_email(e) or a.get("email_opt_out") or e in seen:
+            skipped += 1
+            continue
+        seen.add(e)
+        msgs.append({"to": e, "subject": _app_merge(subject, a), "html": _app_email_html(a, body)})
+        targets.append(a)
+    if not msgs:
+        return jsonify({"error": "None of these applicants can be emailed (no email address, or they unsubscribed)."}), 400
+    sent, failed = _send_batch(msgs, reply_to=actor.get("email", ""))
+    if sent:
+        db.mark_applications_emailed([a["id"] for a in targets])
+        if d.get("mark_contacted"):
+            for a in targets:
+                if (a.get("status") or "new") == "new":
+                    db.set_application_status(a["id"], "contacted")
+    db.create_app_broadcast(subject, body, str(d.get("audience") or "")[:120], sent, failed, skipped, actor["id"])
+    return jsonify({"ok": sent > 0, "sent": sent, "failed": failed, "skipped": skipped})
+
+
+@app.get("/api/admin/applications/broadcasts")
+@admin
+def admin_app_broadcasts(_user):
+    return jsonify(db.list_app_broadcasts())
+
+
+@app.get("/applications/unsubscribe")
+def application_unsubscribe():
+    app_id = _verify_app_unsub(request.args.get("token", ""))
+    if app_id:
+        db.set_application_opt_out(app_id, True)
+        msg = "You've been unsubscribed from Vertil Creator Initiative emails."
+    else:
+        msg = "This unsubscribe link is invalid."
+    return f"""<!doctype html><html><head><meta charset="utf-8"><title>Vertil</title>
+      <style>body{{font-family:'Segoe UI',Arial,sans-serif;max-width:440px;margin:80px auto;padding:0 24px;color:#13312e;text-align:center}}
+      h1{{color:#0e9488;font-size:22px;margin-bottom:12px}}a{{color:#0e9488}}</style></head>
+      <body><h1>Vertil</h1><p>{msg}</p><p><a href="/">Go to Vertil &rarr;</a></p></body></html>"""
+
+
 @app.get("/api/admin/users/<int:uid>")
 @admin
 def admin_user(_user, uid):
