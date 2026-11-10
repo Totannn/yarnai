@@ -1,3 +1,5 @@
+// Flyer Maker is switched off for now — flip to true to bring it back (code kept in flyer.js).
+const FLYER_ON = false;
 /* Vertil — studio frontend (Clean & Premium, multi-tenant) */
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -676,7 +678,7 @@ function routeView() {
     case "team": return teamView();
     case "script": return studioTabs("script") + scriptView();
     case "gigs": return gigsView();
-    case "flyer": return flyerView();
+    case "flyer": return FLYER_ON ? flyerView() : homeView();
     case "profile": return profileView();
     default: return studioView();
   }
@@ -743,7 +745,7 @@ function sidebar() {
     <nav class="space-y-1 overflow-y-auto scroll-thin flex-1">
       ${item("home","Home")}
       ${grpLabel("Create")}
-      ${item("studio","Studio")}${item("flyer","Flyer Maker")}${item("board","Content Board")}${item("brands","Brands")}${item("learn","Learn My Brand")}
+      ${item("studio","Studio")}${FLYER_ON ? item("flyer","Flyer Maker") : ""}${item("board","Content Board")}${item("brands","Brands")}${item("learn","Learn My Brand")}
       ${publishGroup}
       ${grpLabel("Plan & grow")}
       ${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}${item("favorites","Saved Copy")}${item("history","History")}
@@ -777,7 +779,7 @@ function sidebar() {
       <nav class="space-y-1">
         ${item("home","Home")}
         ${grpLabel("Create")}
-        ${item("studio","Studio")}${item("flyer","Flyer Maker")}${item("board","Content Board")}${item("brands","Brands")}${item("learn","Learn My Brand")}
+        ${item("studio","Studio")}${FLYER_ON ? item("flyer","Flyer Maker") : ""}${item("board","Content Board")}${item("brands","Brands")}${item("learn","Learn My Brand")}
         ${publishGroup}
         ${grpLabel("Plan & grow")}
         ${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}${item("favorites","Saved Copy")}${item("history","History")}
@@ -2622,7 +2624,7 @@ function calPostCard(p,i,abbr) {
       <span class="text-[11px] bg-paper border border-line rounded-md px-1.5 py-0.5">${esc(tone.label)}</span></div>
     <div class="flex gap-1.5 mt-1">
       <button data-write="${i}" class="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-semibold text-brand-dark bg-brand-tint hover:bg-brand hover:text-white transition rounded-lg py-2">${ic("pencil","w-4 h-4")} Write this post</button>
-      <button data-cal-flyer="${i}" title="Make a flyer for this post" class="shrink-0 inline-flex items-center justify-center text-brand-dark border border-line hover:border-brand/40 transition rounded-lg px-2.5">${svgIcon(ICON.flyer,"w-4 h-4")}</button>
+      ${FLYER_ON ? "" : "<!--"}<button data-cal-flyer="${i}" title="Make a flyer for this post" class="shrink-0 inline-flex items-center justify-center text-brand-dark border border-line hover:border-brand/40 transition rounded-lg px-2.5">${svgIcon(ICON.flyer,"w-4 h-4")}</button>${FLYER_ON ? "" : "-->"}
       <button data-cal-to-board="${i}" title="Queue on Content Board without writing it yet" class="shrink-0 inline-flex items-center justify-center gap-1.5 text-sm font-semibold text-brand-dark border border-line hover:border-brand/40 transition rounded-lg px-3">${ic("board","w-4 h-4")}</button>
     </div></div>`;
 }
@@ -2741,7 +2743,8 @@ function mondayOf(d) {
   const x = new Date(d); const day = (x.getDay() + 6) % 7;
   x.setDate(x.getDate() - day); x.setHours(0,0,0,0); return x;
 }
-function ymd(d) { return d.toISOString().slice(0,10); }
+// Local calendar date (not UTC) — toISOString() put Lagos posts a day late in the week views.
+function ymd(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
 
 const PLATFORM_GLYPH = {
   instagram: { path: ICONP.instagram_caption, bg: "linear-gradient(135deg,#f58529,#dd2a7b,#8134af)" },
@@ -4038,7 +4041,7 @@ function wire() {
     $$("[data-manage-accounts]").forEach(b=>b.onclick=()=>{ state.activeBrandId=+b.dataset.manageAccounts; goto("accounts"); });
     wireBrandLogos();
   }
-  if (state.view === "flyer") wireFlyer();
+  if (state.view === "flyer" && FLYER_ON) wireFlyer();
   if (state.view === "pages" || state.view === "performance") {
     const rb=$("[data-pages-refresh]"); if(rb) rb.onclick=async()=>{
       state.pagesLoading = true; render();
@@ -4158,6 +4161,7 @@ function wire() {
 }
 
 async function goto(view, fromPop) {
+  if (view === "flyer" && !FLYER_ON) view = "home";
   state.editing = null;
   state.mobileNav = false;
   state.acctMenu = false;
@@ -4435,7 +4439,7 @@ function renderCards() {
           <button data-star="${i}" class="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand/40">${ic("save","w-3.5 h-3.5")} Save</button>
           <button data-copy="${i}" class="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand/40">${ic("copy","w-3.5 h-3.5")} Copy</button>
           <button data-board="${i}" class="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-line bg-white hover:border-brand/40">${ic("board","w-3.5 h-3.5")} Add to Board</button>
-          <button data-make-flyer="${i}" class="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg border border-brand/40 bg-brand-tint text-brand-dark hover:bg-brand hover:text-white">${svgIcon(ICON.flyer,"w-3.5 h-3.5")} Make flyer</button>
+          ${FLYER_ON ? "" : "<!--"}<button data-make-flyer="${i}" class="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg border border-brand/40 bg-brand-tint text-brand-dark hover:bg-brand hover:text-white">${svgIcon(ICON.flyer,"w-3.5 h-3.5")} Make flyer</button>${FLYER_ON ? "" : "-->"}
         </div></div>
       ${c.preview
         ? pvCardPreview(c, i)

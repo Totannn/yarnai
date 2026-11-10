@@ -2339,6 +2339,8 @@ def brand_colors(user, brand_id):
 @app.post("/api/flyer/fill")
 @auth
 def flyer_fill(user):
+    if os.getenv("FLYER_ENABLED", "0") != "1":  # Flyer Maker hidden for now
+        return jsonify({"error": "Flyer Maker is coming back soon."}), 404
     d = request.get_json(force=True) or {}
     source = (d.get("source") or "").strip()
     if not source:
