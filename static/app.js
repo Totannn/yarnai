@@ -632,7 +632,7 @@ function render() {
       ${sidebar()}
       <div class="flex-1 min-w-0 flex flex-col">
         ${topbar()}
-        <main class="flex-1 px-5 sm:px-8 py-6 max-w-[1180px] w-full mx-auto">${routeView()}</main>
+        <main class="flex-1 px-5 sm:px-8 py-6 max-w-[1180px] w-full mx-auto">${planBanner()}${routeView()}</main>
       </div>
     </div>
     ${state.composer ? composerView() : ""}
@@ -3335,8 +3335,27 @@ function openHistoryItem(id) {
 
 /* ============================ PRICING ============================== */
 
+function planEndDate(ts) {
+  return ts ? new Date(ts * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : "";
+}
+
+// Shown on every screen when a paid plan is about to end or has just ended.
+function planBanner() {
+  const us = state.usage || {};
+  if (us.is_team_member || (us.plan_state !== "ending" && us.plan_state !== "grace")) return "";
+  const grace = us.plan_state === "grace";
+  const msg = grace
+    ? `Your ${esc(us.plan_name)} plan ended on ${planEndDate(us.plan_expires_at)}. Renew within ${us.plan_grace_days_left} day${us.plan_grace_days_left === 1 ? "" : "s"} to keep your features and scheduled posts.`
+    : `Your ${esc(us.plan_name)} plan ends ${us.plan_days_left <= 1 ? "tomorrow" : `in ${us.plan_days_left} days`} (${planEndDate(us.plan_expires_at)}). Renew now — the new month is added on top.`;
+  return `<div class="mb-5 flex flex-wrap items-center gap-3 rounded-xl2 border px-4 py-3 text-sm ${grace ? "bg-rose-50 border-rose-200 text-rose-900" : "bg-amber-50 border-amber-200 text-amber-900"}">
+    <span class="flex-1 min-w-[220px]">${msg}</span>
+    <button data-renew="${esc(us.plan)}" class="shrink-0 text-xs font-semibold text-white bg-brand hover:bg-brand-dark rounded-lg px-3.5 py-2">Renew ${esc(us.plan_name)}</button>
+  </div>`;
+}
+
 function pricingView() {
   const cur = state.usage?.plan || "free";
+  const us = state.usage || {};
   const cards = state.config.plans.map(p=>{
     const isCur = p.key===cur;
     const popular = p.popular;
@@ -3346,12 +3365,16 @@ function pricingView() {
       <div class="text-xs text-muted">${esc(p.blurb)}</div>
       <div class="mt-3 mb-1"><span class="font-display font-extrabold text-3xl">${p.price?'₦'+p.price.toLocaleString():'Free'}</span>${p.price?'<span class="text-xs text-muted">/mo</span>':''}</div>
       <ul class="mt-3 space-y-1.5 text-sm flex-1">${p.features.map(f=>`<li class="flex gap-2"><span class="text-brand">✓</span><span class="text-ink/80">${esc(f)}</span></li>`).join("")}</ul>
-      <button data-plan="${p.key}" ${isCur?'disabled':''} class="mt-4 w-full py-2.5 rounded-xl font-semibold text-sm transition ${isCur?'bg-paper text-muted cursor-default':popular?'bg-brand text-white hover:bg-brand-dark':'border border-brand text-brand-dark hover:bg-brand-tint'}">
-        ${isCur?'Current plan':(p.price?'Upgrade':'Downgrade')}</button></div>`;
+      ${isCur && p.price && us.plan_expires_at ? `<div class="mt-4 text-[11px] text-center ${us.plan_state==='active'?'text-muted':'text-rose-600 font-semibold'}">${us.plan_state==='grace'?'Ended':'Active until'} ${planEndDate(us.plan_expires_at)}</div>` : ''}
+      ${isCur && p.price && !us.is_team_member
+        ? `<button data-plan="${p.key}" class="mt-2 w-full py-2.5 rounded-xl font-semibold text-sm transition bg-brand text-white hover:bg-brand-dark">Renew · +30 days</button>`
+        : `<button data-plan="${p.key}" ${isCur?'disabled':''} class="mt-4 w-full py-2.5 rounded-xl font-semibold text-sm transition ${isCur?'bg-paper text-muted cursor-default':popular?'bg-brand text-white hover:bg-brand-dark':'border border-brand text-brand-dark hover:bg-brand-tint'}">
+        ${isCur?'Current plan':(p.price?'Upgrade':'Downgrade')}</button>`}</div>`;
   }).join("");
   return `<div class="pb-24 md:pb-0">
     <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">${cards}</div>
-    <p class="text-xs text-muted text-center mt-5">${state.config.paystack?'Secure checkout via Paystack — card, bank transfer, USSD.':'⚙️ Paystack not configured — choosing a plan will simulate the upgrade so you can test limits.'}</p>
+    <p class="text-xs text-muted text-center mt-5">Paid plans last 30 days per payment. We'll remind you before yours ends — renewing early never loses you days.</p>
+    <p class="text-xs text-muted text-center mt-1.5">${state.config.paystack?'Secure checkout via Paystack — card, bank transfer, USSD.':'⚙️ Paystack not configured — choosing a plan will simulate the upgrade so you can test limits.'}</p>
   </div>`;
 }
 
@@ -3387,7 +3410,7 @@ function profileView() {
         <div class="text-[13px] font-semibold">Plan &amp; usage</div>
         <button data-nav="pricing" class="text-xs font-semibold text-brand hover:text-brand-dark">Manage plan →</button></div>
       <div class="h-2 rounded-full bg-line overflow-hidden"><div class="h-full bg-brand" style="width:${pct}%"></div></div>
-      <div class="text-xs text-muted mt-2">${unlimited?'Unlimited generations':`${us.used||0} / ${us.limit} generations this month`} · ${esc(us.plan_name||"")} plan</div>`)}
+      <div class="text-xs text-muted mt-2">${unlimited?'Unlimited generations':`${us.used||0} / ${us.limit} generations this month`} · ${esc(us.plan_name||"")} plan${us.plan_expires_at ? ` · ${us.plan_state==='grace'?'ended':'active until'} ${planEndDate(us.plan_expires_at)}` : ''}</div>`)}
 
     ${card(`<div class="text-[13px] font-semibold mb-3">Change password</div>
       <form id="pwForm" class="space-y-3">
@@ -3929,6 +3952,7 @@ function wire() {
     goto(b.dataset.nav);
   });
   $$("[data-logout]").forEach(b => b.onclick = logout);
+  $$("[data-renew]").forEach(b => b.onclick = () => choosePlan(b.dataset.renew));
   const mt = $("[data-mtoggle]"); if (mt) mt.onclick = () => { state.mobileNav = !state.mobileNav; render(); };
   $$("[data-mclose]").forEach(b => b.onclick = () => { state.mobileNav = false; render(); });
   const acct = $("[data-acct]"); if (acct) acct.onclick = () => { state.acctMenu = !state.acctMenu; render(); };
@@ -4540,7 +4564,7 @@ async function sendCalendarPostToBoard(post, btn) {
 
 async function choosePlan(plan) {
   const cur = state.usage?.plan;
-  if (plan === cur) return;
+  if (plan === cur && plan === "free") return;  // same paid plan = renew
   if (plan === "free") {  // downgrade — just simulate
     const d = await api("/api/billing/simulate", { method:"POST", body:JSON.stringify({plan}) });
     state.user=d.user; state.usage=d.usage; toast("Switched to Free"); render(); return;
@@ -4559,7 +4583,8 @@ async function choosePlan(plan) {
 
 function handleUpgradeReturn() {
   const p = new URLSearchParams(location.search);
-  if (p.get("upgraded")==="1") { toast("Upgrade successful"); history.replaceState({}, "", "/"); }
+  if (p.get("upgraded")==="1") { toast("Payment received — your plan is active"); history.replaceState({}, "", "/"); }
+  if (p.get("view")==="pricing") { state.view = "pricing"; history.replaceState({}, "", location.pathname); }
   else if (p.get("upgraded")==="0") { toast("Payment not completed."); history.replaceState({}, "", "/"); }
   if (p.get("social")==="instagram") {
     toast(p.get("status")==="success" ? "Instagram connected" : "Instagram connection cancelled");

@@ -334,6 +334,24 @@ def init_db() -> None:
         _add_col(c, "users", "phone", "TEXT DEFAULT ''")
         _add_col(c, "users", "newsletter_opt_out", "INTEGER NOT NULL DEFAULT 0")
         _add_col(c, "users", "last_reengage_at", f"{_REAL}")
+        # paid plans last 30 days per payment. plan_expires_at: NULL = not set yet,
+        # 0 = never expires (comped by an admin), otherwise the unix time it ends.
+        _add_col(c, "users", "plan_expires_at", f"{_REAL}")
+        _add_col(c, "users", "plan_notice", "INTEGER NOT NULL DEFAULT 0")  # 1 = ending-soon sent, 2 = ended sent
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS payments (
+                id         {_PK},
+                reference  TEXT UNIQUE,
+                user_id    INTEGER NOT NULL,
+                plan       TEXT NOT NULL,
+                amount     INTEGER NOT NULL DEFAULT 0,
+                source     TEXT DEFAULT 'paystack',
+                created_at {_REAL} NOT NULL
+            )""")
+        # Existing paid users (from before expiry existed) get 30 days from now —
+        # nobody is cut off the day this ships. Admin accounts are left open-ended.
+        c.execute("UPDATE users SET plan_expires_at=? WHERE plan<>'free' AND plan_expires_at IS NULL "
+                  "AND COALESCE(is_admin,0)=0", (time.time() + 30 * 86400,))
         _add_col(c, "generations", "input_tokens", "INTEGER DEFAULT 0")
         _add_col(c, "generations", "output_tokens", "INTEGER DEFAULT 0")
         _add_col(c, "generations", "cost", f"{_REAL} DEFAULT 0")
@@ -396,7 +414,7 @@ def create_user(email: str, name: str, password_hash: str, phone: str = "") -> d
 
 def get_user(user_id: int) -> dict | None:
     with _conn() as c:
-        r = c.execute("SELECT id, email, name, plan, onboarded, phone, notify_stage, is_admin, created_at FROM users WHERE id=?", (user_id,)).fetchone()
+        r = c.execute("SELECT id, email, name, plan, onboarded, phone, notify_stage, is_admin, plan_expires_at, created_at FROM users WHERE id=?", (user_id,)).fetchone()
     return dict(r) if r else None
 
 
@@ -455,8 +473,91 @@ def get_user_by_email(email: str) -> dict | None:
 
 def set_user_plan(user_id: int, plan: str) -> dict | None:
     with _conn() as c:
-        c.execute("UPDATE users SET plan=? WHERE id=?", (plan, user_id))
+        if plan == "free":
+            c.execute("UPDATE users SET plan='free', plan_expires_at=NULL, plan_notice=0 WHERE id=?", (user_id,))
+        else:
+            c.execute("UPDATE users SET plan=? WHERE id=?", (plan, user_id))
     return get_user(user_id)
+
+
+def extend_plan(user_id: int, plan: str, days: int = 30) -> dict | None:
+    """Add `days` of `plan`. Renewing the same plan stacks on top of the current end
+    date (paying early never loses days); switching plan starts a fresh period."""
+    now = time.time()
+    u = get_user(user_id)
+    if not u:
+        return None
+    cur = u.get("plan_expires_at")
+    base = cur if (u.get("plan") == plan and cur and cur > now) else now
+    with _conn() as c:
+        c.execute("UPDATE users SET plan=?, plan_expires_at=?, plan_notice=0 WHERE id=?",
+                  (plan, base + days * 86400, user_id))
+    return get_user(user_id)
+
+
+def set_plan_expiry(user_id: int, expires_at) -> dict | None:
+    """Admin override. expires_at: unix time, or 0 for never."""
+    with _conn() as c:
+        c.execute("UPDATE users SET plan_expires_at=?, plan_notice=0 WHERE id=?", (expires_at, user_id))
+    return get_user(user_id)
+
+
+def record_payment(reference: str, user_id: int, plan: str, amount: int, source: str = "paystack") -> bool:
+    """Store a payment once. False if this reference was already processed (the
+    Paystack redirect and webhook both fire for the same charge)."""
+    with _conn() as c:
+        if reference and c.execute("SELECT 1 FROM payments WHERE reference=?", (reference,)).fetchone():
+            return False
+        try:
+            c.execute("INSERT INTO payments (reference, user_id, plan, amount, source, created_at) VALUES (?,?,?,?,?,?)",
+                      (reference or None, user_id, plan, int(amount or 0), source, time.time()))
+        except Exception:
+            return False  # unique clash from a simultaneous duplicate
+    return True
+
+
+def list_payments(user_id: int, limit: int = 20) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute("SELECT * FROM payments WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+                         (user_id, limit)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def plans_ending_between(start: float, end: float) -> list[dict]:
+    """Paid users whose plan ends in [start, end) and haven't had the ending-soon email."""
+    with _conn() as c:
+        rows = c.execute("SELECT * FROM users WHERE plan<>'free' AND plan_expires_at > 0 "
+                         "AND plan_expires_at >= ? AND plan_expires_at < ? AND plan_notice=0",
+                         (start, end)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def plans_expired_before(cutoff: float) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute("SELECT * FROM users WHERE plan<>'free' AND plan_expires_at > 0 "
+                         "AND plan_expires_at < ?", (cutoff,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def claim_plan_notice(user_id: int, frm: int, to: int) -> bool:
+    """Atomically move plan_notice frm→to. Only one worker wins, so emails never double up."""
+    with _conn() as c:
+        cur = c.execute("UPDATE users SET plan_notice=? WHERE id=? AND plan_notice=?", (to, user_id, frm))
+        return (cur.rowcount or 0) > 0
+
+
+def expire_plan(user_id: int) -> bool:
+    """Drop an expired user to Free (brands, posts and history are kept). True if this call did it."""
+    with _conn() as c:
+        cur = c.execute("UPDATE users SET plan='free', plan_notice=2 WHERE id=? AND plan<>'free' "
+                        "AND plan_expires_at > 0 AND plan_expires_at < ?", (user_id, time.time()))
+        return (cur.rowcount or 0) > 0
+
+
+def brand_owner_id(brand_id: int) -> int | None:
+    with _conn() as c:
+        r = c.execute("SELECT user_id FROM brands WHERE id=?", (brand_id,)).fetchone()
+    return r["user_id"] if r else None
 
 
 def monthly_generation_count(user_id: int) -> int:
@@ -1536,7 +1637,7 @@ def admin_users() -> list[dict]:
 
 def admin_user_detail(uid: int) -> dict | None:
     with _conn() as c:
-        u = c.execute("SELECT id,email,name,phone,plan,onboarded,created_at,suspended,notes,is_admin FROM users WHERE id=?", (uid,)).fetchone()
+        u = c.execute("SELECT id,email,name,phone,plan,onboarded,created_at,suspended,notes,is_admin,plan_expires_at FROM users WHERE id=?", (uid,)).fetchone()
         if not u:
             return None
         daily = [dict(r) for r in c.execute(

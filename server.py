@@ -15,9 +15,11 @@ import hashlib
 import hmac
 import io
 import json
+import math
 import os
 import re
 import secrets
+import threading
 import time
 from html.parser import HTMLParser
 from pathlib import Path
@@ -239,13 +241,48 @@ def workspace_owner_id(user) -> int:
     return db.get_org_owner(user["id"]) or user["id"]
 
 
-def plan_of(user) -> dict:
+PLAN_DAYS = 30    # each payment buys 30 days
+PLAN_GRACE_DAYS = 3  # keep paid features this long after the end date, while we nudge them to renew
+
+
+def _plan_holder(user) -> dict:
+    """The account whose plan applies — the workspace owner for team seats."""
     owner_id = workspace_owner_id(user)
     if owner_id != user["id"]:
         owner = db.get_user(owner_id)
         if owner:
-            return PLANS.get(owner.get("plan", "free"), PLANS["free"])
-    return PLANS.get(user.get("plan", "free"), PLANS["free"])
+            return owner
+    return user
+
+
+def _plan_lapsed(holder) -> bool:
+    exp = holder.get("plan_expires_at")
+    return bool(holder.get("plan", "free") != "free" and exp and exp > 0
+                and time.time() > exp + PLAN_GRACE_DAYS * 86400)
+
+
+def plan_key_of(user) -> str:
+    holder = _plan_holder(user)
+    key = holder.get("plan", "free")
+    return "free" if (key not in PLANS or _plan_lapsed(holder)) else key
+
+
+def plan_of(user) -> dict:
+    return PLANS[plan_key_of(user)]
+
+
+def plan_status(user) -> dict:
+    """End date / renewal state for the UI."""
+    holder = _plan_holder(user)
+    exp = holder.get("plan_expires_at")
+    key = plan_key_of(user)
+    if key == "free" or not exp or exp <= 0:
+        return {"plan_expires_at": None, "plan_days_left": None, "plan_state": "free" if key == "free" else "open"}
+    left = (exp - time.time()) / 86400
+    state = "active" if left > 3 else ("ending" if left > 0 else "grace")
+    return {"plan_expires_at": exp, "plan_days_left": max(0, math.ceil(left)) if left > 0 else 0,
+            "plan_grace_days_left": max(0, math.ceil(left + PLAN_GRACE_DAYS)) if left <= 0 else None,
+            "plan_state": state}
 
 
 def _effective_usage(user) -> int:
@@ -261,8 +298,9 @@ def usage_payload(user) -> dict:
     owner_id = workspace_owner_id(user)
     used = _effective_usage(user)
     return {
-        "plan": user.get("plan", "free"),
+        "plan": plan_key_of(user),
         "plan_name": p["name"],
+        **plan_status(user),
         "used": used,
         "limit": p["gen_limit"],
         "brands_used": db.count_brands(user["id"]),
@@ -877,7 +915,7 @@ def _welcome_email_html(name: str, link: str) -> str:
       <p style="font-size:13px;color:#5b6b66">Got a question? Just reply to this email — a real person reads it.</p>""")
 
 
-def _receipt_email_html(name: str, plan_name: str, price: int, link: str) -> str:
+def _receipt_email_html(name: str, plan_name: str, price: int, link: str, until: str = "") -> str:
     return _email_shell(f"""
       <p>Hi {name},</p>
       <p>Your payment went through and your account is now on the <b style="color:#0e9488">{plan_name}</b> plan. Thank you! 🎉</p>
@@ -886,6 +924,7 @@ def _receipt_email_html(name: str, plan_name: str, price: int, link: str) -> str
             <td style="padding:8px 0;text-align:right;font-weight:bold;border-bottom:1px solid #eef2f1">{plan_name}</td></tr>
         <tr><td style="padding:8px 0;color:#5b6b66">Amount</td>
             <td style="padding:8px 0;text-align:right;font-weight:bold">₦{price:,}</td></tr>
+        {f'<tr><td style="padding:8px 0;color:#5b6b66;border-top:1px solid #eef2f1">Active until</td><td style="padding:8px 0;text-align:right;font-weight:bold;border-top:1px solid #eef2f1">{until}</td></tr>' if until else ''}
       </table>
       <p>Your higher limits and features are live right now — enjoy.</p>
       {_btn(link, "Start creating")}
@@ -909,26 +948,100 @@ def _send_welcome(user) -> None:
         pass
 
 
-def _apply_paid_plan(uid, plan: str, base_url: str) -> None:
-    """Set a user's plan and send a receipt — but only the first time we see this
-    upgrade, so the Paystack callback + webhook (which both fire) don't double-send."""
+def _apply_paid_plan(uid, plan: str, base_url: str, reference: str = "", amount_kobo: int | None = None,
+                     source: str = "paystack") -> None:
+    """Add 30 days of `plan` and send a receipt. Each Paystack reference is applied
+    once, so the callback + webhook (which both fire) don't double-extend or double-send."""
     try:
         uid = int(uid)
     except (TypeError, ValueError):
         return
-    if plan not in PLANS:
+    if plan not in PLANS or plan == "free":
         return
-    current = db.get_user(uid)
-    already = bool(current and current.get("plan") == plan)
-    user = db.set_user_plan(uid, plan)
-    if user and not already:
+    amount = int((amount_kobo or 0) / 100) if amount_kobo else plan_price(plan)
+    if not db.record_payment(reference, uid, plan, amount, source):
+        return
+    user = db.extend_plan(uid, plan, PLAN_DAYS)
+    if user:
         try:
             link = (base_url or "").rstrip("/") + "/app"
+            until = _fmt_day(user["plan_expires_at"])
             send_email(user["email"], f"Your Vertil {PLANS[plan]['name']} plan is active",
                        _receipt_email_html(user.get("name") or "there",
-                                           PLANS[plan]["name"], plan_price(plan), link))
+                                           PLANS[plan]["name"], amount, link, until))
         except Exception:
             pass
+
+
+def _fmt_day(ts: float) -> str:
+    d = datetime.datetime.fromtimestamp(ts)
+    return f"{d.day} {d.strftime('%B %Y')}"
+
+
+def _plan_ending_email_html(name: str, plan_name: str, ends: str, link: str) -> str:
+    return _email_shell(f"""
+      <p>Hi {name},</p>
+      <p>Your Vertil <b style="color:#0e9488">{plan_name}</b> plan ends on <b>{ends}</b>.</p>
+      <p>Renew before then to keep your limits, brand voices and scheduled posts going without a break. Renewing early never loses you days — the new month is added on top.</p>
+      {_btn(link, "Renew my plan")}
+      <p style="font-size:13px;color:#5b6b66">Questions about billing? Just reply to this email.</p>""")
+
+
+def _plan_ended_email_html(name: str, plan_name: str, link: str) -> str:
+    return _email_shell(f"""
+      <p>Hi {name},</p>
+      <p>Your Vertil <b>{plan_name}</b> plan has ended, so your account is now on the Free plan.</p>
+      <p>Nothing is lost — your brands, saved copy and queue are all still there. Scheduled posts are paused until you renew.</p>
+      {_btn(link, "Renew and pick up where you left off")}
+      <p style="font-size:13px;color:#5b6b66">Questions? Just reply to this email.</p>""")
+
+
+def _run_plan_expiry(now: float | None = None) -> str:
+    """Send ending-soon reminders and move lapsed plans to Free. Safe to run often."""
+    now = now if now is not None else time.time()
+    link = APP_BASE_URL + "/app?view=pricing"
+    reminded = ended = 0
+    for u in db.plans_ending_between(now, now + 3 * 86400):
+        if db.claim_plan_notice(u["id"], 0, 1):
+            try:
+                send_email(u["email"], f"Your Vertil {PLANS.get(u['plan'], {}).get('name', '')} plan ends {_fmt_day(u['plan_expires_at'])}",
+                           _plan_ending_email_html(u.get("name") or "there", PLANS.get(u["plan"], {}).get("name", u["plan"]),
+                                                   _fmt_day(u["plan_expires_at"]), link))
+                reminded += 1
+            except Exception:
+                pass
+    for u in db.plans_expired_before(now - PLAN_GRACE_DAYS * 86400):
+        plan_name = PLANS.get(u["plan"], {}).get("name", u["plan"])
+        if db.expire_plan(u["id"]):
+            ended += 1
+            try:
+                send_email(u["email"], f"Your Vertil {plan_name} plan has ended",
+                           _plan_ended_email_html(u.get("name") or "there", plan_name, link))
+            except Exception:
+                pass
+    return f"plan expiry: {reminded} reminded, {ended} moved to Free"
+
+
+_last_expiry_sweep = [0.0]
+
+
+@app.before_request
+def _plan_expiry_tick():
+    """No cron needed: at most once an hour per worker, sweep plan expiry in the background."""
+    if time.time() - _last_expiry_sweep[0] < 3600:
+        return
+    _last_expiry_sweep[0] = time.time()
+    def run():
+        try:
+            print(f"[Vertil] {_run_plan_expiry()}")
+        except Exception as exc:
+            print(f"[Vertil] plan expiry sweep failed: {exc}")
+    threading.Thread(target=run, daemon=True).start()
+
+
+@app.cli.command("plan-expiry")
+def _plan_expiry_cli():
+    print(f"[Vertil] {_run_plan_expiry()}")
 
 
 @app.post("/api/signup")
@@ -1536,6 +1649,13 @@ def _run_scheduled_posts(now: float | None = None) -> str:
     due = db.due_queued_posts(now)
     sent, failed = 0, 0
     for post in due:
+        owner_id = db.brand_owner_id(post["brand_id"])
+        owner = db.get_user(owner_id) if owner_id else None
+        if owner and not plan_of(owner).get("social"):
+            db.set_queued_post_status(post["id"], status="draft",
+                                      error="Your plan has ended — renew to post this.")
+            failed += 1
+            continue
         conn_map = {}
         connected = []
         for p in post["platforms"]:
@@ -2835,7 +2955,8 @@ def billing_callback():
                 meta = data.get("metadata", {}) or {}
                 uid, plan = meta.get("user_id"), meta.get("plan")
                 if uid and plan in PLANS:
-                    _apply_paid_plan(uid, plan, request.host_url)
+                    _apply_paid_plan(uid, plan, request.host_url, reference=data.get("reference") or ref,
+                                     amount_kobo=data.get("amount"))
                 return redirect("/?upgraded=1")
         except Exception:
             pass
@@ -2860,7 +2981,8 @@ def billing_webhook():
         meta = data.get("metadata", {}) or {}
         uid, plan = meta.get("user_id"), meta.get("plan")
         if uid and plan in PLANS and data.get("status") == "success":
-            _apply_paid_plan(uid, plan, request.host_url)
+            _apply_paid_plan(uid, plan, request.host_url, reference=data.get("reference") or "",
+                             amount_kobo=data.get("amount"))
     return ("", 200)
 
 
@@ -2882,7 +3004,7 @@ def billing_simulate(user):
     if plan == "free":
         updated = db.set_user_plan(user["id"], plan)
     else:
-        _apply_paid_plan(user["id"], plan, request.host_url)
+        _apply_paid_plan(user["id"], plan, request.host_url, reference=f"sim-{user['id']}-{time.time()}", source="simulated")
         updated = db.get_user(user["id"])
     return jsonify({"user": updated, "usage": usage_payload(updated), "simulated": True})
 
@@ -3548,6 +3670,8 @@ def admin_user(_user, uid):
         return jsonify({"error": "Not found"}), 404
     detail["user"]["plan_name"] = PLANS.get(detail["user"]["plan"], {}).get("name", detail["user"]["plan"])
     detail["user"]["is_owner"] = detail["user"]["email"].lower() in ADMIN_EMAILS
+    detail["user"].update(plan_status(detail["user"]))
+    detail["payments"] = db.list_payments(uid)
     detail["user"]["is_admin"] = detail["user"]["is_owner"] or bool(detail["user"].get("is_admin"))
     for t in detail["by_type"]:
         t["label"] = _TYPE_LABELS.get(t["content_type"], t["content_type"])
@@ -3598,6 +3722,17 @@ def admin_user_update(actor, uid):
     updated = db.admin_update_user(uid, plan=plan,
                                    suspended=None if suspended is None else bool(suspended),
                                    notes=notes)
+    if plan is not None and plan != target.get("plan"):
+        if plan == "free":
+            updated = db.set_user_plan(uid, "free")
+        else:  # admin-granted paid plan: 30 days, like a payment
+            updated = db.set_plan_expiry(uid, time.time() + PLAN_DAYS * 86400)
+    if d.get("extend_days"):
+        cur = (updated or target).get("plan_expires_at") or 0
+        base = cur if cur > time.time() else time.time()
+        updated = db.set_plan_expiry(uid, base + int(d["extend_days"]) * 86400)
+    if "expires_at" in d:  # explicit date, or 0 / null = never expires
+        updated = db.set_plan_expiry(uid, float(d["expires_at"] or 0))
     return jsonify({"ok": True, "user": updated})
 
 

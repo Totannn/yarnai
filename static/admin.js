@@ -1023,6 +1023,16 @@ function adminControls(u) {
       <div><div class="text-[10px] uppercase tracking-wide text-faint mb-1">Plan</div>
         <select id="acPlan" class="bg-panel border border-edge rounded-lg px-3 py-2 text-xs text-slate-100">${opts}</select></div>
       <button id="acPlanSave" class="text-xs font-semibold bg-brand text-ink rounded-lg px-3 py-2 hover:bg-brand-bright">Apply plan</button>
+      ${u.plan !== "free" ? `<div><div class="text-[10px] uppercase tracking-wide text-faint mb-1">Plan ends</div>
+        <div class="flex items-center gap-2">
+          <input id="acExp" type="date" value="${u.plan_expires_at ? new Date(u.plan_expires_at * 1000).toISOString().slice(0, 10) : ""}" class="bg-panel border border-edge rounded-lg px-3 py-1.5 text-xs text-slate-100"/>
+          <button id="acExpSave" class="text-xs font-semibold border border-edge rounded-lg px-3 py-2 text-slate-200 hover:bg-edge/40">Set</button>
+          <button id="acExt" class="text-xs font-semibold border border-brand/50 text-brand rounded-lg px-3 py-2 hover:bg-brand/10">+30 days</button>
+          <button id="acNever" class="text-xs font-semibold border border-edge rounded-lg px-3 py-2 text-slate-300 hover:bg-edge/40">No end date</button>
+        </div>
+        <div class="text-[10.5px] mt-1 ${u.plan_state === "grace" ? "text-rose-300" : u.plan_state === "ending" ? "text-amber-300" : "text-faint"}">${
+          u.plan_state === "open" ? "Never expires" : u.plan_state === "grace" ? "Ended — in 3-day grace, then moves to Free"
+          : u.plan_days_left != null ? `${u.plan_days_left} day${u.plan_days_left === 1 ? "" : "s"} left` : ""}</div></div>` : ""}
       ${locked ? "" : `<button id="acSuspend" class="text-xs font-semibold rounded-lg px-3 py-2 border ${u.suspended ? "border-brand/50 text-brand hover:bg-brand/10" : "border-amber-500/50 text-amber-300 hover:bg-amber-500/10"}">${u.suspended ? "Unsuspend" : "Suspend"}</button>
       <button id="acDelete" class="text-xs font-semibold rounded-lg px-3 py-2 border border-rose-500/50 text-rose-300 hover:bg-rose-500/10 ml-auto">Delete user</button>`}
     </div>
@@ -1062,6 +1072,10 @@ function wireRows() {
   if (panel) {
     const uid = +panel.dataset.adminId;
     const ps = $("#acPlanSave"); if (ps) ps.onclick = () => adminAct(uid, { plan: $("#acPlan").value });
+    const xs = $("#acExpSave"); if (xs) xs.onclick = () => { const v = $("#acExp").value; if (!v) return;
+      adminAct(uid, { expires_at: new Date(v + "T23:59:00").getTime() / 1000 }); };
+    const xe = $("#acExt"); if (xe) xe.onclick = () => adminAct(uid, { extend_days: 30 });
+    const xn = $("#acNever"); if (xn) xn.onclick = () => { if (confirm("Give this customer their plan with no end date?")) adminAct(uid, { expires_at: 0 }); };
     const su = $("#acSuspend"); if (su) su.onclick = () => adminAct(uid, { suspended: !(state.detail.user.suspended) });
     const ns = $("#acNotesSave"); if (ns) ns.onclick = () => adminAct(uid, { notes: $("#acNotes").value });
     const dl = $("#acDelete"); if (dl) dl.onclick = () => {
