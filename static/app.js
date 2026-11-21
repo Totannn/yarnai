@@ -1385,8 +1385,8 @@ function learnView() {
 
 function learnLocked() {
   return card(`<div class="text-center py-14"><div class="w-12 h-12 mx-auto rounded-xl2 bg-paper text-faint grid place-items-center mb-3">${ic("lock","w-6 h-6")}</div>
-    <p class="font-display font-bold text-lg">Learn My Brand is a Pro feature</p>
-    <p class="text-sm text-muted mt-1 max-w-md mx-auto">Upload your brand guide, past posts or business plan and Vertil reverse-engineers your voice — with a full breakdown. Upgrade to Pro to unlock it.</p>
+    <p class="font-display font-bold text-lg">Learn My Brand is on Growth and up</p>
+    <p class="text-sm text-muted mt-1 max-w-md mx-auto">Upload your brand guide, past posts or business plan and Vertil reverse-engineers your voice — with a full breakdown. Upgrade to Growth to unlock it.</p>
     <button data-nav="pricing" class="mt-4 text-sm font-semibold text-white bg-brand hover:bg-brand-dark px-5 py-2.5 rounded-xl">See plans</button></div>`);
 }
 
@@ -3353,9 +3353,19 @@ function planBanner() {
   </div>`;
 }
 
+function periodPrice(p, months) {
+  const f = ({ 1: 1, 3: 0.85, 12: 10 / 12 })[months] || 1;
+  return Math.round(p.price * months * f);
+}
+
 function pricingView() {
   const cur = state.usage?.plan || "free";
   const us = state.usage || {};
+  const months = state.billMonths || 1;
+  const periodLabel = { 1: "Monthly", 3: "3 months · save 15%", 12: "12 months · 2 months free" };
+  const toggle = `<div class="flex justify-center mb-6"><div class="inline-flex bg-white border border-line rounded-xl p-1 gap-1">
+    ${[1, 3, 12].map(m => `<button data-months="${m}" class="text-xs sm:text-sm font-semibold px-3 sm:px-4 py-2 rounded-lg transition ${months === m ? "bg-brand text-white" : "text-muted hover:text-ink"}">${periodLabel[m]}</button>`).join("")}
+  </div></div>`;
   const cards = state.config.plans.map(p=>{
     const isCur = p.key===cur;
     const popular = p.popular;
@@ -3363,17 +3373,19 @@ function pricingView() {
       ${popular?`<span class="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[10px] font-bold uppercase tracking-wide bg-brand text-white px-2.5 py-1 rounded-full">Most popular</span>`:''}
       <div class="text-sm font-bold ${popular?'text-brand-dark':''}">${esc(p.name)}</div>
       <div class="text-xs text-muted">${esc(p.blurb)}</div>
-      <div class="mt-3 mb-1"><span class="font-display font-extrabold text-3xl">${p.price?'₦'+p.price.toLocaleString():'Free'}</span>${p.price?'<span class="text-xs text-muted">/mo</span>':''}</div>
+      <div class="mt-3 mb-1"><span class="font-display font-extrabold text-3xl">${p.price?'₦'+Math.round(periodPrice(p, months)/months).toLocaleString():'Free'}</span>${p.price?'<span class="text-xs text-muted">/mo</span>':''}</div>
+      ${p.price && months > 1 ? `<div class="text-[11px] text-muted">₦${periodPrice(p, months).toLocaleString()} every ${months} months <s class="text-faint">₦${(p.price*months).toLocaleString()}</s></div>` : ''}
       <ul class="mt-3 space-y-1.5 text-sm flex-1">${p.features.map(f=>`<li class="flex gap-2"><span class="text-brand">✓</span><span class="text-ink/80">${esc(f)}</span></li>`).join("")}</ul>
       ${isCur && p.price && us.plan_expires_at ? `<div class="mt-4 text-[11px] text-center ${us.plan_state==='active'?'text-muted':'text-rose-600 font-semibold'}">${us.plan_state==='grace'?'Ended':'Active until'} ${planEndDate(us.plan_expires_at)}</div>` : ''}
       ${isCur && p.price && !us.is_team_member
-        ? `<button data-plan="${p.key}" class="mt-2 w-full py-2.5 rounded-xl font-semibold text-sm transition bg-brand text-white hover:bg-brand-dark">Renew · +30 days</button>`
+        ? `<button data-plan="${p.key}" class="mt-2 w-full py-2.5 rounded-xl font-semibold text-sm transition bg-brand text-white hover:bg-brand-dark">Renew · +${months === 1 ? "30 days" : months + " months"}</button>`
         : `<button data-plan="${p.key}" ${isCur?'disabled':''} class="mt-4 w-full py-2.5 rounded-xl font-semibold text-sm transition ${isCur?'bg-paper text-muted cursor-default':popular?'bg-brand text-white hover:bg-brand-dark':'border border-brand text-brand-dark hover:bg-brand-tint'}">
         ${isCur?'Current plan':(p.price?'Upgrade':'Downgrade')}</button>`}</div>`;
   }).join("");
   return `<div class="pb-24 md:pb-0">
-    <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">${cards}</div>
-    <p class="text-xs text-muted text-center mt-5">Paid plans last 30 days per payment. We'll remind you before yours ends — renewing early never loses you days.</p>
+    ${toggle}
+    <div class="grid sm:grid-cols-2 lg:grid-cols-${Math.min(5, state.config.plans.length)} gap-4">${cards}</div>
+    <p class="text-xs text-muted text-center mt-5">Paid plans last 30 days per month paid. We'll remind you before yours ends — renewing early never loses you days.</p>
     <p class="text-xs text-muted text-center mt-1.5">${state.config.paystack?'Secure checkout via Paystack — card, bank transfer, USSD.':'⚙️ Paystack not configured — choosing a plan will simulate the upgrade so you can test limits.'}</p>
   </div>`;
 }
@@ -4112,6 +4124,7 @@ function wire() {
   }
   if (state.view === "pricing") {
     $$("[data-plan]").forEach(b=>b.onclick=()=>choosePlan(b.dataset.plan));
+    $$("[data-months]").forEach(b=>b.onclick=()=>{ state.billMonths = +b.dataset.months; render(); });
   }
   if (state.view === "rate") {
     ["service","experience","location","client_type","scope"].forEach(k=>{ const el=$("#r_"+k); if(el){ el.oninput=e=>state.rateInputs[k]=e.target.value; el.onchange=e=>state.rateInputs[k]=e.target.value; } });
@@ -4571,7 +4584,7 @@ async function choosePlan(plan) {
   }
   if (state.config.paystack) {
     try {
-      const d = await api("/api/billing/init", { method:"POST", body:JSON.stringify({plan}) });
+      const d = await api("/api/billing/init", { method:"POST", body:JSON.stringify({plan, months: state.billMonths || 1}) });
       window.location.href = d.authorization_url; return;
     } catch (ex) { toast("⚠ "+ex.message); return; }
   }

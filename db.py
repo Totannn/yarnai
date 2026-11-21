@@ -348,6 +348,21 @@ def init_db() -> None:
                 source     TEXT DEFAULT 'paystack',
                 created_at {_REAL} NOT NULL
             )""")
+        # Nov 2026 plan simplification (runs once): Lite→Starter, Freelancer/Pro→Agency.
+        # Lite and Freelancer payers keep their old monthly price for 3 months.
+        _add_col(c, "users", "locked_plan", "TEXT")
+        _add_col(c, "users", "locked_price", f"{_REAL}")
+        _add_col(c, "users", "locked_until", f"{_REAL}")
+        c.execute("CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY, ran_at " + _REAL + ")")
+        if not c.execute("SELECT 1 FROM migrations WHERE name='plans_2026_11'").fetchone():
+            until = time.time() + 90 * 86400
+            c.execute("UPDATE users SET locked_plan='starter', locked_price=2500, locked_until=? WHERE plan='lite'", (until,))
+            c.execute("UPDATE users SET locked_plan='agency', locked_price=25000, locked_until=? WHERE plan='freelancer'", (until,))
+            c.execute("UPDATE users SET plan='starter' WHERE plan='lite'")
+            c.execute("UPDATE users SET plan='agency' WHERE plan IN ('freelancer','pro')")
+            # old admin price overrides would silently replace the new prices
+            c.execute("DELETE FROM plan_prices WHERE plan_key IN ('lite','starter','growth','freelancer','pro')")
+            c.execute("INSERT INTO migrations (name, ran_at) VALUES ('plans_2026_11', ?)", (time.time(),))
         # Existing paid users (from before expiry existed) get 30 days from now —
         # nobody is cut off the day this ships. Admin accounts are left open-ended.
         c.execute("UPDATE users SET plan_expires_at=? WHERE plan<>'free' AND plan_expires_at IS NULL "
@@ -552,6 +567,12 @@ def expire_plan(user_id: int) -> bool:
         cur = c.execute("UPDATE users SET plan='free', plan_notice=2 WHERE id=? AND plan<>'free' "
                         "AND plan_expires_at > 0 AND plan_expires_at < ?", (user_id, time.time()))
         return (cur.rowcount or 0) > 0
+
+
+def get_price_lock(user_id: int) -> dict | None:
+    with _conn() as c:
+        r = c.execute("SELECT locked_plan, locked_price, locked_until FROM users WHERE id=?", (user_id,)).fetchone()
+    return dict(r) if r and r["locked_plan"] else None
 
 
 def brand_owner_id(brand_id: int) -> int | None:

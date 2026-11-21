@@ -82,51 +82,61 @@ def model_kwargs(model_id: str, effort: str = "medium") -> dict:
 PLANS = {
     "free": {
         "name": "Free", "price": 0, "gen_limit": 10, "brands": 1, "calendar": False,
-        "blurb": "Kick the tyres",
+        "blurb": "Try it out",
         "features": ["10 generations / month", "1 brand voice", "All 8 tones", "Pidgin + English"],
     },
-    "lite": {
-        "name": "Lite", "price": 2500, "social": True, "gen_limit": 30, "brands": 1, "calendar": False,
-        "blurb": "Small shop, small price",
-        "features": ["30 generations / month", "1 brand voice", "All 8 tones & content types", "Save favourites", "Post & schedule to Instagram, Facebook, TikTok & more"],
-    },
     "starter": {
-        "name": "Starter", "price": 7500, "social": True, "gen_limit": 150, "brands": 1, "calendar": False,
-        "blurb": "Solo hustler",
-        "features": ["150 generations / month", "1 brand voice", "All tones & content types", "Save favourites", "Post & schedule to Instagram, Facebook, TikTok & more"],
+        "name": "Starter", "price": 5000, "social": True, "gen_limit": 100, "brands": 1, "calendar": False,
+        "blurb": "Small shops & solo sellers",
+        "features": ["100 generations / month", "1 brand voice", "All 8 tones & content types", "Save favourites",
+                     "Post & schedule to Instagram, Facebook, TikTok & more"],
     },
     "growth": {
-        "name": "Growth", "price": 19000, "social": True, "gen_limit": 600, "brands": 3, "calendar": True,
-        "blurb": "Serious SME", "popular": True,
-        "features": ["600 generations / month", "3 brand voices", "Content Calendar builder", "Voice that learns 👍", "Post & schedule to Instagram, Facebook, TikTok & more"],
-    },
-    "freelancer": {
-        "name": "Freelancer", "price": 25000, "social": True, "gen_limit": 800, "brands": 5, "calendar": True,
+        "name": "Growth", "price": 15000, "social": True, "gen_limit": 400, "brands": 3, "calendar": True,
         "brand_learn": True,
-        "blurb": "Social media managers",
-        "features": ["800 generations / month", "5 brand voices — one per client", "Learn My Brand (AI)",
-                    "Content Calendar builder", "Everything in Growth", "Post & schedule to Instagram, Facebook, TikTok & more"],
+        "blurb": "Serious SMEs & creators", "popular": True,
+        "features": ["400 generations / month", "3 brand voices", "Content Calendar builder", "Learn My Brand (AI)",
+                     "Voice that learns 👍", "Post & schedule for all 3 brands"],
     },
-    "pro": {
-        "name": "Pro", "price": 45000, "social": True, "gen_limit": None, "brands": 10, "calendar": True,
+    "agency": {
+        "name": "Agency", "price": 40000, "social": True, "gen_limit": 1500, "brands": 10, "calendar": True,
         "brand_learn": True, "bulk": True,
-        "blurb": "Power user",
-        "features": ["Unlimited generations", "10 brand voices", "Learn My Brand (AI)", "Bulk catalogue generator", "Everything in Growth", "Post & schedule to Instagram, Facebook, TikTok & more"],
+        "blurb": "Social media managers",
+        "features": ["1,500 generations / month", "10 client brand voices", "Post & schedule for all 10 clients",
+                     "Learn My Brand (AI)", "Bulk catalogue generator", "Everything in Growth"],
     },
     "business": {
-        "name": "Business", "price": 150000, "social": True, "gen_limit": None, "brands": 10, "calendar": True,
+        "name": "Business", "price": 150000, "social": True, "gen_limit": 5000, "brands": 10, "calendar": True,
         "brand_learn": True, "bulk": True, "seats": 5,
         "blurb": "Team workspace",
-        "features": ["Unlimited generations, pooled across your team", "5 team seats included",
-                    "Shared brand voices", "Everything in Pro", "Post & schedule to Instagram, Facebook, TikTok & more"],
+        "features": ["5,000 generations / month, pooled across your team", "5 team seats included",
+                     "Shared brand voices", "Everything in Agency", "Post & schedule to Instagram, Facebook, TikTok & more"],
     },
 }
-PLAN_ORDER = ["free", "lite", "starter", "growth", "freelancer", "pro", "business"]
+# Plans retired in Nov 2026 — existing users are moved by db.init_db; these keys map
+# any stragglers (old payments, old links) onto the new plan.
+LEGACY_PLANS = {"lite": "starter", "freelancer": "agency", "pro": "agency"}
+PLAN_ORDER = ["free", "starter", "growth", "agency", "business"]
+
+# Prepay: months -> price multiplier on (monthly price * months).
+BILLING_PERIODS = {1: 1.0, 3: 0.85, 12: 10 / 12}
+
+
+def period_amount(monthly: float, months: int) -> int:
+    return int(round(monthly * months * BILLING_PERIODS.get(months, 1.0)))
 
 
 def plan_price(key: str) -> float:
     """Current price for a plan — an admin-set override if one exists, else the built-in default."""
     return db.get_plan_prices().get(key, PLANS.get(key, {}).get("price", 0))
+
+
+def monthly_price_for(user, plan: str) -> float:
+    """List price, or a customer's locked-in price (kept for 3 months when plans changed)."""
+    lock = db.get_price_lock(user["id"]) if user else None
+    if lock and lock.get("locked_plan") == plan and (lock.get("locked_until") or 0) > time.time():
+        return min(float(lock["locked_price"]), plan_price(plan))
+    return plan_price(plan)
 
 # Per-million-token prices (USD) → used to compute Naira AI spend for the admin view.
 PRICES = {
@@ -263,7 +273,7 @@ def _plan_lapsed(holder) -> bool:
 
 def plan_key_of(user) -> str:
     holder = _plan_holder(user)
-    key = holder.get("plan", "free")
+    key = LEGACY_PLANS.get(holder.get("plan", "free"), holder.get("plan", "free"))
     return "free" if (key not in PLANS or _plan_lapsed(holder)) else key
 
 
@@ -469,6 +479,7 @@ def config():
         "cadences": voice.list_cadences(),
         "refine_presets": [{"key": k, "label": k.replace("_", " ").title()} for k in voice.REFINE_PRESETS],
         "plans": [{"key": k, **PLANS[k], "price": plan_price(k)} for k in PLAN_ORDER],
+        "periods": [{"months": m, "factor": f} for m, f in BILLING_PERIODS.items()],
         "paystack": bool(PAYSTACK_SECRET),
         "social_posting": bool(UPLOAD_POST_API_KEY),
         "google_client_id": GOOGLE_CLIENT_ID,
@@ -949,7 +960,7 @@ def _send_welcome(user) -> None:
 
 
 def _apply_paid_plan(uid, plan: str, base_url: str, reference: str = "", amount_kobo: int | None = None,
-                     source: str = "paystack") -> None:
+                     source: str = "paystack", months=None) -> None:
     """Add 30 days of `plan` and send a receipt. Each Paystack reference is applied
     once, so the callback + webhook (which both fire) don't double-extend or double-send."""
     try:
@@ -958,10 +969,15 @@ def _apply_paid_plan(uid, plan: str, base_url: str, reference: str = "", amount_
         return
     if plan not in PLANS or plan == "free":
         return
+    try:
+        months = int(months or 1)
+    except (TypeError, ValueError):
+        months = 1
+    months = months if months in BILLING_PERIODS else 1
     amount = int((amount_kobo or 0) / 100) if amount_kobo else plan_price(plan)
     if not db.record_payment(reference, uid, plan, amount, source):
         return
-    user = db.extend_plan(uid, plan, PLAN_DAYS)
+    user = db.extend_plan(uid, plan, PLAN_DAYS * months)
     if user:
         try:
             link = (base_url or "").rstrip("/") + "/app"
@@ -2915,9 +2931,16 @@ def gig_delete(user, gig_id):
 @app.post("/api/billing/init")
 @auth
 def billing_init(user):
-    plan = (request.get_json(force=True) or {}).get("plan", "")
+    body = request.get_json(force=True) or {}
+    plan = body.get("plan", "")
     if plan not in PLANS or plan == "free":
         return jsonify({"error": "Choose a paid plan."}), 400
+    try:
+        months = int(body.get("months") or 1)
+    except (TypeError, ValueError):
+        months = 1
+    if months not in BILLING_PERIODS:
+        return jsonify({"error": "Choose monthly, 3 months or 12 months."}), 400
     owner_id = db.get_org_owner(user["id"])
     if owner_id:
         owner = db.get_user(owner_id)
@@ -2925,14 +2948,14 @@ def billing_init(user):
                                  f"plan already — leave that workspace first if you want your own paid plan."}), 400
     if not PAYSTACK_SECRET:
         return jsonify({"error": "Paystack not configured", "paystack": False}), 400
-    amount = plan_price(plan) * 100  # kobo
+    amount = period_amount(monthly_price_for(user, plan), months) * 100  # kobo
     callback = request.host_url.rstrip("/") + "/billing/callback"
     try:
         r = httpx.post(
             "https://api.paystack.co/transaction/initialize",
             headers={"Authorization": f"Bearer {PAYSTACK_SECRET}", "Content-Type": "application/json"},
-            json={"email": user["email"], "amount": amount, "callback_url": callback,
-                  "metadata": {"user_id": user["id"], "plan": plan}},
+            json={"email": user["email"], "amount": int(amount), "callback_url": callback,
+                  "metadata": {"user_id": user["id"], "plan": plan, "months": months}},
             timeout=20,
         )
         data = r.json().get("data", {})
@@ -2954,9 +2977,10 @@ def billing_callback():
             if data.get("status") == "success":
                 meta = data.get("metadata", {}) or {}
                 uid, plan = meta.get("user_id"), meta.get("plan")
+                plan = LEGACY_PLANS.get(plan, plan)
                 if uid and plan in PLANS:
                     _apply_paid_plan(uid, plan, request.host_url, reference=data.get("reference") or ref,
-                                     amount_kobo=data.get("amount"))
+                                     amount_kobo=data.get("amount"), months=meta.get("months"))
                 return redirect("/?upgraded=1")
         except Exception:
             pass
@@ -2980,9 +3004,10 @@ def billing_webhook():
         data = event.get("data", {}) or {}
         meta = data.get("metadata", {}) or {}
         uid, plan = meta.get("user_id"), meta.get("plan")
+        plan = LEGACY_PLANS.get(plan, plan)
         if uid and plan in PLANS and data.get("status") == "success":
             _apply_paid_plan(uid, plan, request.host_url, reference=data.get("reference") or "",
-                             amount_kobo=data.get("amount"))
+                             amount_kobo=data.get("amount"), months=meta.get("months"))
     return ("", 200)
 
 
@@ -3199,7 +3224,7 @@ def _run_outreach(agent: str, user) -> tuple[str, str, list]:
     brief = {
         "activation": "They signed up but have never generated anything. Give one concrete first post idea for their business and invite them to try it.",
         "winback": "They used Vertil but have been quiet for a while. Acknowledge it lightly, offer one timely post idea for their business, invite them back.",
-        "upgrade": f"They're on the free plan and have used most of their {PLANS['free']['gen_limit']} free generations this month (see generations_this_month). Explain which paid plan fits how they use Vertil (Lite ₦{plan_price('lite'):,.0f}, Starter ₦{plan_price('starter'):,.0f}, Growth ₦{plan_price('growth'):,.0f} a month) without pressure.",
+        "upgrade": f"They're on the free plan and have used most of their {PLANS['free']['gen_limit']} free generations this month (see generations_this_month). Explain which paid plan fits how they use Vertil (Starter ₦{plan_price('starter'):,.0f}, Growth ₦{plan_price('growth'):,.0f}, Agency ₦{plan_price('agency'):,.0f} a month; 3 months up front saves 15%) without pressure.",
     }[agent]
     rows = []
     for p in people:

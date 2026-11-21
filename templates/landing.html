@@ -263,7 +263,7 @@
           <h3 class="font-display font-bold text-2xl sm:text-3xl tracking-tight">It goes live. You get on with your day.</h3>
           <p class="text-white/60 mt-3 leading-relaxed max-w-md">At the time you picked, it publishes straight to Instagram, Facebook, TikTok, X, LinkedIn and YouTube Shorts.</p>
           <a href="/app" class="self-start inline-flex items-center gap-2 text-sm font-semibold text-forest bg-brand-bright hover:brightness-105 px-5 py-2.5 rounded-xl mt-7 transition">Connect your accounts <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
-          <p class="text-xs text-white/40 font-mono mt-3">On all paid plans · from ₦2,500/mo</p>
+          <p class="text-xs text-white/40 font-mono mt-3">On all paid plans · from ₦5,000/mo</p>
         </div>
       </div>
 
@@ -410,8 +410,9 @@
       <h2 class="font-display font-bold text-3xl sm:text-4xl tracking-tight reveal">Start free. Upgrade when you're winning.</h2>
       <p class="text-muted max-w-lg mx-auto mt-5 reveal">Priced for the Nigerian market, in Naira. No surprises.</p>
     </div>
-    <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-12" id="priceGrid"></div>
-    <p class="text-center text-xs text-faint mt-6 font-mono reveal">Secure checkout via Paystack · cancel anytime</p>
+    <div class="grid sm:grid-cols-2 lg:grid-cols-5 gap-4 mt-12" id="priceGrid"></div>
+    <p class="text-center text-sm text-ink/70 mt-7 reveal"><b class="text-brand-dark">Pay 3 months up front, save 15%.</b> Pay for a year, get 2 months free.</p>
+    <p class="text-center text-xs text-faint mt-2 font-mono reveal">Secure checkout via Paystack · card, bank transfer or USSD · no auto-charge</p>
   </section>
 
   <!-- CTA -->
@@ -451,7 +452,7 @@
       { t:"Studio", tier:"All plans", d:"Generate captions, WhatsApp blasts, TikTok & IG posts, product descriptions, ads, emails and SMS — in any voice, with multiple options every time.", i:'<path d="M4 5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v3M4 5v14a2 2 0 0 0 2 2h6M16 8l4 4-7 7-4 1 1-4z"/>' },
       { t:"Post & Schedule", tier:"Paid plans", d:"Connect Instagram, Facebook, TikTok, X, LinkedIn and YouTube Shorts. Tailor each version, pick a time, and Vertil posts it for you.", i:'<path d="M4 12 20 4l-4 16-4-7z"/><path d="m12 13 8-9"/>' },
       { t:"Queue", tier:"Paid plans", d:"Everything you've scheduled, across every account, in one weekly view. Move things around, review drafts and see what's going out next.", i:'<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18"/><path d="M8 14h8M8 17h5"/>' },
-      { t:"Learn My Brand", tier:"Pro", d:"Upload a brand guide, past posts or your website — Vertil learns your voice and hands back a full breakdown, a ready content pack, a playbook and an on-brand checker.", i:'<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="m10.5 12.4 .8 1.8 1.8.8-1.8.8-.8 1.8-.8-1.8-1.8-.8 1.8-.8z"/>' },
+      { t:"Learn My Brand", tier:"Growth", d:"Upload a brand guide, past posts or your website — Vertil learns your voice and hands back a full breakdown, a ready content pack, a playbook and an on-brand checker.", i:'<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="m10.5 12.4 .8 1.8 1.8.8-1.8.8-.8 1.8-.8-1.8-1.8-.8 1.8-.8z"/>' },
       { t:"Smart Home", tier:"All plans", d:"Open the app and get a fresh post idea for the nearest money-moving moment — payday, Detty December, Black Friday — written for your brand, plus your streak & stats.", i:'<path d="M3 10.5 12 3l9 7.5M5.5 9.5V20h13V9.5M9.5 20v-6h5v6"/>' },
       { t:"Content Calendar", tier:"Growth", d:"Plan a whole month of posts tuned to the Nigerian calendar — Detty December, salary cycles, holidays — each with a visual direction and one tap to write it.", i:'<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9h18M8 2.5v4M16 2.5v4M12 12.5v5M9.5 15h5"/>' },
       { t:"Script Writer", tier:"All plans", d:"Scene-by-scene scripts for TikTok, Reels and Shorts — built on trending formats, with hooks, on-screen text and sound suggestions.", i:'<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/>' },
@@ -495,13 +496,11 @@
     document.getElementById("voiceTrack").innerHTML = (VOICES.concat(VOICES)).map(chip).join("");
 
     const PLANS = [
-      { n:"Free", p:"₦0", s:"Kick the tyres", f:["10 generations / month","1 brand voice","Pidgin + English"] },
-      { n:"Lite", p:"₦2,500", s:"Small shop, small price", f:["30 generations","1 brand voice","Post & schedule to socials"] },
-      { n:"Starter", p:"₦7,500", s:"Solo hustler", f:["150 generations","1 brand voice","All tones & formats","Post & schedule to socials"] },
-      { n:"Growth", p:"₦19,000", s:"Serious SME", pop:true, f:["600 generations","3 brand voices","Content Calendar","Post & schedule to socials"] },
-      { n:"Freelancer", p:"₦25,000", s:"Social media managers", f:["800 generations","5 brand voices","Learn My Brand","Post & schedule to socials"] },
-      { n:"Pro", p:"₦45,000", s:"Power user", f:["Unlimited generations","10 brand voices","Premium quality","Post & schedule to socials"] },
-      { n:"Business", p:"₦150,000", s:"For teams", biz:true, f:["5 team seats","Unlimited generations","One shared brand voice & plan","Post & schedule to socials"] },
+      { n:"Free", p:"₦0", s:"Try it out", f:["10 generations / month","1 brand voice","Pidgin + English"] },
+      { n:"Starter", p:"₦5,000", s:"Small shops & solo sellers", f:["100 generations / month","1 brand voice","All tones & formats","Post & schedule to socials"] },
+      { n:"Growth", p:"₦15,000", s:"Serious SMEs & creators", pop:true, f:["400 generations / month","3 brand voices","Content Calendar","Learn My Brand","Post & schedule for 3 brands"] },
+      { n:"Agency", p:"₦40,000", s:"Social media managers", f:["1,500 generations / month","10 client brands","Post & schedule for all 10","Bulk catalogue generator"] },
+      { n:"Business", p:"₦150,000", s:"For teams", biz:true, f:["5 team seats","5,000 generations, pooled","Shared brand voices","Everything in Agency"] },
     ];
     document.getElementById("priceGrid").innerHTML = PLANS.map(p=>`
       <div class="reveal relative bg-white border ${p.pop?'border-brand ring-2 ring-brand/30':p.biz?'border-forest':'border-line'} rounded-xl2 p-6 shadow-sm flex flex-col">
