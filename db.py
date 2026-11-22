@@ -348,6 +348,59 @@ def init_db() -> None:
                 source     TEXT DEFAULT 'paystack',
                 created_at {_REAL} NOT NULL
             )""")
+        # Forms: businesses collect orders / enquiries; responses land in their Vertil inbox.
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS lead_forms (
+                id         {_PK},
+                user_id    INTEGER NOT NULL,
+                brand_id   INTEGER,
+                slug       TEXT UNIQUE NOT NULL,
+                template   TEXT DEFAULT 'general',
+                title      TEXT NOT NULL,
+                intro      TEXT DEFAULT '',
+                fields     TEXT NOT NULL DEFAULT '[]',
+                button     TEXT DEFAULT 'Send',
+                thanks     TEXT DEFAULT '',
+                accent     TEXT DEFAULT '#0e9488',
+                whatsapp   TEXT DEFAULT '',
+                status     TEXT NOT NULL DEFAULT 'live',
+                views      INTEGER NOT NULL DEFAULT 0,
+                created_at {_REAL} NOT NULL,
+                updated_at {_REAL} NOT NULL
+            )""")
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS leads (
+                id         {_PK},
+                form_id    INTEGER NOT NULL,
+                user_id    INTEGER NOT NULL,
+                brand_id   INTEGER,
+                name       TEXT NOT NULL,
+                phone      TEXT NOT NULL,
+                email      TEXT DEFAULT '',
+                answers    TEXT NOT NULL DEFAULT '[]',
+                source     TEXT DEFAULT '',
+                status     TEXT NOT NULL DEFAULT 'new',
+                value      {_REAL},
+                notes      TEXT DEFAULT '',
+                consent_at {_REAL},
+                created_at {_REAL} NOT NULL,
+                updated_at {_REAL} NOT NULL
+            )""")
+        _add_col(c, "leads", "order_total", f"{_REAL}")
+        # Form settings (look, layout, discount codes, closing rules, auto-reply) as one JSON blob.
+        _add_col(c, "lead_forms", "settings", "TEXT DEFAULT '{}'")
+        # Funnel counters per form: views come from lead_forms.views; 'start' and 'reach:<i>' live here.
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS form_stats (
+                form_id INTEGER NOT NULL,
+                metric  TEXT NOT NULL,
+                n       INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (form_id, metric)
+            )""")
+        _add_col(c, "users", "forms_digest", "INTEGER DEFAULT 1")
+        _add_col(c, "users", "forms_digest_day", "TEXT")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_leads_user ON leads (user_id, created_at)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_leads_form ON leads (form_id)")
         # Nov 2026 plan simplification (runs once): Lite→Starter, Freelancer/Pro→Agency.
         # Lite and Freelancer payers keep their old monthly price for 3 months.
         _add_col(c, "users", "locked_plan", "TEXT")
@@ -2093,3 +2146,218 @@ def update_agent_item(item_id: int, **fields) -> None:
     with _conn() as c:
         c.execute(f"UPDATE agent_items SET {sets} WHERE id=?", (*allowed.values(), item_id))
 
+
+
+# ------------------------------- lead forms -------------------------------- #
+
+def _form_row(r) -> dict:
+    d = dict(r)
+    try:
+        d["fields"] = json.loads(d.get("fields") or "[]")
+    except ValueError:
+        d["fields"] = []
+    try:
+        d["settings"] = json.loads(d.get("settings") or "{}") or {}
+    except ValueError:
+        d["settings"] = {}
+    return d
+
+
+def _lead_row(r) -> dict:
+    d = dict(r)
+    try:
+        d["answers"] = json.loads(d.get("answers") or "[]")
+    except ValueError:
+        d["answers"] = []
+    return d
+
+
+def slug_taken(slug: str) -> bool:
+    with _conn() as c:
+        return bool(c.execute("SELECT 1 FROM lead_forms WHERE slug=?", (slug,)).fetchone())
+
+
+def create_form(user_id: int, brand_id, slug: str, data: dict) -> dict:
+    now = time.time()
+    with _conn() as c:
+        fid = _insert(c, "INSERT INTO lead_forms (user_id, brand_id, slug, template, title, intro, fields, button, thanks, "
+                         "accent, whatsapp, status, views, settings, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?)",
+                      (user_id, brand_id, slug, data.get("template", "general"), data["title"], data.get("intro", ""),
+                       json.dumps(data.get("fields", [])), data.get("button", "Send"), data.get("thanks", ""),
+                       data.get("accent", "#0e9488"), data.get("whatsapp", ""), data.get("status", "live"),
+                       json.dumps(data.get("settings", {})), now, now))
+    return get_form(user_id, fid)
+
+
+def update_form(user_id: int, form_id: int, data: dict) -> dict | None:
+    cols = ("brand_id", "title", "intro", "fields", "button", "thanks", "accent", "whatsapp", "status", "template", "settings", "slug")
+    sets, args = [], []
+    for k in cols:
+        if k in data:
+            sets.append(f"{k}=?")
+            args.append(json.dumps(data[k]) if k in ("fields", "settings") else data[k])
+    if sets:
+        with _conn() as c:
+            c.execute(f"UPDATE lead_forms SET {', '.join(sets)}, updated_at=? WHERE id=? AND user_id=?",
+                      (*args, time.time(), form_id, user_id))
+    return get_form(user_id, form_id)
+
+
+def get_form(user_id: int, form_id: int) -> dict | None:
+    with _conn() as c:
+        r = c.execute("SELECT * FROM lead_forms WHERE id=? AND user_id=?", (form_id, user_id)).fetchone()
+    return _form_row(r) if r else None
+
+
+def get_form_by_slug(slug: str) -> dict | None:
+    with _conn() as c:
+        r = c.execute("SELECT * FROM lead_forms WHERE slug=?", (slug,)).fetchone()
+    return _form_row(r) if r else None
+
+
+def list_forms(user_id: int) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT f.*, (SELECT COUNT(*) FROM leads l WHERE l.form_id=f.id) AS responses, "
+            "(SELECT COUNT(*) FROM leads l WHERE l.form_id=f.id AND l.status='new') AS new_count, "
+            "(SELECT MAX(created_at) FROM leads l WHERE l.form_id=f.id) AS last_response "
+            "FROM lead_forms f WHERE f.user_id=? ORDER BY f.created_at DESC", (user_id,)).fetchall()
+    return [_form_row(r) for r in rows]
+
+
+def count_forms(user_id: int) -> int:
+    with _conn() as c:
+        return c.execute("SELECT COUNT(*) AS n FROM lead_forms WHERE user_id=?", (user_id,)).fetchone()["n"]
+
+
+def delete_form(user_id: int, form_id: int) -> None:
+    with _conn() as c:
+        if c.execute("SELECT 1 FROM lead_forms WHERE id=? AND user_id=?", (form_id, user_id)).fetchone():
+            c.execute("DELETE FROM leads WHERE form_id=? AND user_id=?", (form_id, user_id))
+            c.execute("DELETE FROM form_stats WHERE form_id=?", (form_id,))
+            c.execute("DELETE FROM lead_forms WHERE id=? AND user_id=?", (form_id, user_id))
+
+
+def bump_form_views(form_id: int) -> None:
+    with _conn() as c:
+        c.execute("UPDATE lead_forms SET views=views+1 WHERE id=?", (form_id,))
+
+
+def add_lead(form: dict, name: str, phone: str, email: str, answers: list, source: str,
+             order_total: float | None = None) -> int:
+    now = time.time()
+    with _conn() as c:
+        return _insert(c, "INSERT INTO leads (form_id, user_id, brand_id, name, phone, email, answers, source, status, "
+                          "order_total, consent_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,'new',?,?,?,?)",
+                       (form["id"], form["user_id"], form.get("brand_id"), name, phone, email,
+                        json.dumps(answers), source, order_total, now, now, now))
+
+
+def list_leads(user_id: int, limit: int = 500) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute("SELECT l.*, f.title AS form_title FROM leads l LEFT JOIN lead_forms f ON f.id=l.form_id "
+                         "WHERE l.user_id=? ORDER BY l.created_at DESC LIMIT ?", (user_id, limit)).fetchall()
+    return [_lead_row(r) for r in rows]
+
+
+def get_lead(user_id: int, lead_id: int) -> dict | None:
+    with _conn() as c:
+        r = c.execute("SELECT * FROM leads WHERE id=? AND user_id=?", (lead_id, user_id)).fetchone()
+    return _lead_row(r) if r else None
+
+
+def update_lead(user_id: int, lead_id: int, **fields) -> dict | None:
+    sets, args = [], []
+    for k in ("status", "value", "notes"):
+        if k in fields:
+            sets.append(f"{k}=?"); args.append(fields[k])
+    if sets:
+        with _conn() as c:
+            c.execute(f"UPDATE leads SET {', '.join(sets)}, updated_at=? WHERE id=? AND user_id=?",
+                      (*args, time.time(), lead_id, user_id))
+    return get_lead(user_id, lead_id)
+
+
+def delete_lead(user_id: int, lead_id: int) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM leads WHERE id=? AND user_id=?", (lead_id, user_id))
+
+
+def count_form_leads(form_id: int) -> int:
+    with _conn() as c:
+        return c.execute("SELECT COUNT(*) AS n FROM leads WHERE form_id=?", (form_id,)).fetchone()["n"]
+
+
+def form_leads(form_id: int, since: float = 0) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute("SELECT * FROM leads WHERE form_id=? AND created_at>=? ORDER BY created_at DESC",
+                         (form_id, since)).fetchall()
+    return [_lead_row(r) for r in rows]
+
+
+def save_form_internals(form_id: int, fields: list | None = None, settings: dict | None = None) -> None:
+    """Server-side writes after an order: product stock and discount-code use counts."""
+    sets, args = [], []
+    if fields is not None:
+        sets.append("fields=?"); args.append(json.dumps(fields))
+    if settings is not None:
+        sets.append("settings=?"); args.append(json.dumps(settings))
+    if sets:
+        with _conn() as c:
+            c.execute(f"UPDATE lead_forms SET {', '.join(sets)} WHERE id=?", (*args, form_id))
+
+
+def bump_form_stat(form_id: int, metric: str) -> None:
+    with _conn() as c:
+        c.execute("INSERT INTO form_stats (form_id, metric, n) VALUES (?,?,1) "
+                  "ON CONFLICT (form_id, metric) DO UPDATE SET n = form_stats.n + 1", (form_id, metric))
+
+
+def form_stats(form_id: int) -> dict:
+    with _conn() as c:
+        rows = c.execute("SELECT metric, n FROM form_stats WHERE form_id=?", (form_id,)).fetchall()
+    return {r["metric"]: r["n"] for r in rows}
+
+
+def reset_form_stats(form_id: int) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM form_stats WHERE form_id=?", (form_id,))
+
+
+def forms_digest_owners() -> list[dict]:
+    """Users who own at least one form and haven't switched the daily summary off."""
+    with _conn() as c:
+        rows = c.execute("SELECT u.id, u.email, u.name, u.forms_digest_day FROM users u "
+                         "WHERE COALESCE(u.forms_digest, 1)=1 AND EXISTS (SELECT 1 FROM lead_forms f WHERE f.user_id=u.id)").fetchall()
+    return [dict(r) for r in rows]
+
+
+def claim_forms_digest(user_id: int, day: str) -> bool:
+    """Atomically mark today's summary as sent; only one worker wins."""
+    with _conn() as c:
+        cur = c.execute("UPDATE users SET forms_digest_day=? WHERE id=? AND (forms_digest_day IS NULL OR forms_digest_day<>?)",
+                        (day, user_id, day))
+        return (cur.rowcount or 0) > 0
+
+
+def set_forms_digest(user_id: int, on: bool) -> None:
+    with _conn() as c:
+        c.execute("UPDATE users SET forms_digest=? WHERE id=?", (1 if on else 0, user_id))
+
+
+def get_forms_digest(user_id: int) -> bool:
+    with _conn() as c:
+        r = c.execute("SELECT forms_digest FROM users WHERE id=?", (user_id,)).fetchone()
+    return bool(r and (r["forms_digest"] is None or r["forms_digest"]))
+
+
+def leads_between(user_id: int, start: float, end: float) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute("SELECT l.*, f.title AS form_title FROM leads l LEFT JOIN lead_forms f ON f.id=l.form_id "
+                         "WHERE l.user_id=? AND l.created_at>=? AND l.created_at<? ORDER BY l.created_at", (user_id, start, end)).fetchall()
+    return [_lead_row(r) for r in rows]
+
+
+def leads_since(user_id: int, since: float) -> int:
+    with _conn() as c:
+        return c.execute("SELECT COUNT(*) AS n FROM leads WHERE user_id=? AND created_at>=?", (user_id, since)).fetchone()["n"]

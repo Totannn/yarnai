@@ -81,36 +81,36 @@ def model_kwargs(model_id: str, effort: str = "medium") -> dict:
 # --------------------------------------------------------------------------- #
 PLANS = {
     "free": {
-        "name": "Free", "price": 0, "gen_limit": 10, "brands": 1, "calendar": False,
+        "name": "Free", "price": 0, "gen_limit": 10, "brands": 1, "calendar": False, "forms": 1, "leads_limit": 20,
         "blurb": "Try it out",
-        "features": ["10 generations / month", "1 brand voice", "All 8 tones", "Pidgin + English"],
+        "features": ["10 generations / month", "1 brand voice", "All 8 tones", "Pidgin + English", "1 order form · 20 responses / month"],
     },
     "starter": {
-        "name": "Starter", "price": 5000, "social": True, "gen_limit": 100, "brands": 1, "calendar": False,
+        "name": "Starter", "price": 5000, "social": True, "gen_limit": 100, "brands": 1, "calendar": False, "forms": 20,
         "blurb": "Small shops & solo sellers",
         "features": ["100 generations / month", "1 brand voice", "All 8 tones & content types", "Save favourites",
-                     "Post & schedule to Instagram, Facebook, TikTok & more"],
+                     "Post & schedule to Instagram, Facebook, TikTok & more", "20 order & booking forms · unlimited responses"],
     },
     "growth": {
-        "name": "Growth", "price": 15000, "social": True, "gen_limit": 400, "brands": 3, "calendar": True,
+        "name": "Growth", "price": 15000, "social": True, "gen_limit": 400, "brands": 3, "calendar": True, "forms": 50,
         "brand_learn": True,
         "blurb": "Serious SMEs & creators", "popular": True,
         "features": ["400 generations / month", "3 brand voices", "Content Calendar builder", "Learn My Brand (AI)",
-                     "Voice that learns 👍", "Post & schedule for all 3 brands"],
+                     "Voice that learns 👍", "Post & schedule for all 3 brands", "50 order & booking forms"],
     },
     "agency": {
-        "name": "Agency", "price": 40000, "social": True, "gen_limit": 1500, "brands": 10, "calendar": True,
+        "name": "Agency", "price": 40000, "social": True, "gen_limit": 1500, "brands": 10, "calendar": True, "forms": 200,
         "brand_learn": True, "bulk": True,
         "blurb": "Social media managers",
         "features": ["1,500 generations / month", "10 client brand voices", "Post & schedule for all 10 clients",
-                     "Learn My Brand (AI)", "Bulk catalogue generator", "Everything in Growth"],
+                     "Learn My Brand (AI)", "Bulk catalogue generator", "200 order & booking forms", "Everything in Growth"],
     },
     "business": {
-        "name": "Business", "price": 150000, "social": True, "gen_limit": 5000, "brands": 10, "calendar": True,
+        "name": "Business", "price": 150000, "social": True, "gen_limit": 5000, "brands": 10, "calendar": True, "forms": 10000,
         "brand_learn": True, "bulk": True, "seats": 5,
         "blurb": "Team workspace",
         "features": ["5,000 generations / month, pooled across your team", "5 team seats included",
-                     "Shared brand voices", "Everything in Agency", "Post & schedule to Instagram, Facebook, TikTok & more"],
+                     "Shared brand voices", "Everything in Agency", "Unlimited order & booking forms", "Post & schedule to Instagram, Facebook, TikTok & more"],
     },
 }
 # Plans retired in Nov 2026 — existing users are moved by db.init_db; these keys map
@@ -319,6 +319,8 @@ def usage_payload(user) -> dict:
         "brand_learn": bool(p.get("brand_learn")),
         "bulk": bool(p.get("bulk")),
         "social": bool(p.get("social")),
+        "forms_limit": p.get("forms", 1),
+        "leads_limit": p.get("leads_limit"),
         "seats": p.get("seats"),
         "is_team_member": owner_id != user["id"],
     }
@@ -677,15 +679,18 @@ def suggestion(user):
 
 # -------------------------------- auth ------------------------------------ #
 
-def send_email(to: str, subject: str, html: str) -> bool:
+def send_email(to: str, subject: str, html: str, reply_to: str | None = None) -> bool:
     """Send a transactional email via Resend. Returns False if not configured."""
     if not RESEND_API_KEY:
         return False
     try:
+        payload = {"from": MAIL_FROM, "to": [to], "subject": subject, "html": html}
+        if reply_to:
+            payload["reply_to"] = reply_to
         r = httpx.post(
             "https://api.resend.com/emails",
             headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
-            json={"from": MAIL_FROM, "to": [to], "subject": subject, "html": html},
+            json=payload,
             timeout=15,
         )
         return r.status_code in (200, 201)
@@ -3526,6 +3531,1035 @@ def admin_application_review(_user, app_id):
     rev["reviewed_at"] = time.time()
     db.update_application(app_id, ai_review=json.dumps(rev))
     return jsonify(rev)
+
+
+
+# ================================ FORMS ==================================== #
+# Businesses build a short order / enquiry form, share the link, and every
+# response lands in their Vertil inbox. Public page: /f/<slug>.
+
+FORM_FIELD_TYPES = ("short", "long", "select", "date", "number", "email", "products", "delivery", "slots")
+FORM_MAX_FIELDS = 12
+WAT = datetime.timezone(datetime.timedelta(hours=1))   # Lagos time, whatever the server's clock zone is
+# key → (label, heading family, body family, Google Fonts css2 query)
+FORM_FONTS = {
+    "grotesk": ("Modern", "Space Grotesk", "Space Grotesk", "family=Space+Grotesk:wght@400;500;600;700"),
+    "jakarta": ("Clean", "Plus Jakarta Sans", "Plus Jakarta Sans", "family=Plus+Jakarta+Sans:wght@400;500;600;700;800"),
+    "rounded": ("Friendly", "Nunito", "Nunito", "family=Nunito:wght@400;600;700;800"),
+    "serif": ("Editorial", "Fraunces", "Plus Jakarta Sans", "family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700"),
+    "elegant": ("Elegant", "Playfair Display", "DM Sans", "family=Playfair+Display:wght@500;600;700&family=DM+Sans:wght@400;500;600;700"),
+}
+WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+FORM_MEDIA_DIR = Path(app.static_folder) / "form_media"
+FORM_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _clean_products(raw) -> list[dict]:
+    """Product list for an order field. Prices are whole Naira; images must be our own uploads."""
+    out, seen = [], set()
+    for i, it in enumerate(raw if isinstance(raw, list) else []):
+        if not isinstance(it, dict):
+            continue
+        name = str(it.get("name") or "").strip()[:80]
+        if not name:
+            continue
+        try:
+            price = max(0, min(100_000_000, int(round(float(it.get("price") or 0)))))
+        except (TypeError, ValueError):
+            price = 0
+        img = str(it.get("image") or "")
+        img = img if re.match(r"^/static/form_media/[A-Za-z0-9_.-]+$", img) else ""
+        pid = re.sub(r"[^A-Za-z0-9_]", "", str(it.get("id") or ""))[:12] or f"p{i + 1}"
+        if pid in seen:
+            pid = f"p{i + 1}{secrets.token_hex(2)}"
+        seen.add(pid)
+        stock = it.get("stock")
+        try:
+            stock = None if stock in (None, "") else max(0, min(1_000_000, int(float(stock))))
+        except (TypeError, ValueError):
+            stock = None
+        out.append({"id": pid, "name": name, "price": price, "image": img, "desc": str(it.get("desc") or "").strip()[:120],
+                    "stock": stock})
+        if len(out) >= 30:
+            break
+    return out
+
+
+def _clean_areas(raw) -> list[dict]:
+    """Delivery areas: name + fee (₦). 'Pickup' with ₦0 is just another area."""
+    out, seen = [], set()
+    for i, a in enumerate(raw if isinstance(raw, list) else []):
+        if not isinstance(a, dict):
+            continue
+        name = str(a.get("name") or "").strip()[:60]
+        if not name:
+            continue
+        try:
+            fee = max(0, min(10_000_000, int(round(float(a.get("fee") or 0)))))
+        except (TypeError, ValueError):
+            fee = 0
+        aid = re.sub(r"[^A-Za-z0-9_]", "", str(a.get("id") or ""))[:12] or f"a{i + 1}"
+        if aid in seen:
+            aid = f"a{i + 1}{secrets.token_hex(2)}"
+        seen.add(aid)
+        out.append({"id": aid, "name": name, "fee": fee})
+        if len(out) >= 40:
+            break
+    return out
+
+
+def _clean_slots(raw) -> dict:
+    """Booking slots: which weekdays, which start times, how many bookings per slot, how far ahead."""
+    raw = raw if isinstance(raw, dict) else {}
+    days = sorted({int(d) for d in (raw.get("days") or []) if str(d).isdigit() and 0 <= int(d) <= 6})
+    times = []
+    for t in raw.get("times") or []:
+        m = re.match(r"^\s*(\d{1,2})[:.](\d{2})\s*$", str(t))
+        if m and int(m.group(1)) < 24 and int(m.group(2)) < 60:
+            v = f"{int(m.group(1)):02d}:{m.group(2)}"
+            if v not in times:
+                times.append(v)
+    def num(k, lo, hi, dflt):
+        try:
+            return max(lo, min(hi, int(raw.get(k))))
+        except (TypeError, ValueError):
+            return dflt
+    return {"days": days or [0, 1, 2, 3, 4, 5], "times": sorted(times)[:24] or ["10:00", "12:00", "14:00", "16:00"],
+            "capacity": num("capacity", 1, 100, 1), "ahead": num("ahead", 1, 90, 14)}
+
+
+def _clean_discounts(raw, existing: list | None = None) -> list[dict]:
+    """Discount codes. 'used' is counted by the server, so it's carried over from what's saved, never trusted from the browser."""
+    used = {d.get("code"): int(d.get("used") or 0) for d in (existing or []) if isinstance(d, dict)}
+    out, seen = [], set()
+    for d in raw if isinstance(raw, list) else []:
+        if not isinstance(d, dict):
+            continue
+        code = re.sub(r"[^A-Z0-9]", "", str(d.get("code") or "").upper())[:20]
+        if len(code) < 3 or code in seen:
+            continue
+        seen.add(code)
+        kind = "fixed" if d.get("kind") == "fixed" else "percent"
+        try:
+            amount = int(round(float(d.get("amount") or 0)))
+        except (TypeError, ValueError):
+            amount = 0
+        amount = max(1, min(90, amount)) if kind == "percent" else max(1, min(100_000_000, amount))
+        try:
+            max_uses = max(0, min(1_000_000, int(d.get("max_uses") or 0)))
+        except (TypeError, ValueError):
+            max_uses = 0
+        out.append({"code": code, "kind": kind, "amount": amount, "max_uses": max_uses,
+                    "used": used.get(code, 0), "active": d.get("active", True) is not False})
+        if len(out) >= 20:
+            break
+    return out
+
+
+def _clean_settings(raw, existing: dict | None = None) -> dict:
+    raw = raw if isinstance(raw, dict) else {}
+    existing = existing or {}
+    out = {}
+    cover = str(raw.get("cover") or "")
+    out["cover"] = cover if re.match(r"^/static/form_media/[A-Za-z0-9_.-]+$", cover) else ""
+    out["font"] = raw.get("font") if raw.get("font") in FORM_FONTS else "grotesk"
+    out["layout"] = "steps" if raw.get("layout") == "steps" else "page"
+    out["discounts"] = _clean_discounts(raw.get("discounts"), existing.get("discounts"))
+    try:
+        close_at = float(raw.get("close_at") or 0)
+    except (TypeError, ValueError):
+        close_at = 0
+    out["close_at"] = close_at if close_at > 0 else 0
+    try:
+        out["max_responses"] = max(0, min(1_000_000, int(raw.get("max_responses") or 0)))
+    except (TypeError, ValueError):
+        out["max_responses"] = 0
+    out["closed_msg"] = str(raw.get("closed_msg") or "").strip()[:300]
+    out["autoreply"] = raw.get("autoreply", True) is not False
+    return out
+
+
+def _form_closed(form: dict, count: int | None = None) -> str:
+    """'' if the form is open, otherwise why it's closed: 'paused', 'date' or 'full'."""
+    if form.get("status") != "live":
+        return "paused"
+    s = form.get("settings") or {}
+    if s.get("close_at") and time.time() >= s["close_at"]:
+        return "date"
+    if s.get("max_responses"):
+        n = db.count_form_leads(form["id"]) if count is None else count
+        if n >= s["max_responses"]:
+            return "full"
+    return ""
+
+
+def _slot_label(key: str) -> str:
+    d = datetime.datetime.strptime(key, "%Y-%m-%d %H:%M")
+    hour = d.strftime("%I:%M %p").lstrip("0").replace(":00 ", " ").lower()
+    return f"{d.strftime('%a %d %b')}, {hour}"
+
+
+def _slot_taken(form: dict) -> dict:
+    """How many active bookings each slot already has (lost/cancelled ones free the slot up)."""
+    taken: dict[str, int] = {}
+    for l in db.form_leads(form["id"], time.time() - 120 * 86400):
+        if l["status"] == "lost":
+            continue
+        for a in l.get("answers") or []:
+            if a.get("slot"):
+                taken[f'{a["id"]}|{a["slot"]}'] = taken.get(f'{a["id"]}|{a["slot"]}', 0) + 1
+    return taken
+
+
+def _slot_days(fld: dict, taken: dict) -> list[dict]:
+    """Upcoming bookable days for a slots question, each with its times (and whether they're full)."""
+    cfg = fld.get("slots") or {}
+    now = datetime.datetime.now(WAT)
+    soonest = now + datetime.timedelta(hours=1)
+    out = []
+    for k in range(cfg.get("ahead", 14) + 1):
+        day = (now + datetime.timedelta(days=k)).date()
+        if day.weekday() not in cfg.get("days", []):
+            continue
+        times = []
+        for t in cfg.get("times", []):
+            hh, mm = map(int, t.split(":"))
+            at = datetime.datetime(day.year, day.month, day.day, hh, mm, tzinfo=WAT)
+            if at < soonest:
+                continue
+            key = f"{day.isoformat()} {t}"
+            full = taken.get(f'{fld["id"]}|{key}', 0) >= cfg.get("capacity", 1)
+            times.append({"key": key, "label": at.strftime("%I:%M %p").lstrip("0").lower(), "full": full})
+        if times:
+            out.append({"date": day.isoformat(), "dow": WEEKDAYS[day.weekday()], "day": day.day,
+                        "mon": day.strftime("%b"), "times": times, "open": any(not t["full"] for t in times)})
+    return out
+
+
+@app.post("/api/forms/media")
+@auth
+def forms_media_upload(user):
+    """Product photo for an order form. Re-encoded through Pillow (real images only), max 900px."""
+    f = request.files.get("image")
+    if not f or not f.filename:
+        return jsonify({"error": "Choose a photo."}), 400
+    data = f.stream.read(8 * 1024 * 1024 + 1)
+    if len(data) > 8 * 1024 * 1024:
+        return jsonify({"error": "That photo is over 8MB — please use a smaller one."}), 400
+    try:
+        from PIL import Image, ImageOps
+        img = Image.open(io.BytesIO(data)); img.load()
+        img = ImageOps.exif_transpose(img).convert("RGB")
+    except Exception:
+        return jsonify({"error": "We couldn't read that file. Use a JPG, PNG or WebP photo."}), 400
+    img.thumbnail((1800, 1000) if request.form.get("kind") == "cover" else (900, 900))
+    out = io.BytesIO(); img.save(out, "JPEG", quality=84, optimize=True)
+    name = f"f{workspace_owner_id(user)}_{int(time.time())}_{secrets.token_hex(3)}.jpg"
+    (FORM_MEDIA_DIR / name).write_bytes(out.getvalue())
+    return jsonify({"url": f"/static/form_media/{name}"})
+
+FORM_TEMPLATES = {
+    "food": {"label": "Food orders", "title": "Place your order", "intro": "Tell us what you'd like and we'll get it ready for you.",
+             "button": "Send my order", "thanks": "Order received! We'll call you shortly to confirm.",
+             "fields": [{"type": "long", "label": "What would you like to order?", "required": True},
+                        {"type": "select", "label": "Pickup or delivery?", "required": True, "options": ["Pickup", "Delivery"]},
+                        {"type": "short", "label": "Delivery address (if delivery)", "required": False},
+                        {"type": "date", "label": "When do you need it?", "required": False}]},
+    "fashion": {"label": "Fashion enquiry", "title": "Let's style you", "intro": "Tell us what you're looking for — sizes, colours, occasion.",
+                "button": "Send enquiry", "thanks": "Thank you! We'll message you with options soon.",
+                "fields": [{"type": "long", "label": "What are you looking for?", "required": True},
+                           {"type": "short", "label": "Your size", "required": False},
+                           {"type": "date", "label": "Date of the occasion", "required": False},
+                           {"type": "number", "label": "Budget (₦)", "required": False}]},
+    "event": {"label": "Event booking", "title": "Book us for your event", "intro": "Share a few details and we'll send you a quote.",
+              "button": "Request a quote", "thanks": "Got it! Expect our quote within 24 hours.",
+              "fields": [{"type": "select", "label": "Type of event", "required": True, "options": ["Wedding", "Birthday", "Corporate", "Other"]},
+                         {"type": "date", "label": "Event date", "required": True},
+                         {"type": "number", "label": "Number of guests", "required": False},
+                         {"type": "short", "label": "Venue / location", "required": False}]},
+    "property": {"label": "Property viewing", "title": "Book a viewing", "intro": "Tell us what you need and we'll match you with the right place.",
+                 "button": "Book a viewing", "thanks": "Thanks! An agent will call you to arrange your viewing.",
+                 "fields": [{"type": "select", "label": "Rent or buy?", "required": True, "options": ["Rent", "Buy"]},
+                            {"type": "short", "label": "Preferred area", "required": True},
+                            {"type": "number", "label": "Budget (₦)", "required": False},
+                            {"type": "date", "label": "Preferred viewing date", "required": False}]},
+    "beauty": {"label": "Beauty appointment", "title": "Book your appointment", "intro": "Pick your service and a time that works for you.",
+               "button": "Book now", "thanks": "You're booked in! We'll confirm your slot shortly.",
+               "fields": [{"type": "select", "label": "Service", "required": True, "options": ["Hair", "Makeup", "Nails", "Lashes", "Other"]},
+                          {"type": "date", "label": "Preferred date", "required": True},
+                          {"type": "select", "label": "Time of day", "required": False, "options": ["Morning", "Afternoon", "Evening"]}]},
+    "general": {"label": "General enquiry", "title": "Get in touch", "intro": "Leave your details and we'll get back to you.",
+                "button": "Send", "thanks": "Thanks for reaching out — we'll be in touch soon.",
+                "fields": [{"type": "long", "label": "How can we help?", "required": True}]},
+}
+
+
+def _clean_fields(raw) -> list[dict]:
+    out = []
+    for i, f in enumerate(raw if isinstance(raw, list) else []):
+        if not isinstance(f, dict):
+            continue
+        t = f.get("type") if f.get("type") in FORM_FIELD_TYPES else "short"
+        label = str(f.get("label") or "").strip()[:140]
+        if not label:
+            continue
+        item = {"id": str(f.get("id") or f"q{i + 1}")[:12], "type": t, "label": label, "required": bool(f.get("required"))}
+        if t == "select":
+            opts = [str(o).strip()[:60] for o in (f.get("options") or []) if str(o).strip()][:12]
+            if not opts:
+                continue
+            item["options"] = opts
+        if t == "products":
+            items = _clean_products(f.get("items"))
+            if not items:
+                continue
+            item["items"] = items
+        if t == "delivery":
+            areas = _clean_areas(f.get("areas"))
+            if not areas:
+                continue
+            item["areas"] = areas
+        if t == "slots":
+            item["slots"] = _clean_slots(f.get("slots"))
+        out.append(item)
+        if len(out) >= FORM_MAX_FIELDS:
+            break
+    # unique ids
+    seen = set()
+    for i, f in enumerate(out):
+        if f["id"] in seen:
+            f["id"] = f"q{i + 1}_{secrets.token_hex(2)}"
+        seen.add(f["id"])
+    return out
+
+
+def _clean_form_payload(d: dict, existing: dict | None = None) -> dict:
+    out = {}
+    for k, n in (("title", 120), ("intro", 400), ("button", 40), ("thanks", 300)):
+        if k in d:
+            out[k] = str(d.get(k) or "").strip()[:n]
+    if "fields" in d:
+        out["fields"] = _clean_fields(d.get("fields"))
+    if "accent" in d and re.match(r"^#[0-9a-fA-F]{6}$", str(d.get("accent") or "")):
+        out["accent"] = d["accent"]
+    if "whatsapp" in d:
+        out["whatsapp"] = re.sub(r"[^\d+]", "", str(d.get("whatsapp") or ""))[:16]
+    if "status" in d and d.get("status") in ("live", "paused"):
+        out["status"] = d["status"]
+    if "template" in d and d.get("template") in FORM_TEMPLATES:
+        out["template"] = d["template"]
+    if "settings" in d:
+        out["settings"] = _clean_settings(d.get("settings"), existing)
+    return out
+
+
+RESERVED_SLUGS = {"new", "admin", "api", "app", "login", "vertil", "static", "form", "forms"}
+
+
+def _custom_slug(raw: str, current: str = "") -> tuple[str | None, str]:
+    """Owner-chosen link. Returns (slug, error)."""
+    s = _slugify(str(raw or ""), 40)
+    if s == current:
+        return s, ""
+    if len(s) < 3 or s == "form":
+        return None, "Your link needs at least 3 letters or numbers."
+    if s in RESERVED_SLUGS:
+        return None, "That link is reserved — try another."
+    if db.slug_taken(s):
+        return None, f"vertil.ng/f/{s} is already taken — try another."
+    return s, ""
+
+
+def _slugify(text: str, limit: int = 40) -> str:
+    s = re.sub(r"['’]", "", (text or "").lower())
+    s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")[:limit].strip("-")
+    return s or "form"
+
+
+def _form_slug_base(brand_name: str, title: str) -> str:
+    """Short, readable link: brand + first few words of the title, e.g. mamas-kitchen-order-your-jollof."""
+    words = [w for w in _slugify(title, 60).split("-") if w][:3]
+    return _slugify((brand_name or "") + " " + " ".join(words), 36)
+
+
+def _unique_slug(base: str) -> str:
+    base = _slugify(base)
+    slug = base
+    while db.slug_taken(slug):
+        slug = f"{base}-{secrets.token_hex(2)}"
+    return slug
+
+
+def _ng_phone(raw: str) -> str | None:
+    """Normalise a Nigerian mobile number to 0XXXXXXXXXX, or None if it doesn't look real."""
+    d = re.sub(r"\D", "", raw or "")
+    if d.startswith("234") and len(d) == 13:
+        d = "0" + d[3:]
+    elif len(d) == 10 and d[0] in "789":
+        d = "0" + d
+    return d if re.match(r"^0[789][01]\d{8}$", d) else None
+
+
+def _form_brand(form: dict) -> dict:
+    with db._conn() as c:
+        r = c.execute("SELECT id, name, logo, colors FROM brands WHERE id=?", (form.get("brand_id") or 0,)).fetchone()
+    return dict(r) if r else {}
+
+
+_FORM_HITS: dict[str, list[float]] = {}
+
+
+def _form_rate_ok(key: str, limit: int, window: float) -> bool:
+    now = time.time()
+    hits = [t for t in _FORM_HITS.get(key, []) if now - t < window]
+    if len(hits) >= limit:
+        _FORM_HITS[key] = hits
+        return False
+    hits.append(now)
+    _FORM_HITS[key] = hits
+    if len(_FORM_HITS) > 5000:  # keep memory bounded
+        for k in list(_FORM_HITS)[:2500]:
+            _FORM_HITS.pop(k, None)
+    return True
+
+
+def _form_ts_token() -> str:
+    ts = str(int(time.time()))
+    return ts + "." + hmac.new(app.secret_key.encode(), f"form:{ts}".encode(), hashlib.sha256).hexdigest()[:16]
+
+
+def _form_ts_ok(token: str) -> bool:
+    try:
+        ts, sig = (token or "").split(".", 1)
+        good = hmac.new(app.secret_key.encode(), f"form:{ts}".encode(), hashlib.sha256).hexdigest()[:16]
+        age = time.time() - int(ts)
+    except ValueError:
+        return False
+    return hmac.compare_digest(sig, good) and 2 <= age <= 86400
+
+
+def _form_public_ctx(form: dict, **extra) -> dict:
+    brand = _form_brand(form)
+    plan_key = plan_key_of(db.get_user(form["user_id"]) or {"id": form["user_id"], "plan": "free"})
+    wa = re.sub(r"\D", "", form.get("whatsapp") or "")
+    if wa.startswith("0") and len(wa) == 11:
+        wa = "234" + wa[1:]
+    s = form.get("settings") or {}
+    font = FORM_FONTS.get(s.get("font")) or FORM_FONTS["grotesk"]
+    closed = _form_closed(form)
+    slot_fields = [f for f in form.get("fields", []) if f["type"] == "slots"]
+    taken = _slot_taken(form) if slot_fields and not closed else {}
+    return {"form": form, "brand": brand, "accent": form.get("accent") or "#0e9488", "badge": plan_key == "free",
+            "wa": wa, "ts": _form_ts_token(), "source": re.sub(r"[^a-z0-9_-]", "", (request.args.get("s") or request.form.get("source") or "").lower())[:24],
+            "cover": s.get("cover") or "", "layout": s.get("layout") or "page",
+            "font_head": font[1], "font_body": font[2], "font_q": font[3],
+            "closed": closed, "closed_msg": s.get("closed_msg") or "",
+            "slots": {f["id"]: _slot_days(f, taken) for f in slot_fields},
+            "has_codes": any(d.get("active") for d in s.get("discounts") or []),
+            "has_order": any(f["type"] in ("products", "delivery") for f in form.get("fields", [])),
+            "values": {}, "errors": {}, "done": False, **extra}
+
+
+def _find_discount(form: dict, code: str) -> tuple[dict | None, str]:
+    code = re.sub(r"[^A-Z0-9]", "", (code or "").upper())
+    if not code:
+        return None, ""
+    for d in (form.get("settings") or {}).get("discounts") or []:
+        if d["code"] == code:
+            if not d.get("active"):
+                return None, "That code isn't active any more."
+            if d.get("max_uses") and d.get("used", 0) >= d["max_uses"]:
+                return None, "That code has been fully used."
+            return d, ""
+    return None, "That code isn't valid."
+
+
+def _discount_off(d: dict | None, subtotal: int) -> int:
+    if not d or subtotal <= 0:
+        return 0
+    off = subtotal * d["amount"] // 100 if d["kind"] == "percent" else d["amount"]
+    return max(0, min(subtotal, int(off)))
+
+
+@app.get("/f/<slug>")
+def form_public(slug):
+    form = db.get_form_by_slug(slug)
+    if not form:
+        return render_template("form_public.html", missing=True), 404
+    if form["status"] == "live" and _form_rate_ok("view:" + str(form["id"]) + ":" + (request.remote_addr or ""), 1, 1800):
+        db.bump_form_views(form["id"])
+    return render_template("form_public.html", missing=False, **_form_public_ctx(form))
+
+
+@app.post("/f/<slug>/e")
+def form_event(slug):
+    """Funnel beacon from the public form: someone started, or reached question i."""
+    form = db.get_form_by_slug(slug)
+    if not form or form["status"] != "live":
+        return "", 204
+    k = request.form.get("k", "")
+    if k == "start":
+        metric = "start"
+    elif k == "reach":
+        try:
+            i = int(request.form.get("i", "-1"))
+        except ValueError:
+            return "", 204
+        if not 0 <= i <= FORM_MAX_FIELDS + 1:
+            return "", 204
+        metric = f"reach:{i}"
+    else:
+        return "", 204
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+    if _form_rate_ok(f"ev:{form['id']}:{metric}:{ip}", 1, 1800):
+        db.bump_form_stat(form["id"], metric)
+    return "", 204
+
+
+@app.post("/f/<slug>/code")
+def form_code_check(slug):
+    """Live check of a discount code so the running total can update. Doesn't reveal any codes."""
+    form = db.get_form_by_slug(slug)
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+    if not form or not _form_rate_ok("code:" + ip, 20, 600):
+        return jsonify({"ok": False, "msg": "Please try again in a few minutes."})
+    d, err = _find_discount(form, (request.get_json(silent=True) or {}).get("code", ""))
+    if not d:
+        return jsonify({"ok": False, "msg": err or "Enter a code."})
+    label = f"{d['amount']}% off" if d["kind"] == "percent" else f"₦{d['amount']:,} off"
+    return jsonify({"ok": True, "kind": d["kind"], "amount": d["amount"], "code": d["code"], "msg": f"{d['code']} applied — {label}"})
+
+
+@app.post("/f/<slug>")
+def form_submit(slug):
+    form = db.get_form_by_slug(slug)
+    if not form:
+        return render_template("form_public.html", missing=True), 404
+    if _form_closed(form):
+        return render_template("form_public.html", missing=False, **_form_public_ctx(form))
+    f = request.form
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+    # bots: hidden field filled, or submitted impossibly fast / with a forged token → pretend success
+    if f.get("company_website") or not _form_ts_ok(f.get("t", "")):
+        return render_template("form_public.html", missing=False, **_form_public_ctx(form, done=True))
+    if not _form_rate_ok("ip:" + ip, 8, 3600) or not _form_rate_ok("form:" + str(form["id"]), 400, 86400):
+        return render_template("form_public.html", missing=False,
+                               **_form_public_ctx(form, errors={"_": "Too many submissions — please try again later."})), 429
+    values = {k: str(v)[:2000] for k, v in f.items()}
+    errors = {}
+    name = values.get("name", "").strip()[:100]
+    phone = _ng_phone(values.get("phone", ""))
+    if len(name) < 2:
+        errors["name"] = "Please enter your name."
+    if not phone:
+        errors["phone"] = "Please enter a valid Nigerian phone number, e.g. 0803 123 4567."
+    answers, email = [], ""
+    subtotal, has_items, delivery, slot_label, stock_use = 0, False, None, "", {}
+    taken = None
+    for fld in form["fields"]:
+        key = "q_" + fld["id"]
+        if fld["type"] == "products":
+            picked, total = [], 0
+            for it in fld.get("items", []):
+                try:
+                    qty = int(values.get(f"{key}__{it['id']}", "0") or 0)
+                except ValueError:
+                    qty = 0
+                qty = max(0, min(qty, 999))
+                if qty and it.get("stock") is not None and qty > it["stock"]:
+                    errors[key] = (f"Sorry, {it['name']} is sold out." if it["stock"] == 0
+                                   else f"Only {it['stock']} {it['name']} left — please lower the quantity.")
+                    qty = 0
+                if qty:
+                    picked.append({"name": it["name"], "price": it["price"], "qty": qty})
+                    total += qty * it["price"]   # priced from the saved form, never from the browser
+                    if it.get("stock") is not None:
+                        stock_use[(fld["id"], it["id"])] = qty
+            if fld["required"] and not picked and key not in errors:
+                errors[key] = "Please choose at least one item."
+            text = ", ".join(f"{x['qty']} × {x['name']}" for x in picked)
+            answers.append({"id": fld["id"], "label": fld["label"], "value": text, "items": picked, "total": total})
+            subtotal += total
+            has_items = has_items or bool(picked)
+            continue
+        v = values.get(key, "").strip()
+        if fld["type"] == "delivery":
+            area = next((a for a in fld.get("areas", []) if a["id"] == v), None)
+            if fld["required"] and not area:
+                errors[key] = "Please choose where we should deliver."
+            if area:
+                delivery = area
+                fee = f" (₦{area['fee']:,})" if area["fee"] else (" (free)" if "pick" not in area["name"].lower() else "")
+                answers.append({"id": fld["id"], "label": fld["label"], "value": area["name"] + fee, "fee": area["fee"]})
+            else:
+                answers.append({"id": fld["id"], "label": fld["label"], "value": ""})
+            continue
+        if fld["type"] == "slots":
+            if taken is None:
+                taken = _slot_taken(form)
+            ok = {t["key"]: t for d in _slot_days(fld, taken) for t in d["times"]}
+            if v and (v not in ok or ok[v]["full"]):
+                errors[key] = "Sorry, that time was just booked — please pick another."
+                v = ""
+            elif fld["required"] and not v:
+                errors[key] = "Please pick a time."
+            label = _slot_label(v) if v else ""
+            slot_label = slot_label or label
+            answers.append({"id": fld["id"], "label": fld["label"], "value": label, **({"slot": v} if v else {})})
+            continue
+        if fld["required"] and not v:
+            errors[key] = "This one is required."
+        if fld["type"] == "select" and v and v not in fld.get("options", []):
+            errors[key] = "Please choose an option."
+        if fld["type"] == "email" and v:
+            if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
+                errors[key] = "Please enter a valid email."
+            else:
+                email = email or v
+        answers.append({"id": fld["id"], "label": fld["label"], "value": v})
+    disc, off = None, 0
+    if values.get("discount_code", "").strip():
+        disc, err = _find_discount(form, values["discount_code"])
+        if err:
+            errors["discount_code"] = err
+        off = _discount_off(disc, subtotal)
+        if disc and not off:
+            disc = None   # nothing to take off yet (no items chosen)
+    if not f.get("consent"):
+        errors["consent"] = "Please tick the box so we can contact you."
+    if errors:
+        return render_template("form_public.html", missing=False,
+                               **_form_public_ctx(form, values=values, errors=errors)), 400
+    fee = delivery["fee"] if delivery else 0
+    order_total = (subtotal - off + fee) if (has_items or fee) else None
+    if disc:
+        answers.append({"id": "_code", "label": "Discount code", "value": f"{disc['code']} (−₦{off:,})", "code": disc["code"], "off": off})
+    source = re.sub(r"[^a-z0-9_-]", "", (values.get("source") or "").lower())[:24]
+    lead_id = db.add_lead(form, name, phone, email, answers, source, order_total)
+    # bookkeeping: take ordered quantities off stock, count the discount use
+    if stock_use or disc:
+        fresh = db.get_form_by_slug(slug) or form
+        for fld in fresh["fields"]:
+            for it in fld.get("items", []) if fld["type"] == "products" else []:
+                q = stock_use.get((fld["id"], it["id"]))
+                if q and it.get("stock") is not None:
+                    it["stock"] = max(0, it["stock"] - q)
+        st = fresh.get("settings") or {}
+        if disc:
+            for d in st.get("discounts") or []:
+                if d["code"] == disc["code"]:
+                    d["used"] = int(d.get("used") or 0) + 1
+        db.save_form_internals(fresh["id"], fresh["fields"] if stock_use else None, st if disc else None)
+    receipt = {"order": [x for a in answers for x in a.get("items", [])], "subtotal": subtotal, "off": off,
+               "code": disc["code"] if disc else "", "delivery": delivery, "order_total": order_total, "slot": slot_label}
+    owner = db.get_user(form["user_id"])
+    brand = _form_brand(form)
+    if owner:
+        threading.Thread(target=_notify_new_lead, args=(owner, form, name, phone, answers, lead_id, order_total), daemon=True).start()
+    if email and (form.get("settings") or {}).get("autoreply", True):
+        threading.Thread(target=_send_customer_copy, args=(email, form, brand, name, answers, receipt, (owner or {}).get("email")),
+                         daemon=True).start()
+    return render_template("form_public.html", missing=False,
+                           **_form_public_ctx(form, done=True, name=name.split(" ")[0], **receipt))
+
+
+def _answers_rows_html(answers) -> str:
+    def cell(a):
+        if a.get("items"):
+            lines = "<br>".join(f'{x["qty"]} × {_esc_html(x["name"])} — ₦{x["qty"] * x["price"]:,}' for x in a["items"])
+            return f'{lines}<br><b style="color:#0e9488">Items ₦{a.get("total", 0):,}</b>'
+        return _esc_html(a["value"]) or "—"
+    return "".join(f'<tr><td style="padding:6px 0;color:#5b6b66;vertical-align:top;width:40%">{_esc_html(a["label"])}</td>'
+                   f'<td style="padding:6px 0;font-weight:600">{cell(a)}</td></tr>' for a in answers)
+
+
+def _notify_new_lead(owner, form, name, phone, answers, lead_id, order_total=None):
+    try:
+        html = _email_shell(f"""
+          <p>You have a new response on <b>{_esc_html(form['title'])}</b>.</p>
+          <table style="width:100%;border-collapse:collapse;font-size:14px;margin:14px 0">
+            <tr><td style="padding:6px 0;color:#5b6b66;width:40%">Name</td><td style="padding:6px 0;font-weight:600">{_esc_html(name)}</td></tr>
+            <tr><td style="padding:6px 0;color:#5b6b66">Phone</td><td style="padding:6px 0;font-weight:600">{_esc_html(phone)}</td></tr>
+            {_answers_rows_html(answers)}
+            {f'<tr><td style="padding:10px 0 6px;color:#5b6b66;border-top:1px solid #e2e8e6">Order total</td><td style="padding:10px 0 6px;font-weight:700;font-size:16px;color:#0e9488;border-top:1px solid #e2e8e6">₦{int(order_total):,}</td></tr>' if order_total else ''}
+          </table>
+          {_btn(APP_BASE_URL + "/app?view=forms", "Open in Vertil")}
+          <p style="font-size:13px;color:#5b6b66">Reply fast — customers who hear back within the hour are far more likely to buy.</p>""")
+        subject = f"New order: {name} — ₦{int(order_total):,}" if order_total else f"New response: {name} — {form['title']}"
+        send_email(owner["email"], subject, html)
+    except Exception:
+        pass
+
+
+def _send_customer_copy(to, form, brand, name, answers, receipt, owner_email):
+    """The customer's own copy of what they sent, in the business's colours. Replies go to the business."""
+    try:
+        a = form.get("accent") or "#0e9488"
+        bname = _esc_html(brand.get("name") or form["title"])
+        first = _esc_html((name or "").split(" ")[0] or "there")
+        rows = ""
+        if receipt["order"]:
+            rows += "".join(f'<tr><td style="padding:5px 0">{x["qty"]} × {_esc_html(x["name"])}</td>'
+                            f'<td style="padding:5px 0;text-align:right">₦{x["qty"] * x["price"]:,}</td></tr>' for x in receipt["order"])
+            if receipt["off"]:
+                rows += f'<tr><td style="padding:5px 0;color:#5b6b66">Discount ({_esc_html(receipt["code"])})</td><td style="padding:5px 0;text-align:right;color:#5b6b66">−₦{receipt["off"]:,}</td></tr>'
+        if receipt["delivery"]:
+            d = receipt["delivery"]
+            rows += f'<tr><td style="padding:5px 0;color:#5b6b66">Delivery — {_esc_html(d["name"])}</td><td style="padding:5px 0;text-align:right;color:#5b6b66">₦{d["fee"]:,}</td></tr>'
+        if receipt["order_total"]:
+            rows += f'<tr><td style="padding:10px 0 4px;border-top:1px solid #e2e8e6;font-weight:700">Total</td><td style="padding:10px 0 4px;border-top:1px solid #e2e8e6;text-align:right;font-weight:700;font-size:17px;color:{a}">₦{int(receipt["order_total"]):,}</td></tr>'
+        other = "".join(f'<tr><td style="padding:5px 0;color:#5b6b66;vertical-align:top;width:45%">{_esc_html(x["label"])}</td><td style="padding:5px 0">{_esc_html(x["value"])}</td></tr>'
+                        for x in answers if not x.get("items") and x["id"] != "_code" and x.get("value"))
+        slot = f'<p style="margin:14px 0;padding:12px 14px;border-radius:10px;background:#f4f7f6"><b>Your booking:</b> {_esc_html(receipt["slot"])}</p>' if receipt["slot"] else ""
+        html = f"""<div style="font-family:'Segoe UI',Arial,sans-serif;max-width:480px;margin:0 auto;color:#13312e">
+          <div style="height:6px;border-radius:6px;background:{a};margin-bottom:18px"></div>
+          <div style="font-size:20px;font-weight:bold;margin-bottom:4px">{bname}</div>
+          <p>Hi {first},</p>
+          <p>{_esc_html(form.get('thanks') or "Thanks — we've received your details and will be in touch soon.")}</p>
+          {slot}
+          {f'<table style="width:100%;border-collapse:collapse;font-size:14px;margin:12px 0">{rows}</table>' if rows else ''}
+          {f'<p style="font-size:12px;font-weight:bold;color:#90a39f;text-transform:uppercase;letter-spacing:.04em;margin:18px 0 4px">What you told us</p><table style="width:100%;border-collapse:collapse;font-size:14px">{other}</table>' if other else ''}
+          <p style="font-size:13px;color:#5b6b66;margin-top:20px">Need to change something? Just reply to this email.</p>
+          <p style="font-size:11px;color:#9aa8a4;margin-top:24px">Sent for {bname} by Vertil. You're getting this because you filled in “{_esc_html(form['title'])}”.</p>
+        </div>"""
+        subject = f"Your order with {brand.get('name') or form['title']}" if receipt["order_total"] else f"We got your request — {brand.get('name') or form['title']}"
+        send_email(to, subject, html, reply_to=owner_email)
+    except Exception:
+        pass
+
+
+# ---- daily summary email for form owners ----
+
+def _forms_digest_html(user: dict, leads: list[dict], day: datetime.date) -> str:
+    total = sum(l.get("order_total") or 0 for l in leads)
+    by_form: dict[str, list] = {}
+    for l in leads:
+        by_form.setdefault(l.get("form_title") or "Form", []).append(l)
+    form_rows = "".join(
+        f'<tr><td style="padding:7px 0;border-bottom:1px solid #eef2f1">{_esc_html(t)}</td>'
+        f'<td style="padding:7px 0;border-bottom:1px solid #eef2f1;text-align:right;font-weight:600">{len(ls)}</td>'
+        f'<td style="padding:7px 0;border-bottom:1px solid #eef2f1;text-align:right;color:#5b6b66">{("₦" + format(int(sum(x.get("order_total") or 0 for x in ls)), ",")) if any(x.get("order_total") for x in ls) else "—"}</td></tr>'
+        for t, ls in sorted(by_form.items(), key=lambda kv: -len(kv[1])))
+    waiting = [l for l in leads if l["status"] == "new"]
+    names = ", ".join(_esc_html(l["name"].split(" ")[0]) for l in waiting[:6]) + ("…" if len(waiting) > 6 else "")
+    n = len(leads)
+    return _email_shell(f"""
+      <p>Hi {_esc_html((user.get('name') or 'there').split(' ')[0])},</p>
+      <p style="font-size:17px;line-height:1.45">You got <b>{n} new response{'s' if n != 1 else ''}</b> yesterday{f', worth <b style="color:#0e9488">₦{int(total):,}</b>' if total else ''}.</p>
+      <table style="width:100%;border-collapse:collapse;font-size:14px;margin:12px 0">
+        <tr style="color:#90a39f;font-size:11px;text-transform:uppercase;letter-spacing:.04em"><td style="padding:4px 0">Form</td><td style="padding:4px 0;text-align:right">Responses</td><td style="padding:4px 0;text-align:right">Ordered</td></tr>
+        {form_rows}
+      </table>
+      {f'<p style="padding:12px 14px;border-radius:10px;background:#fdf6e3;color:#8a6212;font-size:14px"><b>{len(waiting)} still waiting for a reply</b> — {names}</p>' if waiting else '<p style="font-size:14px;color:#5b6b66">You have replied to everyone. Nice work.</p>'}
+      {_btn(APP_BASE_URL + "/app?view=forms", "Open my responses")}
+      <p style="font-size:12px;color:#9aa8a4">Summary for {day.strftime('%A %d %B')}. You can turn this email off on the Forms page in Vertil.</p>""")
+
+
+def _run_forms_digest(force: bool = False) -> str:
+    now = datetime.datetime.now(WAT)
+    if now.hour < 8 and not force:
+        return "forms digest: before 8am, skipped"
+    today = now.date()
+    yday = today - datetime.timedelta(days=1)
+    start = datetime.datetime(yday.year, yday.month, yday.day, tzinfo=WAT).timestamp()
+    sent = 0
+    for u in db.forms_digest_owners():
+        if u.get("forms_digest_day") == today.isoformat() or not db.claim_forms_digest(u["id"], today.isoformat()):
+            continue
+        leads = db.leads_between(u["id"], start, start + 86400)
+        if not leads:
+            continue
+        n, total = len(leads), sum(l.get("order_total") or 0 for l in leads)
+        subject = f"Yesterday: {n} new response{'s' if n != 1 else ''}" + (f" worth ₦{int(total):,}" if total else "")
+        try:
+            if send_email(u["email"], subject, _forms_digest_html(u, leads, yday)):
+                sent += 1
+        except Exception:
+            pass
+    return f"forms digest: {sent} sent"
+
+
+_last_digest_sweep = [0.0]
+
+
+@app.before_request
+def _forms_digest_tick():
+    if time.time() - _last_digest_sweep[0] < 1800:
+        return
+    _last_digest_sweep[0] = time.time()
+    def run():
+        try:
+            print(f"[Vertil] {_run_forms_digest()}")
+        except Exception as exc:
+            print(f"[Vertil] forms digest failed: {exc}")
+    threading.Thread(target=run, daemon=True).start()
+
+
+@app.cli.command("forms-digest")
+def _forms_digest_cli():
+    print(f"[Vertil] {_run_forms_digest(force=True)}")
+
+
+def _forms_owner(user) -> int:
+    return workspace_owner_id(user)
+
+
+def _visible_leads(user, leads: list[dict]) -> tuple[list[dict], int]:
+    """Free plans see their first N leads each month; the rest are kept but locked."""
+    limit = plan_of(user).get("leads_limit")
+    if not limit:
+        return leads, 0
+    month_start = datetime.datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
+    in_month = sorted([l for l in leads if l["created_at"] >= month_start], key=lambda l: l["created_at"])
+    locked_ids = {l["id"] for l in in_month[limit:]}
+    out = []
+    for l in leads:
+        if l["id"] in locked_ids:
+            out.append({"id": l["id"], "form_id": l["form_id"], "form_title": l.get("form_title"), "created_at": l["created_at"],
+                        "status": l["status"], "source": l.get("source"), "locked": True,
+                        "name": l["name"][:1] + "•••••", "phone": "•••• ••• ••••", "answers": [], "email": ""})
+        else:
+            out.append(l)
+    return out, len(locked_ids)
+
+
+@app.get("/api/forms")
+@auth
+def forms_list(user):
+    owner = _forms_owner(user)
+    p = plan_of(user)
+    week = time.time() - 7 * 86400
+    forms = db.list_forms(owner)
+    for f in forms:
+        f["closed"] = _form_closed(f, f.get("responses") or 0)
+    return jsonify({"forms": forms, "templates": {k: {"label": v["label"]} for k, v in FORM_TEMPLATES.items()},
+                    "limit": p.get("forms", 1), "leads_limit": p.get("leads_limit"), "this_week": db.leads_since(owner, week),
+                    "base_url": APP_BASE_URL, "fonts": {k: {"label": v[0], "head": v[1], "body": v[2], "q": v[3]} for k, v in FORM_FONTS.items()},
+                    "digest": db.get_forms_digest(owner)})
+
+
+@app.get("/api/forms/template/<key>")
+@auth
+def forms_template(user, key):
+    t = FORM_TEMPLATES.get(key)
+    if not t:
+        return jsonify({"error": "Unknown template"}), 404
+    return jsonify({**{k: v for k, v in t.items() if k != "label"}, "fields": _clean_fields(t["fields"]), "template": key})
+
+
+@app.post("/api/forms/draft")
+@auth
+def forms_draft(user):
+    """AI writes the form copy in the brand's voice (keeps the question structure sensible)."""
+    d = request.get_json(force=True) or {}
+    key = d.get("template") if d.get("template") in FORM_TEMPLATES else "general"
+    base = FORM_TEMPLATES[key]
+    brand = db.get_brand(user["id"], int(d.get("brand_id") or 0)) if d.get("brand_id") else None
+    brief = str(d.get("brief") or "").strip()[:800]
+    if not LIVE:
+        return jsonify({**{k: v for k, v in base.items() if k != "label"}, "fields": _clean_fields(base["fields"]), "demo": True})
+    keep = [f for f in _clean_fields(d.get("keep_fields") or []) if f["type"] in ("products", "delivery", "slots")]
+    system = (voice.build_brand_block(brand) + "\n\nYou are writing a short online form this business will share on "
+              "Instagram, TikTok and WhatsApp so customers can order or enquire. Keep it warm, short and in the brand's voice. "
+              "Name and phone number are ALWAYS collected separately — never add questions for them. "
+              "Use 2–5 questions. Allowed question types: short, long, select (with 2–6 options), date, number, email "
+              "(never 'products' — the business adds its own products and prices). "
+              "Never invent prices, discounts or promises. Reply with JSON only.")
+    usr = (f"Starting template: {json.dumps({k: v for k, v in base.items() if k != 'label'})}\n"
+           f"What the business wants this form for: {brief or 'use the template purpose'}\n\n"
+           'Return JSON: {"title": under 40 chars, "intro": one or two short sentences, "button": 2-4 words, '
+           '"thanks": one short sentence shown after they submit, "fields": [{"type":..., "label":..., "required": true/false, "options": [...] only for select}]}')
+    try:
+        text, _, _ = _complete(system, usr, 1200)
+        out = _json_from(text) or {}
+    except Exception as exc:
+        return jsonify({"error": f"Couldn't write the form: {exc}"}), 502
+    clean = _clean_form_payload(out)
+    if not clean.get("title") or not clean.get("fields"):
+        return jsonify({"error": "The AI couldn't finish the form. Try again."}), 502
+    clean["fields"] = keep + [f for f in clean["fields"] if f["type"] not in ("products", "delivery", "slots")]  # keep the business's own products, areas & slots
+    try:
+        db.save_generation(user["id"], brand["id"] if brand else None, "lead_form", "", brief or key, [clean["title"]], model=MODEL)
+    except Exception:
+        pass
+    return jsonify({**clean, "template": key})
+
+
+@app.post("/api/forms")
+@auth
+def forms_create(user):
+    owner = _forms_owner(user)
+    limit = plan_of(user).get("forms", 1)
+    if db.count_forms(owner) >= limit:
+        return jsonify({"error": f"Your plan includes {limit} form{'s' if limit != 1 else ''}. Upgrade to create more.", "upgrade": True}), 402
+    d = request.get_json(force=True) or {}
+    data = _clean_form_payload(d)
+    if not data.get("title"):
+        return jsonify({"error": "Give your form a title."}), 400
+    if not data.get("fields"):
+        data["fields"] = []
+    brand = db.get_brand(user["id"], int(d.get("brand_id") or 0)) if d.get("brand_id") else None
+    if not data.get("whatsapp"):
+        data["whatsapp"] = (db.get_user(owner) or {}).get("phone") or ""
+    data.setdefault("settings", _clean_settings({}))
+    if str(d.get("slug") or "").strip():
+        slug, err = _custom_slug(d["slug"])
+        if err:
+            return jsonify({"error": err, "field": "slug"}), 409
+    else:
+        slug = _unique_slug(_form_slug_base((brand or {}).get("name", ""), data["title"]))
+    form = db.create_form(owner, brand["id"] if brand else None, slug, data)
+    return jsonify(form)
+
+
+@app.put("/api/forms/<int:form_id>")
+@auth
+def forms_update(user, form_id):
+    owner = _forms_owner(user)
+    cur = db.get_form(owner, form_id)
+    if not cur:
+        return jsonify({"error": "Form not found"}), 404
+    d = request.get_json(force=True) or {}
+    data = _clean_form_payload(d, cur.get("settings"))
+    if "title" in data and not data["title"]:
+        return jsonify({"error": "Give your form a title."}), 400
+    if "slug" in d:
+        slug, err = _custom_slug(d["slug"], cur["slug"])
+        if err:
+            return jsonify({"error": err, "field": "slug"}), 409
+        data["slug"] = slug
+    if "brand_id" in d:
+        b = db.get_brand(user["id"], int(d.get("brand_id") or 0)) if d.get("brand_id") else None
+        data["brand_id"] = b["id"] if b else None
+    return jsonify(db.update_form(owner, form_id, data))
+
+
+@app.post("/api/forms/<int:form_id>/duplicate")
+@auth
+def forms_duplicate(user, form_id):
+    owner = _forms_owner(user)
+    src = db.get_form(owner, form_id)
+    if not src:
+        return jsonify({"error": "Form not found"}), 404
+    limit = plan_of(user).get("forms", 1)
+    if db.count_forms(owner) >= limit:
+        return jsonify({"error": f"Your plan includes {limit} form{'s' if limit != 1 else ''}. Upgrade to duplicate this one.", "upgrade": True}), 402
+    settings = dict(src.get("settings") or {})
+    settings["discounts"] = [{**x, "used": 0} for x in settings.get("discounts") or []]
+    title = (src["title"] + " (copy)")[:120]
+    brand = _form_brand(src)
+    data = {k: src.get(k) for k in ("template", "intro", "fields", "button", "thanks", "accent", "whatsapp")}
+    data.update({"title": title, "status": "paused", "settings": settings})
+    form = db.create_form(owner, src.get("brand_id"), _unique_slug(_form_slug_base(brand.get("name", ""), src["title"])), data)
+    return jsonify(form)
+
+
+@app.get("/api/forms/<int:form_id>/stats")
+@auth
+def forms_stats(user, form_id):
+    """Funnel for one form: views → started → each question → finished, plus sources and the last 14 days."""
+    owner = _forms_owner(user)
+    form = db.get_form(owner, form_id)
+    if not form:
+        return jsonify({"error": "Form not found"}), 404
+    st = db.form_stats(form_id)
+    leads = db.form_leads(form_id)
+    finished = len(leads)
+    steps = [{"label": "Name & phone", "n": st.get("reach:0", 0)}]
+    steps += [{"label": f["label"], "type": f["type"], "n": st.get(f"reach:{i + 1}", 0)} for i, f in enumerate(form["fields"])]
+    started = max(st.get("start", 0), steps[0]["n"])
+    sources: dict[str, int] = {}
+    for l in leads:
+        sources[l.get("source") or "direct"] = sources.get(l.get("source") or "direct", 0) + 1
+    today = datetime.datetime.now(WAT).date()
+    days = []
+    for k in range(13, -1, -1):
+        d = today - datetime.timedelta(days=k)
+        s0 = datetime.datetime(d.year, d.month, d.day, tzinfo=WAT).timestamp()
+        days.append({"date": d.isoformat(), "label": d.strftime("%a %d"), "n": sum(1 for l in leads if s0 <= l["created_at"] < s0 + 86400)})
+    orders = [l["order_total"] for l in leads if l.get("order_total")]
+    won = [l for l in leads if l["status"] == "won"]
+    return jsonify({"views": form.get("views") or 0, "started": started, "finished": finished, "steps": steps,
+                    "sources": sorted(sources.items(), key=lambda kv: -kv[1]), "days": days,
+                    "ordered": sum(orders), "orders": len(orders), "avg_order": (sum(orders) / len(orders)) if orders else 0,
+                    "won": len(won), "won_value": sum(l.get("value") or 0 for l in won),
+                    "tracked_since": bool(st)})
+
+
+@app.put("/api/forms/prefs")
+@auth
+def forms_prefs(user):
+    d = request.get_json(force=True) or {}
+    if "digest" in d:
+        db.set_forms_digest(_forms_owner(user), bool(d["digest"]))
+    return jsonify({"digest": db.get_forms_digest(_forms_owner(user))})
+
+
+@app.delete("/api/forms/<int:form_id>")
+@auth
+def forms_delete(user, form_id):
+    db.delete_form(_forms_owner(user), form_id)
+    return jsonify({"ok": True})
+
+
+@app.get("/api/leads")
+@auth
+def leads_list(user):
+    leads, locked = _visible_leads(user, db.list_leads(_forms_owner(user)))
+    return jsonify({"leads": leads, "locked": locked})
+
+
+@app.put("/api/leads/<int:lead_id>")
+@auth
+def leads_update(user, lead_id):
+    owner = _forms_owner(user)
+    d = request.get_json(force=True) or {}
+    fields = {}
+    if d.get("status") in ("new", "contacted", "won", "lost"):
+        fields["status"] = d["status"]
+    if "value" in d:
+        try:
+            fields["value"] = max(0.0, float(d["value"])) if d["value"] not in (None, "") else None
+        except (TypeError, ValueError):
+            return jsonify({"error": "Enter the amount as a number."}), 400
+    if "notes" in d:
+        fields["notes"] = str(d.get("notes") or "")[:2000]
+    lead = db.update_lead(owner, lead_id, **fields)
+    return (jsonify(lead) if lead else (jsonify({"error": "Not found"}), 404))
+
+
+@app.delete("/api/leads/<int:lead_id>")
+@auth
+def leads_delete(user, lead_id):
+    db.delete_lead(_forms_owner(user), lead_id)
+    return jsonify({"ok": True})
+
+
+@app.get("/api/leads.csv")
+@auth
+def leads_csv(user):
+    import csv
+    leads, _ = _visible_leads(user, db.list_leads(_forms_owner(user), 5000))
+    form_id = request.args.get("form_id")
+    if form_id:
+        leads = [l for l in leads if str(l["form_id"]) == form_id]
+    labels = []
+    for l in leads:
+        for a in l.get("answers") or []:
+            if a["label"] not in labels:
+                labels.append(a["label"])
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Date", "Form", "Name", "Phone", "Email", "Status", "Order total (₦)", "Value (₦)", "Source", *labels, "Notes"])
+    for l in leads:
+        if l.get("locked"):
+            continue
+        amap = {a["label"]: a["value"] for a in l.get("answers") or []}
+        w.writerow([datetime.datetime.fromtimestamp(l["created_at"]).strftime("%Y-%m-%d %H:%M"), l.get("form_title") or "",
+                    l["name"], l["phone"], l.get("email") or "", l["status"], l.get("order_total") or "", l.get("value") or "", l.get("source") or "",
+                    *[amap.get(x, "") for x in labels], l.get("notes") or ""])
+    return Response("\ufeff" + buf.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=vertil-responses.csv"})
 
 
 # ---------------- email the Creator Initiative applicants ---------------- #

@@ -43,7 +43,7 @@ const state = {
   // misc
   history: [], favorites: [], editing: null, brandMode: "form", extracting: false,
   tour: null, mobileNav: false, acctMenu: false, brandSwitcherOpen: false,
-  sidebarPinned: (() => { try { return localStorage.getItem("vsbPinned") === "1"; } catch { return false; } })(),
+  sidebarPinned: (() => { try { return localStorage.getItem("vsbPinned") !== "0"; } catch { return false; } })(),
   onboarding: null,
   learn: { files: [], text: "", note: "", url: "", loading: false, result: null, saving: false,
            pack: null, packLoading: false, checkText: "", checkResult: null, checkLoading: false },
@@ -118,6 +118,9 @@ const ICON = {
   pages: '<path d="M4 19V10M10 19V5M16 19v-7M3 19h18"/>',
   queue: '<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18"/><path d="M8 14h8M8 17h5"/>',
   accounts: '<circle cx="12" cy="8" r="3.2"/><path d="M4.5 20v-1a7.5 7.5 0 0 1 15 0v1"/>',
+  voice: '<path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/>',
+  tools: '<path d="M14.5 6.5a4 4 0 0 0 5 5l-8.8 8.8a2.1 2.1 0 0 1-3-3l8.8-8.8Z"/><path d="M14.5 6.5 17 4l3 3-2.5 2.5"/>',
+  forms: '<rect x="4" y="3" width="16" height="18" rx="2.5"/><path d="M8 8h8M8 12h8M8 16h4.5"/><path d="m15 16.2 1.2 1.2 2.3-2.4"/>',
 };
 
 const ADVISOR_LABELS = { rate_advisor: "Rate Advisor", personal_brand: "Brand Advisor", script: "Script Writer", brand_learn: "Learn My Brand", content_calendar: "Content Calendar", bulk_catalog: "Bulk Catalogue", writer: "Writers Hub" };
@@ -187,15 +190,17 @@ function vmark(px = 36) {
 
 // Guided tour. `nav` = sidebar item to spotlight; `clip` = looping preview in static/tour/.
 const TOUR_STEPS = [
-  { title: "Welcome to Vertil 👋", body: "Your Naija brand voice engine. Here's a 60-second tour of where everything lives." },
+  { title: "Welcome to Vertil", body: "Your Naija brand voice engine. Here's a 60-second tour of where everything lives." },
   { nav: "home", clip: "home", title: "Home", body: "Your daily starting point. Vertil suggests a timely post for your brand every day — tap “Write this post” to use it." },
   { nav: "studio", clip: "studio", title: "Studio", body: "Pick one of 8 Nigerian voices and a format, add a short brief, and hit Generate. You'll get ready-to-post options in seconds." },
   { nav: "composer-new", clip: "compose", title: "Create post", body: "Publish straight from Vertil — choose Instagram, Facebook, LinkedIn and more, preview each feed, then post now or schedule.", social: true },
-  { nav: "learn", clip: "learn", title: "Learn My Brand", body: "Paste your brand guide or past posts. Vertil reads your tone and audience so everything it writes sounds like you." },
+  { nav: "brands", clip: "learn", title: "Brand voice", body: "Your brands live here. Open Learn My Brand and paste your brand guide or past posts — Vertil reads your tone so everything it writes sounds like you." },
   { nav: "calendar", clip: "calendar", title: "Content Calendar", body: "Plan a whole month in one click — tuned to payday, Independence Day, Detty December and more." },
   { nav: "board", clip: "board", title: "Content Board", body: "Track every idea from spark to posted: Ideas → Create → Ready to publish → Posted." },
+  { nav: "accounts", title: "Connected accounts", body: "Link Instagram, Facebook, TikTok, X, LinkedIn and YouTube once. After that, Create post can publish to all of them.", social: true },
   { nav: "queue", clip: "queue", title: "Queue", body: "Everything you've scheduled, across every account, in one weekly view.", social: true },
-  { title: "You're all set 🎉", body: "Start with “Create your brand” on Home. You can replay this tour anytime from the account menu." },
+  { nav: "forms", title: "Forms", body: "Take orders and bookings with one link. Every response lands in a sheet, and you get a summary each morning." },
+  { title: "You're all set", body: "Start with the Getting started list on Home: create your brand, then connect your accounts. You can replay this tour anytime from the account menu." },
 ];
 
 async function api(path, opts = {}) {
@@ -234,6 +239,8 @@ async function loadData() {
     state.team = await api("/api/team").catch(() => null);
   }
   if (state.brands.length && state.config?.social_posting) { await loadSocialStatuses(); await loadQueueWeek(); }
+  else if (state.config?.social_posting) state.socialLoaded = true;   // no brand yet, so nothing connected
+  if (window.loadForms) await loadForms().catch(() => {});  // sidebar "new responses" badge
 }
 
 async function refreshUsage() {
@@ -655,7 +662,9 @@ function studioTabs(active) {
   </div>`;
 }
 
-function routeView() {
+function routeView() { return navTabs(state.view) + routeViewInner(); }
+
+function routeViewInner() {
   switch (state.view) {
     case "home": return homeView();
     case "learn": return learnView();
@@ -680,6 +689,7 @@ function routeView() {
     case "gigs": return gigsView();
     case "flyer": return FLYER_ON ? flyerView() : homeView();
     case "profile": return profileView();
+    case "forms": return formsView();
     default: return studioView();
   }
 }
@@ -690,7 +700,7 @@ const SIDEBAR_STYLE = `<style>
 .vsb.vsb-pinned{width:252px;box-shadow:none}
 .vsb .vsb-fade{opacity:0;white-space:nowrap;transition:opacity .12s ease}
 .vsb:hover .vsb-fade,.vsb.vsb-pinned .vsb-fade{opacity:1;transition-delay:.06s}
-.vsb-item{width:100%;display:flex;align-items:center;gap:12px;padding:9px 15px;border-radius:12px;font-size:13.5px;font-weight:500;white-space:nowrap;transition:background-color .15s ease,color .15s ease}
+.vsb-item{width:100%;display:flex;align-items:center;gap:12px;padding:6px 15px;border-radius:10px;font-size:13.5px;font-weight:500;white-space:nowrap;text-align:left;transition:background-color .15s ease,color .15s ease}
 .vsb-item svg{flex-shrink:0}
 </style>`;
 const PIN_ICON = '<path d="M12 2 9 9l-5 1.5L11 18l-1 4 2-1 2 1-1-4 7-7.5L15 9Z"/>';
@@ -718,17 +728,48 @@ function brandSwitcherHTML(fadeClass) {
   </div>`;
 }
 
-function sidebar() {
-  const item = (key, label, badge) => {
-    const on = state.view === key || (key === "studio" && WORKSPACE_VIEWS.includes(state.view));
-    return `<button data-nav="${key}" class="vsb-item ${on ? "bg-brand-tint text-brand-dark" : "text-muted hover:bg-paper hover:text-ink"}">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px]">${ICON[key]}</svg><span class="vsb-fade flex-1">${label}</span>${badge ? `<span class="vsb-fade text-[10px] font-bold font-mono px-1.5 py-0.5 rounded-full bg-gold-tint text-gold">${badge}</span>` : ""}</button>`;
+// Related pages share one sidebar item and switch with tabs at the top of the page.
+const NAV_TABS = {
+  calendar: [["calendar", "Plan a month"], ["calendars", "Saved plans"]],
+  brands: [["brands", "Brands"], ["learn", "Learn My Brand"], ["advisor", "Brand Advisor"]],
+  favorites: [["favorites", "Saved copy"], ["history", "History"]],
+  rate: [["rate", "Rate Advisor"], ["gigs", "Gig Diary"], ["plan", "My Plan"]],
+};
+function navGroupOf(view) {
+  for (const [g, tabs] of Object.entries(NAV_TABS)) if (tabs.some(t => t[0] === view)) return g;
+  return null;
+}
+function navTabs(view) {
+  const g = navGroupOf(view); if (!g) return "";
+  const tabs = NAV_TABS[g].filter(t => t[2] !== "social" || state.config?.social_posting);
+  if (tabs.length < 2) return "";
+  return `<div class="flex items-center gap-1 mb-4 bg-white border border-line rounded-xl p-1 overflow-x-auto scroll-thin">
+    ${tabs.map(([k, l]) => `<button data-nav="${k}" class="shrink-0 text-sm font-semibold px-3.5 py-2 rounded-lg transition ${view === k ? "bg-brand-tint text-brand-dark" : "text-muted hover:text-ink hover:bg-paper"}">${l}</button>`).join("")}
+  </div>`;
+}
+
+function navList(mobile) {
+  const item = (key, label, badge, icon) => {
+    const on = state.view === key || (key === "studio" && WORKSPACE_VIEWS.includes(state.view)) || navGroupOf(state.view) === key
+      || (key === "performance" && state.view === "pages");
+    return `<button data-nav="${key}" class="vsb-item ${on ? "bg-brand-tint text-brand-dark font-semibold" : "text-muted hover:bg-paper hover:text-ink"}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px]">${ICON[icon || key] || ""}</svg><span class="${mobile ? "" : "vsb-fade"} flex-1 text-left">${label}</span>${badge ? `<span class="${mobile ? "" : "vsb-fade"} text-[10px] font-bold font-mono px-1.5 py-0.5 rounded-full bg-gold-tint text-gold">${badge}</span>` : ""}</button>`;
   };
-  const grpLabel = t => `<div class="vsb-fade px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint">${t}</div>`;
-  const qBadge = queueBadgeCount();
-  const publishGroup = state.config?.social_posting ? `
-      ${grpLabel("Publish")}
-      ${item("queue","Queue", qBadge || null)}${item("performance","Performance")}${item("accounts","Accounts")}` : "";
+  const grp = t => `<div class="${mobile ? "" : "vsb-fade"} px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-faint whitespace-nowrap">${t}</div>`;
+  const social = state.config?.social_posting;
+  const newLeads = (window.formsNewCount && formsNewCount()) || null;
+  return `
+    ${item("home", "Home")}
+    ${grp("Create")}
+    ${item("studio", "Studio")}${FLYER_ON ? item("flyer", "Flyer Maker") : ""}${item("board", "Content Board")}${item("calendar", "Calendar")}${item("brands", "Brand voice", null, "voice")}
+    ${social ? grp("Publish") + item("queue", "Queue", queueBadgeCount() || null) + item("performance", "Performance", null, "pages") + item("accounts", "Connected accounts", socialConnectedCount() === 0 ? "0" : null) : ""}
+    ${grp("Grow")}
+    ${item("forms", "Forms", newLeads)}${item("favorites", "Library", null, "saved")}${item("rate", "Tools", null, "tools")}
+    ${(state.usage?.seats || state.usage?.is_team_member) ? item("team", "Team") : ""}
+    ${mobile ? item("pricing", "Plans & Pricing") : ""}`;
+}
+
+function sidebar() {
   return SIDEBAR_STYLE + `
   <div class="hidden md:block ${state.sidebarPinned ? 'w-[252px]' : 'w-[76px]'} shrink-0 transition-[width] duration-200" aria-hidden="true"></div>
   <aside class="vsb hidden md:flex flex-col bg-white border-r border-line px-3 py-5 ${state.sidebarPinned ? 'vsb-pinned' : ''}">
@@ -742,18 +783,11 @@ function sidebar() {
     <div class="mb-3 shrink-0">${brandSwitcherHTML("vsb-fade")}</div>
     ${state.config?.social_posting ? `<button data-nav="composer-new" class="shrink-0 w-full flex items-center justify-center gap-2 px-3.5 py-2.5 mb-3 rounded-xl bg-brand hover:bg-brand-dark text-white text-sm font-semibold whitespace-nowrap">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-4 h-4 shrink-0"><path d="M12 5v14M5 12h14"/></svg><span class="vsb-fade">Create post</span></button>` : ""}
-    <nav class="space-y-1 overflow-y-auto scroll-thin flex-1">
-      ${item("home","Home")}
-      ${grpLabel("Create")}
-      ${item("studio","Studio")}${FLYER_ON ? item("flyer","Flyer Maker") : ""}${item("board","Content Board")}${item("brands","Brands")}${item("learn","Learn My Brand")}
-      ${publishGroup}
-      ${grpLabel("Plan & grow")}
-      ${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}${item("favorites","Saved Copy")}${item("history","History")}
-      ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("plan","My Plan")}${item("gigs","Gig Diary")}
-      ${(state.usage?.seats || state.usage?.is_team_member) ? item("team","Team") : ""}
+    <nav class="space-y-0.5 overflow-y-auto scroll-thin flex-1 -mx-1 px-1">
+      ${navList(false)}
     </nav>
-    <div class="mt-auto pt-2 space-y-2 shrink-0">
-      <div class="vsb-fade">${usageCard()}</div>
+    <div class="mt-auto pt-2 space-y-1.5 shrink-0 border-t border-line">
+      <div class="vsb-fade">${usageMini()}</div>
       <div class="flex items-center gap-2 px-1">
         <button data-nav="profile" class="flex items-center gap-2 min-w-0 flex-1 text-left rounded-lg hover:bg-paper p-1 -m-1 transition" title="Account">
           <div class="w-7 h-7 rounded-full bg-brand-tint text-brand-dark grid place-items-center text-xs font-bold shrink-0">${esc((state.user?.name||"U")[0].toUpperCase())}</div>
@@ -776,16 +810,8 @@ function sidebar() {
       <div class="mb-3">${brandSwitcherHTML("")}</div>
       ${state.config?.social_posting ? `<button data-nav="composer-new" class="w-full flex items-center justify-center gap-2 px-3.5 py-2.5 mb-3 rounded-xl bg-brand hover:bg-brand-dark text-white text-sm font-semibold">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-4 h-4"><path d="M12 5v14M5 12h14"/></svg>Create post</button>` : ""}
-      <nav class="space-y-1">
-        ${item("home","Home")}
-        ${grpLabel("Create")}
-        ${item("studio","Studio")}${FLYER_ON ? item("flyer","Flyer Maker") : ""}${item("board","Content Board")}${item("brands","Brands")}${item("learn","Learn My Brand")}
-        ${publishGroup}
-        ${grpLabel("Plan & grow")}
-        ${item("calendar","Content Calendar")}${item("calendars","Saved Plans")}${item("favorites","Saved Copy")}${item("history","History")}
-        ${item("rate","Rate Advisor")}${item("advisor","Brand Advisor")}${item("plan","My Plan")}${item("gigs","Gig Diary")}
-        ${(state.usage?.seats || state.usage?.is_team_member) ? item("team","Team") : ""}
-        ${item("pricing","Plans & Pricing")}
+      <nav class="space-y-0.5">
+        ${navList(true)}
         <button data-tour-replay class="w-full flex items-center gap-2.5 text-left px-3 py-2 rounded-lg text-sm text-muted hover:bg-paper hover:text-ink"><span class="text-faint">${svgIcon('<circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l5.5-3.5z"/>', "w-4 h-4")}</span> Replay tour</button>
       </nav>
       <div class="mt-auto space-y-2 pt-5">
@@ -801,6 +827,18 @@ function sidebar() {
       </div>
     </aside>
   </div>` : ""}`;
+}
+
+// Slim version for the desktop sidebar: one line + a hairline bar.
+function usageMini() {
+  const u = state.usage; if (!u) return "";
+  const unlimited = u.limit == null;
+  const pct = unlimited ? 100 : Math.min(100, Math.round((u.used / u.limit) * 100));
+  return `<button data-nav="pricing" class="block w-full text-left rounded-lg px-3 py-2 hover:bg-paper transition" title="Plans & pricing">
+    <div class="flex items-center gap-2 text-[11px]"><span class="font-bold uppercase tracking-wide ${u.plan === "free" ? "text-muted" : "text-brand-dark"}">${esc(u.plan_name)}</span>
+      <span class="text-faint ml-auto">${unlimited ? "Unlimited" : `${u.used}/${u.limit}`}</span></div>
+    <div class="h-1 rounded-full bg-line overflow-hidden mt-1.5"><div class="h-full ${pct >= 80 && !unlimited ? "bg-amber-500" : "bg-brand"}" style="width:${pct}%"></div></div>
+  </button>`;
 }
 
 function usageCard() {
@@ -823,26 +861,27 @@ function topbar() {
   const titles = {
     home:["Home", new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"})],
     studio:["Studio","Generate on-brand Naija copy in seconds"],
-    calendar:["Content Calendar","A month of posts, tuned to the Nigerian calendar"],
-    calendars:["Saved Plans","Your generated content calendars"],
-    brands:["Brands","Your brand voices — injected into every generation"],
+    calendar:["Calendar","A month of posts, tuned to the Nigerian calendar"],
+    calendars:["Calendar","Your saved content plans"],
+    brands:["Brand voice","Your brands — injected into every generation"],
     pages:["My Pages","Monitor engagement on the accounts you've connected"],
     performance:["Performance","How your posts are doing, and when to post"],
     queue:["Queue","Everything scheduled across your accounts"],
-    accounts:["Accounts","Connect the pages Vertil can post to"],
-    learn:["Learn My Brand","Upload your material — Vertil learns your brand and breaks it down"],
+    forms:["Forms","Collect orders & enquiries — every response lands here"],
+    accounts:["Connected accounts","Link the social accounts Vertil posts to"],
+    learn:["Brand voice","Upload your material — Vertil learns your brand and breaks it down"],
     board:["Content Board","Capture ideas and move them from spark to posted"],
     writers:["Writers Hub","Fix grammar & punctuation and make any draft read smoothly"],
     bulk:["Bulk Catalogue","Turn a list of products into on-brand descriptions — all at once"],
-    favorites:["Saved Copy","Your starred, ready-to-use copy"],
+    favorites:["Library","Your starred, ready-to-use copy"],
     flyer:["Flyer Maker","Turn any post into a ready-to-share image — with your logo and colours"],
-    history:["History","Everything you've generated"],
+    history:["Library","Everything you've generated"],
     pricing:["Plans & Pricing","Upgrade to unlock more"],
-    rate:["Rate Advisor","Wetin to charge — realistic Naira pricing for your gigs"],
-    advisor:["Brand Advisor","Build your personal brand and win the right brand deals"],
-    plan:["My Plan","Your accountability checklist — turn strategy into steps you actually take"],
+    rate:["Tools","Rate Advisor — realistic Naira pricing for your gigs"],
+    advisor:["Brand voice","Brand Advisor — build your personal brand and win the right deals"],
+    plan:["Tools","My Plan — turn strategy into steps you actually take"],
     team:["Team","Your shared workspace — one brand voice, one pooled plan"],
-    gigs:["Gig Diary","Track every gig and what you made"],
+    gigs:["Tools","Gig Diary — track every gig and what you made"],
     script:["Script Writer","Scene-by-scene short-video scripts built on trending formats"],
     profile:["Account","Manage your profile, plan and security"],
   };
@@ -947,6 +986,11 @@ function homeView() {
 
   // toolkit
   const TOOLS = [
+    ...(state.config?.social_posting ? [
+      ["composer-new", "Create post", "Write once, post or schedule to every platform", "brand", "queue"],
+      ["accounts", "Connect accounts", "Link Instagram, Facebook, TikTok, X & more", "gold"],
+    ] : []),
+    ["forms", "Forms", "Take orders and bookings with one link", "gold"],
     ["studio", "Studio", "Generate captions, ads, WhatsApp & more", "brand"],
     ["script", "Script Writer", "Scene-by-scene short-video scripts", "brand"],
     ["calendar", "Content Calendar", "Plan a month tuned to Naija", "gold"],
@@ -956,9 +1000,9 @@ function homeView() {
     ["gigs", "Gig Diary", "Track every gig & what you earn", "brand"],
     ["team", "Team", "Share one brand voice across your team", "brand"],
   ];
-  const toolkit = TOOLS.map(([k, t, d, c]) => `
+  const toolkit = TOOLS.map(([k, t, d, c, ic]) => `
     <button data-nav="${k}" class="text-left bg-white border border-line rounded-xl2 shadow-card p-4 flex items-start gap-3.5 hometile">
-      <span class="w-11 h-11 rounded-xl ${c === "gold" ? "bg-gold-tint text-gold" : "bg-brand-tint text-brand"} grid place-items-center shrink-0">${svgIcon(ICON[k] || ICON.studio, "w-5 h-5")}</span>
+      <span class="w-11 h-11 rounded-xl ${c === "gold" ? "bg-gold-tint text-gold" : "bg-brand-tint text-brand"} grid place-items-center shrink-0">${svgIcon(ICON[ic || k] || ICON.studio, "w-5 h-5")}</span>
       <div class="min-w-0"><div class="font-display font-bold text-[15px] leading-tight">${t}</div>
         <div class="text-xs text-muted mt-0.5 leading-snug">${d}</div></div>
       <span class="ml-auto text-faint mt-1">${svgIcon('<path d="M9 6l6 6-6 6"/>', "w-4 h-4")}</span></button>`).join("");
@@ -1008,6 +1052,7 @@ function homeView() {
   return `
   <div class="space-y-8 pb-10">
     ${homeHero(name, greet, streak, summaryLine, { pct, off, left, unlimited, resets: hu.resets_in_days })}
+    ${homeConnectCard()}
     ${homeChecklist(h.getting_started)}
     ${homeQueueWidgets()}
     ${homeSuggestSection()}
@@ -1056,16 +1101,57 @@ function homeView() {
 }
 
 const CHECKLIST_KEY = () => `vchecklist_hidden_${state.user?.id || "anon"}`;
+function socialConnectedCount() {
+  if (!state.socialLoaded) return null;   // unknown yet: show nothing rather than a wrong "0"
+  return Object.values(state.social || {}).reduce((n, conn) =>
+    n + PLATFORM_ORDER.filter(p => conn?.[p]?.status === "connected").length, 0);
+}
+function starterPriceLabel() {
+  const p = (state.config?.plans || []).find(x => x.key === "starter");
+  return p ? "₦" + Number(p.price).toLocaleString() + "/month" : "a paid plan";
+}
+const CONNECT_HIDE_KEY = () => `vconnect_hidden_${state.user?.id || "anon"}`;
+function homeConnectCard() {
+  if (!state.config?.social_posting || socialConnectedCount() !== 0) return "";
+  try { if (sessionStorage.getItem(CONNECT_HIDE_KEY()) === "1") return ""; } catch {}
+  const paid = !state.usage || state.usage.social;
+  const brand = state.brands.find(b => b.id === state.activeBrandId) || state.brands[0];
+  const btns = PLATFORM_ORDER.map(k => {
+    const busy = state.connecting === k;
+    return `<button data-home-connect="${k}" ${busy ? "disabled" : ""} class="flex items-center gap-2.5 bg-white border border-line rounded-xl px-3 py-2.5 hover:border-brand/50 hover:shadow-card transition text-left disabled:opacity-60">
+      ${platformBadge(k, 28)}<span class="min-w-0 flex-1"><span class="block text-sm font-semibold leading-tight">${PLATFORM_META[k].label}</span>
+      <span class="block text-[11px] font-semibold text-brand mt-0.5">${busy ? "Connecting…" : paid ? "Connect" : "Paid plans"}</span></span></button>`;
+  }).join("");
+  const lead = !brand
+    ? `Create your brand first, then link the accounts Vertil should post to.`
+    : paid
+    ? `Link your accounts once and Vertil can post and schedule for <b>${esc(brand.name)}</b> on every platform.`
+    : `Posting and scheduling is on <b>Starter</b>, from ${starterPriceLabel()}. Your writing tools stay free.`;
+  return `<section class="bg-gradient-to-br from-brand-tint to-white border border-brand/20 rounded-xl2 shadow-card p-5 fade-up">
+    <div class="flex items-start justify-between gap-3">
+      <div><div class="text-[11px] font-mono uppercase tracking-wider text-brand">Step 1 · Publish</div>
+        <h3 class="font-display font-bold text-[18px] mt-0.5">Connect your social accounts</h3>
+        <p class="text-sm text-muted mt-1 max-w-xl">${lead}</p></div>
+      <button data-connect-hide class="text-xs text-faint hover:text-ink shrink-0" title="Hide for now">Later</button>
+    </div>
+    ${!brand ? `<button data-nav="brands" class="mt-4 text-sm font-semibold text-white bg-brand hover:bg-brand-dark px-5 py-2.5 rounded-xl">Create your brand</button>`
+      : `<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 mt-4">${btns}</div>
+        ${paid ? "" : `<button data-nav="pricing" class="mt-4 text-sm font-semibold text-white bg-brand hover:bg-brand-dark px-5 py-2.5 rounded-xl">See plans</button>`}`}
+  </section>`;
+}
+
 function homeChecklist(g) {
   if (!g) return "";
   try { if (localStorage.getItem(CHECKLIST_KEY()) === "1") return ""; } catch {}
+  const social = state.config?.social_posting, paid = !state.usage || state.usage.social;
+  g = { ...g, connected: socialConnectedCount() > 0 };
   const items = [
     ["brand", "Create your brand voice", "Tell Vertil who you are so every post sounds like you.", "brands", "Set up brand"],
-    ["generated", "Generate your first post", "Pick a voice and format in Studio, add a brief, hit Generate.", "studio", "Open Studio"],
-    ["saved", "Save a post you love", "Tap Save on any option to keep it in Saved Copy.", "studio", "Try it"],
+    ...(social ? [["connected", "Connect your social accounts", paid ? "Link Instagram, Facebook, TikTok, X, LinkedIn or YouTube so Vertil can post for you." : `Posting is on Starter (${starterPriceLabel()}). Upgrade to link your accounts.`, paid ? "accounts" : "pricing", paid ? "Connect" : "See plans"]] : []),
+    ["generated", "Write your first post", "Pick a voice and format in Studio, add a brief, hit Generate.", "studio", "Open Studio"],
+    ...(social ? [["scheduled", "Post or schedule it", "Use Create post to publish now or pick a time.", "composer-new", "Create post"]] : [["saved", "Save a post you love", "Tap Save on any option to keep it in Saved Copy.", "studio", "Try it"]]),
     ["planned", "Plan a month of content", "Build a calendar tuned to the Naija calendar in one click.", "calendar", "Plan a month"],
   ];
-  if (state.config?.social_posting) items.push(["scheduled", "Schedule your first post", "Use Create post to publish now or pick a time.", "composer-new", "Create post"]);
   const done = items.filter(i => g[i[0]]).length;
   if (done === items.length) return "";
   const next = items.find(i => !g[i[0]]);
@@ -1111,7 +1197,9 @@ function homeHero(name, greet, streak, summaryLine, ring) {
         <div class="flex flex-wrap items-center gap-2.5 mt-5">
           <button data-nav="studio" class="inline-flex items-center gap-2 text-sm font-semibold text-forest bg-brand-bright hover:brightness-105 px-4 py-2.5 rounded-xl shadow-lg transition">
             ${svgIcon('<path d="m12 3 1.6 5L19 9.6l-5.4 1.6L12 17l-1.6-5.8L5 9.6 10.4 8z"/>', "w-4 h-4")} New generation</button>
-          <button data-nav="calendar" class="inline-flex items-center gap-2 text-sm font-semibold text-white/90 hover:text-white border border-white/20 hover:border-white/40 px-4 py-2.5 rounded-xl transition">Plan this month</button>
+          ${state.config?.social_posting
+            ? `<button data-nav="composer-new" class="inline-flex items-center gap-2 text-sm font-semibold text-white/90 hover:text-white border border-white/20 hover:border-white/40 px-4 py-2.5 rounded-xl transition">Create a post</button>`
+            : `<button data-nav="calendar" class="inline-flex items-center gap-2 text-sm font-semibold text-white/90 hover:text-white border border-white/20 hover:border-white/40 px-4 py-2.5 rounded-xl transition">Plan this month</button>`}
         </div>
       </div>
       <div class="shrink-0 flex items-center gap-5 bg-white/5 border border-white/10 rounded-xl2 p-5">
@@ -2657,6 +2745,7 @@ async function loadSocialStatuses() {
     catch { return [b.id, { status: "not_connected" }]; }
   }));
   state.social = Object.fromEntries(entries);
+  state.socialLoaded = true;
 }
 
 function brandsView() {
@@ -2934,7 +3023,7 @@ function composerView() {
   const platformPill = k => {
     const isSel = c.sel.includes(k), isConn = conn[k]?.status === "connected", isConnecting = state.connecting === k;
     if (!isConn) return `<button data-comp-connect="${k}" ${isConnecting ? "disabled" : ""} class="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border border-dashed border-line text-muted hover:border-brand/40 disabled:opacity-60">
-      ${platformBadge(k, 20)} ${PLATFORM_META[k].label} <span class="text-brand">${isConnecting ? "Connecting…" : state.usage && !state.usage.social ? "🔒 Paid plans" : "Connect"}</span></button>`;
+      ${platformBadge(k, 20)} ${PLATFORM_META[k].label} <span class="text-brand">${isConnecting ? "Connecting…" : state.usage && !state.usage.social ? "Paid plans" : "Connect"}</span></button>`;
     return `<button data-comp-pl="${k}" class="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border ${isSel ? "border-brand bg-brand-tint text-brand-dark" : "border-line text-ink hover:border-brand/40"}">
       ${platformBadge(k, 20)} ${PLATFORM_META[k].label}</button>`;
   };
@@ -3982,6 +4071,12 @@ function wire() {
   const vsbEl = $(".vsb"); if (vsbEl) vsbEl.onmouseleave = () => { if (state.brandSwitcherOpen) { state.brandSwitcherOpen = false; render(); } };
 
   if (state.view === "home") {
+    $$("[data-home-connect]").forEach(b => b.onclick = () => {
+      const brand = state.brands.find(x => x.id === state.activeBrandId) || state.brands[0];
+      if (!brand) return goto("brands");
+      connectPlatformPopup(brand.id, b.dataset.homeConnect);
+    });
+    $$("[data-connect-hide]").forEach(b => b.onclick = () => { try { sessionStorage.setItem(CONNECT_HIDE_KEY(), "1"); } catch {} render(); toast("Hidden for now. Connect anytime from Connected accounts in the sidebar."); });
     $$("[data-checklist-hide]").forEach(b => b.onclick = () => { try { localStorage.setItem(CHECKLIST_KEY(), "1"); } catch {} render(); toast("Checklist hidden — replay the tour anytime from the account menu"); });
     $$("[data-home-shuffle]").forEach(b => b.onclick = () => { state.suggestIdx = (state.suggestIdx || 0) + 1; refreshSuggestion(); });
     const ws = $("[data-home-suggest]"); if (ws) ws.onclick = applySuggestion;
@@ -4122,6 +4217,7 @@ function wire() {
     $$("[data-del-fav]").forEach(b=>b.onclick=async()=>{ await api(`/api/favorites/${b.dataset.delFav}`,{method:"DELETE"}); state.favorites=await api("/api/favorites"); render(); });
     $$("[data-copy-fav]").forEach(b=>b.onclick=()=>{ const f=state.favorites.find(x=>x.id===+b.dataset.copyFav); navigator.clipboard.writeText(f.text); b.textContent="Copied ✓"; setTimeout(()=>b.textContent="Copy",1400); });
   }
+  if (state.view === "forms") { wireForms(); wireSheet(); }
   if (state.view === "pricing") {
     $$("[data-plan]").forEach(b=>b.onclick=()=>choosePlan(b.dataset.plan));
     $$("[data-months]").forEach(b=>b.onclick=()=>{ state.billMonths = +b.dataset.months; render(); });
@@ -4205,7 +4301,7 @@ async function goto(view, fromPop) {
   if (view !== "studio") state.studioOrigin = null;
   state.view = view;
   try {
-    if (view === "home") state.home = await api("/api/home");
+    if (view === "home") { state.home = await api("/api/home"); if (state.config?.social_posting && !state.socialLoaded) await loadSocialStatuses(); }
     if (view === "history") state.history = await api("/api/history");
     if (view === "favorites") state.favorites = await api("/api/favorites");
     if (view === "calendars") state.savedCalendars = await api("/api/calendars");
@@ -4215,6 +4311,7 @@ async function goto(view, fromPop) {
     if (view === "brands" && state.config?.social_posting) await loadSocialStatuses();
     if ((view === "pages" || view === "performance") && state.config?.social_posting) { state.pages = await api("/api/social/pages").catch(() => ({ pages: [] })); await loadPostsWeek(); }
     if (view === "queue") await loadQueueWeek();
+    if (view === "forms") { state.forms.edit = null; state.forms.picker = null; state.forms.share = null; await loadForms(); }
     if (view === "accounts") await loadSocialStatuses();
     if (view === "gigs") { state.gigEditing = null; await loadGigs(); }
     if (view === "board") { state.board.items = await api("/api/content"); state.board.justLoaded = true; }
@@ -4598,6 +4695,7 @@ function handleUpgradeReturn() {
   const p = new URLSearchParams(location.search);
   if (p.get("upgraded")==="1") { toast("Payment received — your plan is active"); history.replaceState({}, "", "/"); }
   if (p.get("view")==="pricing") { state.view = "pricing"; history.replaceState({}, "", location.pathname); }
+  if (p.get("view")==="forms") { state.view = "forms"; state.forms.tab = "responses"; history.replaceState({}, "", location.pathname); }
   else if (p.get("upgraded")==="0") { toast("Payment not completed."); history.replaceState({}, "", "/"); }
   if (p.get("social")==="instagram") {
     toast(p.get("status")==="success" ? "Instagram connected" : "Instagram connection cancelled");

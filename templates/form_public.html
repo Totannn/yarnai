@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  {% if missing %}
+  <title>Form not found · Vertil</title>
+  {% else %}
+  <title>{{ form.title }}{% if brand.name %} · {{ brand.name }}{% endif %}</title>
+  <meta name="description" content="{{ form.intro }}" />
+  <meta property="og:title" content="{{ form.title }}{% if brand.name %} · {{ brand.name }}{% endif %}" />
+  <meta property="og:description" content="{{ form.intro }}" />
+  {% if cover %}<meta property="og:image" content="{{ request.url_root.rstrip('/') }}{{ cover }}" />{% endif %}
+  <meta name="theme-color" content="{{ accent }}" />
+  {% endif %}
+  <meta name="robots" content="noindex" />
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?{{ font_q if not missing else 'family=Space+Grotesk:wght@400;500;600;700' }}&display=swap" rel="stylesheet" />
+  <style>
+    :root { --a: {{ accent if not missing else '#0e9488' }}; --ink:#13312e; --muted:#5c726e; --faint:#90a39f; --line:#e2e8e6; --bg:#f4f7f6; --err:#c2410c;
+      --fh:'{{ font_head if not missing else "Space Grotesk" }}'; --fb:'{{ font_body if not missing else "Space Grotesk" }}'; }
+    * { box-sizing:border-box; }
+    html { -webkit-text-size-adjust:100%; }
+    body { margin:0; font-family:var(--fb), system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color:var(--ink); background:var(--bg); min-height:100vh; }
+    h1, .pname, .snum, button.go, .totbar b, .rcpt .t { font-family:var(--fh), var(--fb), system-ui, sans-serif; }
+    .band { height:180px; background:linear-gradient(135deg, var(--a), color-mix(in srgb, var(--a) 70%, #000)); position:relative; overflow:hidden; }
+    .band::after { content:""; position:absolute; inset:0; opacity:.16; background-image:radial-gradient(circle at 1px 1px,#fff 1px,transparent 0); background-size:22px 22px; }
+    .band.photo { height:260px; background-size:cover; background-position:center; }
+    .band.photo::after { opacity:1; background:linear-gradient(180deg, rgba(0,0,0,0) 35%, rgba(0,0,0,.35)); }
+    @media (min-width:700px){ .band.photo { height:320px; } }
+    .wrap { max-width:540px; margin:-120px auto 0; padding:0 16px 40px; position:relative; z-index:1; }
+    .band.photo + .wrap { margin-top:-90px; }
+    .card { background:#fff; border-radius:24px; box-shadow:0 1px 0 rgba(19,49,46,.04), 0 24px 60px -24px rgba(19,49,46,.28); padding:28px 22px 24px; animation:rise .5s cubic-bezier(.2,.7,.2,1) both; }
+    @media (min-width:480px){ .card { padding:34px 32px 28px; } }
+    @keyframes rise { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:none; } }
+    .brand { display:flex; align-items:center; gap:12px; margin-bottom:20px; }
+    .logo { width:48px; height:48px; border-radius:14px; object-fit:contain; background:#fff; border:1px solid var(--line); }
+    .mono { width:48px; height:48px; border-radius:14px; display:grid; place-items:center; color:#fff; font-weight:700; font-size:20px; background:var(--a); }
+    .bname { font-size:13px; font-weight:600; color:var(--muted); letter-spacing:.02em; }
+    h1 { font-size:26px; line-height:1.15; letter-spacing:-.02em; margin:0 0 8px; }
+    .intro { color:var(--muted); font-size:15.5px; line-height:1.55; margin:0 0 22px; white-space:pre-line; }
+    .f { margin-bottom:18px; }
+    label.l, .l { display:block; font-size:14px; font-weight:600; margin-bottom:7px; }
+    .l .req { color:var(--a); margin-left:2px; }
+    input[type=text], input[type=tel], input[type=email], input[type=number], input[type=date], textarea {
+      width:100%; font:inherit; font-size:16px; color:var(--ink); background:#fbfcfc; border:1.5px solid var(--line); border-radius:14px;
+      padding:13px 14px; outline:none; transition:border-color .15s, box-shadow .15s, background .15s; -webkit-appearance:none; appearance:none; }
+    textarea { min-height:104px; resize:vertical; line-height:1.5; }
+    input:focus, textarea:focus { border-color:var(--a); background:#fff; box-shadow:0 0 0 4px color-mix(in srgb, var(--a) 16%, transparent); }
+    .bad input, .bad textarea { border-color:var(--err); }
+    .em { color:var(--err); font-size:13px; margin-top:6px; }
+    .chips { display:flex; flex-wrap:wrap; gap:8px; }
+    .chip { position:relative; }
+    .chip input { position:absolute; opacity:0; pointer-events:none; }
+    .chip span { display:inline-block; padding:10px 15px; border:1.5px solid var(--line); border-radius:999px; font-size:14.5px; font-weight:500; cursor:pointer; transition:all .15s; background:#fbfcfc; }
+    .chip span small { font-weight:600; opacity:.7; margin-left:6px; font-size:12.5px; }
+    .chip input:checked + span { background:var(--a); border-color:var(--a); color:#fff; }
+    .chip input:checked + span small { opacity:.9; }
+    .chip input:focus-visible + span { box-shadow:0 0 0 4px color-mix(in srgb, var(--a) 22%, transparent); }
+    .chip input:disabled + span { opacity:.42; text-decoration:line-through; cursor:not-allowed; }
+    .consent { display:flex; gap:11px; align-items:flex-start; font-size:13.5px; color:var(--muted); line-height:1.5; margin:22px 0 18px; cursor:pointer; }
+    .consent input { width:20px; height:20px; margin:1px 0 0; accent-color:var(--a); flex-shrink:0; }
+    button.go { width:100%; font:inherit; font-size:16.5px; font-weight:700; color:#fff; background:var(--a); border:0; border-radius:16px; padding:16px; cursor:pointer;
+      box-shadow:0 10px 24px -10px color-mix(in srgb, var(--a) 70%, transparent); transition:transform .12s, filter .15s; display:flex; align-items:center; justify-content:center; gap:10px; }
+    button.go:hover { filter:brightness(1.06); } button.go:active { transform:scale(.99); }
+    button.go[disabled] { opacity:.75; cursor:default; }
+    .spin { width:18px; height:18px; border:2.5px solid rgba(255,255,255,.45); border-top-color:#fff; border-radius:50%; animation:sp .7s linear infinite; display:none; }
+    .busy .spin { display:block; }
+    @keyframes sp { to { transform:rotate(360deg); } }
+    .hp { position:absolute; left:-9999px; width:1px; height:1px; overflow:hidden; }
+    .alert { background:#fff4ed; color:var(--err); border-radius:12px; padding:11px 14px; font-size:14px; margin-bottom:16px; }
+    .done { text-align:center; padding:12px 4px 6px; }
+    .tick { width:76px; height:76px; margin:4px auto 18px; border-radius:50%; background:color-mix(in srgb, var(--a) 12%, #fff); display:grid; place-items:center; }
+    .tick svg { width:38px; height:38px; stroke:var(--a); stroke-width:3; fill:none; stroke-linecap:round; stroke-linejoin:round; stroke-dasharray:40; stroke-dashoffset:40; animation:draw .6s .25s ease forwards; }
+    @keyframes draw { to { stroke-dashoffset:0; } }
+    .done h1 { font-size:24px; }
+    .closed-ic { width:64px; height:64px; margin:4px auto 16px; border-radius:50%; background:var(--bg); display:grid; place-items:center; color:var(--muted); }
+    .wa { display:inline-flex; align-items:center; gap:9px; margin-top:18px; padding:13px 20px; border-radius:14px; background:#25D366; color:#fff; font-weight:700; text-decoration:none; font-size:15px; }
+    .foot { text-align:center; font-size:12px; color:var(--faint); margin-top:18px; line-height:1.7; }
+    .foot a { color:var(--muted); text-decoration:none; font-weight:600; }
+    /* product picker */
+    .prods { display:grid; gap:10px; }
+    .prod { display:flex; gap:12px; align-items:center; padding:10px; border:1.5px solid var(--line); border-radius:16px; background:#fbfcfc; transition:border-color .15s, background .15s; }
+    .prod.on { border-color:var(--a); background:color-mix(in srgb, var(--a) 6%, #fff); }
+    .prod.out { opacity:.55; }
+    .prod.out .pimg { filter:grayscale(1); }
+    .pimg { width:68px; height:68px; border-radius:12px; object-fit:cover; flex-shrink:0; background:var(--bg); }
+    .pph { width:68px; height:68px; border-radius:12px; flex-shrink:0; display:grid; place-items:center; font-weight:700; font-size:22px; color:var(--a); background:color-mix(in srgb, var(--a) 10%, #fff); }
+    .pinfo { flex:1; min-width:0; }
+    .pname { font-weight:600; font-size:15px; line-height:1.25; }
+    .pdesc { font-size:12.5px; color:var(--muted); margin-top:2px; line-height:1.35; }
+    .pprice { font-weight:700; font-size:14.5px; margin-top:4px; color:var(--a); display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .left { font-size:11px; font-weight:700; color:#b45309; background:#fef3c7; border-radius:999px; padding:2px 8px; }
+    .sold { font-size:11px; font-weight:700; color:var(--muted); background:var(--bg); border-radius:999px; padding:2px 8px; }
+    .qty { display:flex; align-items:center; gap:2px; flex-shrink:0; }
+    .qty button { width:34px; height:34px; border-radius:50%; border:1.5px solid var(--line); background:#fff; font:inherit; font-size:19px; line-height:1; color:var(--ink); cursor:pointer; display:grid; place-items:center; }
+    .qty button.plus { background:var(--a); border-color:var(--a); color:#fff; }
+    .qty button:disabled { opacity:.35; cursor:not-allowed; }
+    .qty input { width:34px; text-align:center; border:0; background:transparent; font:inherit; font-weight:700; font-size:15.5px; padding:0; -moz-appearance:textfield; }
+    .qty input::-webkit-outer-spin-button, .qty input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+    .totbar { position:sticky; bottom:12px; z-index:5; margin:6px 0 4px; display:none; flex-direction:column; gap:2px; padding:12px 16px; border-radius:16px; background:var(--ink); color:#fff; box-shadow:0 14px 30px -12px rgba(19,49,46,.5); }
+    .totbar.show { display:flex; animation:rise .3s ease both; }
+    .totbar .r { display:flex; align-items:center; gap:10px; font-size:12.5px; opacity:.75; }
+    .totbar .r span:last-child { margin-left:auto; }
+    .totbar .r[hidden] { display:none; }
+    .totbar .main { display:flex; align-items:center; gap:10px; }
+    .totbar b { font-size:18px; margin-left:auto; }
+    .code { display:flex; gap:8px; }
+    .code input { text-transform:uppercase; letter-spacing:.06em; }
+    .code input::placeholder { text-transform:none; letter-spacing:0; }
+    .code button { flex-shrink:0; font:inherit; font-weight:700; font-size:14px; padding:0 18px; border-radius:14px; border:1.5px solid var(--a); color:var(--a); background:#fff; cursor:pointer; }
+    .cmsg { font-size:13px; margin-top:6px; color:var(--muted); }
+    .cmsg.ok { color:#15803d; font-weight:600; }
+    /* booking slots */
+    .days { display:flex; gap:8px; overflow-x:auto; padding-bottom:6px; scrollbar-width:thin; }
+    .day { flex-shrink:0; width:62px; padding:9px 0 8px; border:1.5px solid var(--line); border-radius:14px; background:#fbfcfc; text-align:center; cursor:pointer; font:inherit; color:var(--ink); }
+    .day small { display:block; font-size:11px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
+    .day .snum { display:block; font-size:20px; font-weight:700; line-height:1.15; }
+    .day.cur { border-color:var(--a); background:var(--a); color:#fff; }
+    .day.cur small { color:rgba(255,255,255,.85); }
+    .day.full { opacity:.45; }
+    .times { margin-top:10px; }
+    .js .times .tg { display:none; } .js .times .tg.cur { display:flex; }
+    .tg { flex-wrap:wrap; gap:8px; margin-bottom:8px; }
+    .tg .dl { width:100%; font-size:12px; font-weight:600; color:var(--muted); }
+    .js .tg .dl { display:none; }
+    .noslots { font-size:14px; color:var(--muted); background:var(--bg); border-radius:12px; padding:12px 14px; }
+    /* one-question-at-a-time layout */
+    .prog { display:none; }
+    .steps .prog { display:flex; align-items:center; gap:10px; margin:-4px 0 18px; font-size:12px; font-weight:600; color:var(--muted); }
+    .prog .bar { flex:1; height:6px; border-radius:6px; background:var(--bg); overflow:hidden; }
+    .prog .bar i { display:block; height:100%; width:0; background:var(--a); border-radius:6px; transition:width .35s cubic-bezier(.2,.7,.2,1); }
+    .steps .step { display:none; }
+    .steps .step.cur { display:block; animation:slide .35s cubic-bezier(.2,.7,.2,1) both; }
+    .steps .step.cur.back { animation-name:slideb; }
+    @keyframes slide { from { opacity:0; transform:translateX(18px); } to { opacity:1; transform:none; } }
+    @keyframes slideb { from { opacity:0; transform:translateX(-18px); } to { opacity:1; transform:none; } }
+    .steps .step .l { font-size:18px; margin-bottom:12px; line-height:1.3; }
+    .snav { display:none; }
+    .steps .snav { display:flex; gap:10px; margin-top:6px; }
+    .snav button { font:inherit; font-weight:700; font-size:16px; border-radius:16px; padding:15px; cursor:pointer; }
+    .snav .nx { flex:1; color:#fff; background:var(--a); border:0; }
+    .snav .bk { color:var(--ink); background:#fff; border:1.5px solid var(--line); padding:15px 20px; }
+    .steps .snav.last .nx { display:none; }
+    .steps .snav.last { margin-top:-4px; } .steps .snav.last .bk { border:0; background:none; padding:8px 4px; font-size:14px; color:var(--muted); }
+    .steps .snav.first .bk { display:none; }
+    .steps .finale { display:none; }
+    .steps .step.cur .finale { display:block; }
+    .rcpt { text-align:left; margin:18px auto 0; max-width:360px; border:1.5px dashed var(--line); border-radius:16px; padding:14px 16px; font-size:14px; }
+    .rcpt div { display:flex; justify-content:space-between; gap:12px; padding:4px 0; }
+    .rcpt .m { color:var(--muted); }
+    .rcpt .t { border-top:1px solid var(--line); margin-top:6px; padding-top:9px; font-weight:700; font-size:16px; }
+    .booked { display:inline-flex; align-items:center; gap:8px; margin-top:16px; padding:10px 16px; border-radius:14px; background:color-mix(in srgb, var(--a) 10%, #fff); color:var(--ink); font-weight:600; font-size:14.5px; }
+    .pill { display:inline-block; font-size:12px; font-weight:600; color:var(--muted); background:var(--bg); border-radius:999px; padding:5px 11px; }
+  </style>
+</head>
+<body>
+  {% if not missing and cover %}<div class="band photo" style="background-image:url('{{ cover }}')"></div>
+  {% else %}<div class="band"></div>{% endif %}
+  <div class="wrap">
+    <div class="card">
+    {% if missing %}
+      <div class="done">
+        <h1>This form doesn't exist</h1>
+        <p class="intro">The link may be mistyped, or the business has removed the form.</p>
+      </div>
+    {% else %}
+      <div class="brand">
+        {% if brand.logo %}<img class="logo" src="{{ brand.logo }}" alt="{{ brand.name }} logo" />
+        {% else %}<div class="mono">{{ (brand.name or form.title)[:1]|upper }}</div>{% endif %}
+        <div class="bname">{{ brand.name or '' }}</div>
+      </div>
+
+      {% if done %}
+      <div class="done">
+        <div class="tick"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+        <h1>{% if name %}Thank you, {{ name }}!{% else %}Thank you!{% endif %}</h1>
+        <p class="intro" style="margin-bottom:0">{{ form.thanks or "We've received your details and will be in touch soon." }}</p>
+        {% if slot %}<div class="booked"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>{{ slot }}</div>{% endif %}
+        {% if order or delivery %}
+        <div class="rcpt">
+          {% for x in order %}<div><span>{{ x.qty }} × {{ x.name }}</span><span>₦{{ "{:,}".format(x.qty * x.price) }}</span></div>{% endfor %}
+          {% if off %}<div class="m"><span>Discount ({{ code }})</span><span>−₦{{ "{:,}".format(off) }}</span></div>{% endif %}
+          {% if delivery %}<div class="m"><span>Delivery · {{ delivery.name }}</span><span>{% if delivery.fee %}₦{{ "{:,}".format(delivery.fee) }}{% else %}Free{% endif %}</span></div>{% endif %}
+          <div class="t"><span>Total</span><span>₦{{ "{:,}".format((order_total or 0)|int) }}</span></div>
+        </div>
+        {% set lines = [] %}{% for x in order %}{% set _ = lines.append(x.qty ~ ' x ' ~ x.name) %}{% endfor %}
+        {% set wa_text = 'Hi ' ~ (brand.name or '') ~ ', I just placed an order: ' ~ (lines|join(', ')) ~ (('. Delivery: ' ~ delivery.name) if delivery else '') ~ '. Total: ₦' ~ "{:,}".format((order_total or 0)|int) ~ '. My name is ' ~ (name or '') ~ '.' %}
+        {% elif slot %}
+        {% set wa_text = 'Hi ' ~ (brand.name or '') ~ ', I just booked ' ~ slot ~ ' through your form. My name is ' ~ (name or '') ~ '.' %}
+        {% else %}
+        {% set wa_text = 'Hi ' ~ (brand.name or '') ~ ', I just filled your form: ' ~ form.title %}
+        {% endif %}
+        {% if wa %}<br>
+        <a class="wa" href="https://wa.me/{{ wa }}?text={{ wa_text|urlencode }}">
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="#fff"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2Zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2Zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.2-.4.2-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.1.6.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.2-1.2-.1-.1-.3-.2-.5-.3Z"/></svg>
+          Chat with us on WhatsApp</a>
+        {% endif %}
+      </div>
+      {% elif closed %}
+      <div class="done">
+        <div class="closed-ic"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></div>
+        <h1>{{ form.title }}</h1>
+        <p class="intro" style="margin-bottom:0">{% if closed_msg %}{{ closed_msg }}{% elif closed == 'full' %}We've reached the limit for this one — thank you for the amazing response!{% elif closed == 'date' %}This form has closed. Thank you for your interest!{% else %}This form isn't taking responses right now. Please check back soon.{% endif %}</p>
+        {% if wa %}<a class="wa" href="https://wa.me/{{ wa }}"><svg viewBox="0 0 24 24" width="19" height="19" fill="#fff"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2Zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2Z"/></svg> Message us instead</a>{% endif %}
+      </div>
+      {% else %}
+      <h1>{{ form.title }}</h1>
+      {% if form.intro %}<p class="intro">{{ form.intro }}</p>{% endif %}
+      {% if errors._ %}<div class="alert">{{ errors._ }}</div>{% elif errors %}<div class="alert">Please check the highlighted fields.</div>{% endif %}
+      <form method="post" id="vf" novalidate data-layout="{{ layout }}" data-slug="{{ form.slug }}">
+        <input type="hidden" name="t" value="{{ ts }}" />
+        <input type="hidden" name="source" value="{{ source }}" />
+        <div class="hp" aria-hidden="true"><label>Website <input type="text" name="company_website" tabindex="-1" autocomplete="off" /></label></div>
+        <div class="prog"><span id="pgTxt">1 of 1</span><span class="bar"><i id="pgBar"></i></span></div>
+
+        {% macro finale() %}
+          <div class="finale">
+          {% if has_codes and has_order %}
+          <div class="f {% if errors.discount_code %}bad{% endif %}">
+            <label class="l" for="dcode">Discount code <span style="font-weight:500;color:var(--faint)">(optional)</span></label>
+            <div class="code"><input id="dcode" name="discount_code" type="text" autocomplete="off" value="{{ values.discount_code or '' }}" placeholder="e.g. WELCOME10" /><button type="button" id="dapply">Apply</button></div>
+            <div class="cmsg {% if errors.discount_code %}em{% endif %}" id="dmsg">{{ errors.discount_code or '' }}</div>
+          </div>
+          {% endif %}
+          <label class="consent">
+            <input type="checkbox" name="consent" value="1" {% if values.consent %}checked{% endif %} />
+            <span>I agree that {{ brand.name or 'this business' }} can contact me about my request, and that my details are stored securely by Vertil on their behalf.</span>
+          </label>
+          {% if errors.consent %}<div class="em" style="margin:-10px 0 14px">{{ errors.consent }}</div>{% endif %}
+          <button class="go" type="submit"><span class="spin"></span><span>{{ form.button or 'Send' }}</span></button>
+          </div>
+        {% endmacro %}
+
+        <div class="step" data-i="0">
+          <div class="f {% if errors.name %}bad{% endif %}">
+            <label class="l" for="name">Your name<span class="req">*</span></label>
+            <input id="name" name="name" type="text" autocomplete="name" value="{{ values.name or '' }}" required />
+            {% if errors.name %}<div class="em">{{ errors.name }}</div>{% endif %}
+          </div>
+          <div class="f {% if errors.phone %}bad{% endif %}">
+            <label class="l" for="phone">Phone / WhatsApp number<span class="req">*</span></label>
+            <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="0803 123 4567" value="{{ values.phone or '' }}" required />
+            {% if errors.phone %}<div class="em">{{ errors.phone }}</div>{% endif %}
+          </div>
+          {% if not form.fields %}{{ finale() }}{% endif %}
+        </div>
+
+        {% for q in form.fields %}{% set key = 'q_' ~ q.id %}
+        <div class="step" data-i="{{ loop.index }}">
+        <div class="f {% if errors[key] %}bad{% endif %}" data-type="{{ q.type }}" {% if q.required %}data-req="1"{% endif %}>
+          <div class="l" {% if q.type in ('short','long','date','number','email') %}><label for="{{ key }}"{% endif %}>{{ q.label }}{% if q.required %}<span class="req">*</span>{% endif %}{% if q.type in ('short','long','date','number','email') %}</label>{% endif %}</div>
+          {% if q.type == 'products' %}
+            <div class="prods" data-prods>
+            {% for it in q['items'] %}{% set pk = key ~ '__' ~ it.id %}{% set qv = (values[pk] or '0')|int %}{% set out = it.stock is not none and it.stock <= 0 %}
+              <div class="prod {% if qv > 0 %}on{% endif %} {% if out %}out{% endif %}" data-price="{{ it.price }}" {% if it.stock is not none %}data-max="{{ it.stock }}"{% endif %}>
+                {% if it.image %}<img class="pimg" src="{{ it.image }}" alt="{{ it.name }}" loading="lazy" />{% else %}<div class="pph">{{ it.name[:1]|upper }}</div>{% endif %}
+                <div class="pinfo">
+                  <div class="pname">{{ it.name }}</div>
+                  {% if it.desc %}<div class="pdesc">{{ it.desc }}</div>{% endif %}
+                  <div class="pprice">{% if it.price %}₦{{ "{:,}".format(it.price) }}{% else %}Price on request{% endif %}
+                    {% if out %}<span class="sold">Sold out</span>{% elif it.stock is not none and it.stock <= 5 %}<span class="left">Only {{ it.stock }} left</span>{% endif %}</div>
+                </div>
+                <div class="qty">
+                  <button type="button" class="minus" aria-label="Remove one {{ it.name }}" {% if out %}disabled{% endif %}>−</button>
+                  <input type="number" name="{{ pk }}" value="{{ 0 if out else qv }}" min="0" max="{{ it.stock if it.stock is not none else 999 }}" inputmode="numeric" aria-label="Quantity of {{ it.name }}" {% if out %}disabled{% endif %} />
+                  <button type="button" class="plus" aria-label="Add one {{ it.name }}" {% if out %}disabled{% endif %}>+</button>
+                </div>
+              </div>
+            {% endfor %}
+            </div>
+          {% elif q.type == 'delivery' %}
+            <div class="chips" role="radiogroup">
+            {% for a in q.areas %}
+              <label class="chip"><input type="radio" name="{{ key }}" value="{{ a.id }}" data-fee="{{ a.fee }}" data-name="{{ a.name }}" {% if values[key] == a.id %}checked{% endif %} /><span>{{ a.name }}<small>{% if a.fee %}₦{{ "{:,}".format(a.fee) }}{% else %}Free{% endif %}</small></span></label>
+            {% endfor %}
+            </div>
+          {% elif q.type == 'slots' %}{% set days = slots[q.id] %}
+            {% if days %}
+            <div class="days" data-days>
+              {% for d in days %}<button type="button" class="day {% if not d.open %}full{% endif %}" data-day="{{ d.date }}"><small>{{ d.dow }}</small><span class="snum">{{ d.day }}</span><small>{{ d.mon }}</small></button>{% endfor %}
+            </div>
+            <div class="times">
+              {% for d in days %}<div class="chips tg" data-tg="{{ d.date }}"><span class="dl">{{ d.dow }} {{ d.day }} {{ d.mon }}</span>
+                {% for t in d.times %}<label class="chip"><input type="radio" name="{{ key }}" value="{{ t.key }}" {% if t.full %}disabled{% endif %} {% if values[key] == t.key %}checked{% endif %} /><span>{{ t.label }}</span></label>{% endfor %}
+              </div>{% endfor %}
+            </div>
+            {% else %}<div class="noslots">Fully booked for now — please check back soon.</div>{% endif %}
+          {% elif q.type == 'long' %}
+            <textarea id="{{ key }}" name="{{ key }}" {% if q.required %}required{% endif %}>{{ values[key] or '' }}</textarea>
+          {% elif q.type == 'select' %}
+            <div class="chips" role="radiogroup">
+            {% for o in q.options %}
+              <label class="chip"><input type="radio" name="{{ key }}" value="{{ o }}" {% if values[key] == o %}checked{% endif %} /><span>{{ o }}</span></label>
+            {% endfor %}
+            </div>
+          {% else %}
+            <input id="{{ key }}" name="{{ key }}" {% if q.required %}required{% endif %} value="{{ values[key] or '' }}"
+              type="{{ {'short':'text','date':'date','number':'number','email':'email'}[q.type] }}"
+              {% if q.type == 'number' %}inputmode="numeric" min="0"{% endif %}{% if q.type == 'email' %} autocomplete="email"{% endif %} />
+          {% endif %}
+          <div class="em" {% if not errors[key] %}hidden{% endif %}>{{ errors[key] or '' }}</div>
+        </div>
+        {% if loop.last %}{{ finale() }}{% endif %}
+        </div>
+        {% endfor %}
+
+        <div class="snav"><button type="button" class="bk">Back</button><button type="button" class="nx">Next</button></div>
+        {% if has_order %}
+        <div class="totbar" id="totbar">
+          <div class="r" id="trSub" hidden><span>Items</span><span id="tvSub"></span></div>
+          <div class="r" id="trOff" hidden><span id="tlOff">Discount</span><span id="tvOff"></span></div>
+          <div class="r" id="trDel" hidden><span id="tlDel">Delivery</span><span id="tvDel"></span></div>
+          <div class="main"><span id="totcount">0 items</span><b id="totval">₦0</b></div>
+        </div>
+        {% endif %}
+      </form>
+      {% endif %}
+    {% endif %}
+    </div>
+    <div class="foot">
+      {% if not missing and badge %}<a href="https://vertil.ng/?ref=form" target="_blank" rel="noopener"><span class="pill">⚡ Made with Vertil</span></a><br>{% endif %}
+      Your details are only shared with {{ (brand.name if not missing else '') or 'this business' }}.
+    </div>
+  </div>
+  <script>
+    (function () {
+      var f = document.getElementById('vf'); if (!f) return;
+      document.documentElement.classList.add('js');
+      var slug = f.getAttribute('data-slug');
+      var naira = function (n) { return '₦' + Math.round(n).toLocaleString('en-NG'); };
+
+      /* ---- funnel tracking (one beacon per stage per visit) ---- */
+      var sent = {};
+      try { sent = JSON.parse(sessionStorage.getItem('vf:' + slug) || '{}'); } catch (e) {}
+      function beacon(k, i) {
+        var id = k + (i == null ? '' : ':' + i); if (sent[id]) return; sent[id] = 1;
+        try { sessionStorage.setItem('vf:' + slug, JSON.stringify(sent)); } catch (e) {}
+        var d = new FormData(); d.append('k', k); if (i != null) d.append('i', i);
+        if (navigator.sendBeacon) navigator.sendBeacon('/f/' + slug + '/e', d);
+        else fetch('/f/' + slug + '/e', { method: 'POST', body: d, keepalive: true });
+      }
+      f.addEventListener('focusin', function (e) { var s = e.target.closest('.step'); beacon('start'); if (s && !steps) beacon('reach', s.getAttribute('data-i')); });
+      f.addEventListener('click', function (e) { var s = e.target.closest('.step'); if (!s) return; beacon('start'); if (!steps) beacon('reach', s.getAttribute('data-i')); });
+
+      /* ---- totals: items − discount + delivery ---- */
+      var bar = document.getElementById('totbar');
+      var disc = null;
+      function recalc() {
+        var sub = 0, count = 0;
+        f.querySelectorAll('.prod').forEach(function (row) {
+          var inp = row.querySelector('input'); var mx = parseInt(row.getAttribute('data-max') || '999', 10);
+          var q = Math.max(0, Math.min(mx, parseInt(inp.value, 10) || 0));
+          inp.value = q; row.classList.toggle('on', q > 0);
+          var plus = row.querySelector('.plus'); if (plus && !inp.disabled) plus.disabled = q >= mx;
+          sub += q * (parseInt(row.getAttribute('data-price'), 10) || 0); count += q;
+        });
+        var del = f.querySelector('[data-fee]:checked');
+        var fee = del ? parseInt(del.getAttribute('data-fee'), 10) || 0 : 0;
+        var off = 0;
+        if (disc && sub > 0) off = Math.min(sub, disc.kind === 'percent' ? Math.floor(sub * disc.amount / 100) : disc.amount);
+        if (!bar) return;
+        bar.classList.toggle('show', count > 0 || !!del);
+        var show = function (id, on) { document.getElementById(id).hidden = !on; };
+        show('trSub', (off > 0 || !!del) && count > 0); document.getElementById('tvSub').textContent = naira(sub);
+        show('trOff', off > 0); document.getElementById('tvOff').textContent = '−' + naira(off); if (disc) document.getElementById('tlOff').textContent = 'Discount (' + disc.code + ')';
+        show('trDel', !!del); if (del) { document.getElementById('tlDel').textContent = 'Delivery · ' + del.getAttribute('data-name'); document.getElementById('tvDel').textContent = fee ? naira(fee) : 'Free'; }
+        document.getElementById('totcount').textContent = count ? count + (count === 1 ? ' item' : ' items') : 'Total';
+        document.getElementById('totval').textContent = naira(sub - off + fee);
+      }
+      f.querySelectorAll('.prod').forEach(function (row) {
+        var inp = row.querySelector('input'); if (inp.disabled) return;
+        row.querySelector('.plus').addEventListener('click', function () { inp.value = (parseInt(inp.value, 10) || 0) + 1; recalc(); });
+        row.querySelector('.minus').addEventListener('click', function () { inp.value = Math.max(0, (parseInt(inp.value, 10) || 0) - 1); recalc(); });
+        inp.addEventListener('input', recalc);
+      });
+      f.querySelectorAll('[data-fee]').forEach(function (r) { r.addEventListener('change', recalc); });
+
+      /* ---- discount code ---- */
+      var dc = document.getElementById('dcode'), dm = document.getElementById('dmsg'), da = document.getElementById('dapply');
+      function applyCode() {
+        var code = (dc.value || '').trim(); if (!code) { disc = null; dm.textContent = ''; dm.className = 'cmsg'; recalc(); return; }
+        da.disabled = true;
+        fetch('/f/' + slug + '/code', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: code }) })
+          .then(function (r) { return r.json(); }).then(function (d) {
+            disc = d.ok ? d : null; dm.textContent = d.msg || ''; dm.className = 'cmsg' + (d.ok ? ' ok' : ' em'); recalc();
+          }).catch(function () { dm.textContent = "Couldn't check the code — it will be checked when you send."; })
+          .finally(function () { da.disabled = false; });
+      }
+      if (da) { da.addEventListener('click', applyCode); dc.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); applyCode(); } }); if (dc.value) applyCode(); }
+
+      /* ---- booking slots: pick a day, then a time ---- */
+      f.querySelectorAll('[data-days]').forEach(function (strip) {
+        var box = strip.nextElementSibling;
+        function pick(date) {
+          strip.querySelectorAll('.day').forEach(function (b) { b.classList.toggle('cur', b.getAttribute('data-day') === date); });
+          box.querySelectorAll('.tg').forEach(function (g) { g.classList.toggle('cur', g.getAttribute('data-tg') === date); });
+        }
+        strip.querySelectorAll('.day').forEach(function (b) { b.addEventListener('click', function () { pick(b.getAttribute('data-day')); }); });
+        var chosen = box.querySelector('input:checked');
+        var first = strip.querySelector('.day:not(.full)') || strip.querySelector('.day');
+        pick(chosen ? chosen.closest('.tg').getAttribute('data-tg') : first.getAttribute('data-day'));
+      });
+
+      /* ---- one question at a time ---- */
+      var steps = f.getAttribute('data-layout') === 'steps' ? Array.prototype.slice.call(f.querySelectorAll('.step')) : null;
+      var cur = 0, nav = f.querySelector('.snav');
+      function answered(stepEl) {
+        var ok = true;
+        stepEl.querySelectorAll('.f').forEach(function (blk) {
+          var need = blk.hasAttribute('data-req') || blk.querySelector('input[required],textarea[required]');
+          if (!need) return;
+          var t = blk.getAttribute('data-type'), filled;
+          if (t === 'products') filled = Array.prototype.some.call(blk.querySelectorAll('.qty input'), function (i) { return +i.value > 0; });
+          else if (blk.querySelector('input[type=radio]')) filled = !!blk.querySelector('input[type=radio]:checked');
+          else { var el = blk.querySelector('input,textarea'); filled = el && el.value.trim().length > 0; }
+          var em = blk.querySelector('.em');
+          if (!filled) { ok = false; blk.classList.add('bad'); if (em) { em.hidden = false; em.textContent = t === 'products' ? 'Please choose at least one item.' : 'This one is required.'; } }
+          else { blk.classList.remove('bad'); }
+        });
+        return ok;
+      }
+      function show(i, back) {
+        cur = i;
+        steps.forEach(function (s, k) { s.classList.toggle('cur', k === i); s.classList.toggle('back', !!back); });
+        nav.classList.toggle('first', i === 0); nav.classList.toggle('last', i === steps.length - 1);
+        document.getElementById('pgTxt').textContent = (i + 1) + ' of ' + steps.length;
+        document.getElementById('pgBar').style.width = ((i + 1) / steps.length * 100) + '%';
+        beacon('reach', steps[i].getAttribute('data-i'));
+        var el = steps[i].querySelector('input:not([type=hidden]):not([type=radio]):not([type=checkbox]),textarea');
+        if (el && i > 0) setTimeout(function () { el.focus({ preventScroll: true }); }, 60);
+        f.scrollIntoView({ block: 'nearest' });
+      }
+      if (steps && steps.length > 1) {
+        f.classList.add('steps');
+        nav.querySelector('.nx').addEventListener('click', function () { if (answered(steps[cur])) show(cur + 1); });
+        nav.querySelector('.bk').addEventListener('click', function () { if (cur > 0) show(cur - 1, true); });
+        f.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.id !== 'dcode' && cur < steps.length - 1) { e.preventDefault(); nav.querySelector('.nx').click(); }
+        });
+        var bad = f.querySelector('.f.bad'); var start = bad ? steps.indexOf(bad.closest('.step')) : 0;
+        show(Math.max(0, start));
+      } else { steps = null; }
+
+      recalc();
+      f.addEventListener('submit', function () {
+        var b = f.querySelector('button.go'); b.classList.add('busy'); setTimeout(function () { b.disabled = true; }, 0);
+      });
+    })();
+  </script>
+</body>
+</html>
